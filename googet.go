@@ -1,4 +1,5 @@
 /*
+
 Copyright 2016 Google Inc. All Rights Reserved.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -320,6 +321,7 @@ func run() int {
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
+	cmdr.Register(&cleanCmd{}, "")
 
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")

@@ -35,7 +35,7 @@ type updateCmd struct {
 }
 
 func (*updateCmd) Name() string     { return "update" }
-func (*updateCmd) Synopsis() string { return "Update all packages to the latest version available." }
+func (*updateCmd) Synopsis() string { return "update all packages to the latest version available" }
 func (*updateCmd) Usage() string {
 	return fmt.Sprintf("%s update [-sources repo1,repo2...]\n", filepath.Base(os.Args[0]))
 }

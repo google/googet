@@ -4,4 +4,4 @@ if [[ $? -ne 0 ]]; then
   echo "could not match verson in goospec"
   exit 1
 fi
-GOOS=windows go build -ldflags "-X main.version=2.7.1@1"
+GOOS=windows go build -ldflags "-X main.version=${version}"

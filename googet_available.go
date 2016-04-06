@@ -39,7 +39,7 @@ type availableCmd struct {
 }
 
 func (*availableCmd) Name() string     { return "available" }
-func (*availableCmd) Synopsis() string { return "List all available packages in repos." }
+func (*availableCmd) Synopsis() string { return "list all available packages in repos" }
 func (*availableCmd) Usage() string {
 	return fmt.Sprintf("%s available [-sources repo1,repo2...] [-filter <name>] [-info]\n", path.Base(os.Args[0]))
 }

@@ -34,7 +34,7 @@ type removeCmd struct {
 }
 
 func (cmd *removeCmd) Name() string     { return "remove" }
-func (cmd *removeCmd) Synopsis() string { return "Uninstall a package." }
+func (cmd *removeCmd) Synopsis() string { return "uninstall a package" }
 func (cmd *removeCmd) Usage() string {
 	return fmt.Sprintf("%s remove <name>", os.Args[0])
 }

@@ -35,7 +35,7 @@ type downloadCmd struct {
 }
 
 func (*downloadCmd) Name() string     { return "download" }
-func (*downloadCmd) Synopsis() string { return "Download a package." }
+func (*downloadCmd) Synopsis() string { return "download a package" }
 func (*downloadCmd) Usage() string {
 	return fmt.Sprintf("%s download [-sources repo1,repo2...] [-download_dir <dir>] <name>\n", filepath.Base(os.Args[0]))
 }

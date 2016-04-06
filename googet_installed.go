@@ -38,7 +38,7 @@ type installedCmd struct {
 }
 
 func (*installedCmd) Name() string     { return "installed" }
-func (*installedCmd) Synopsis() string { return "List all installed packages." }
+func (*installedCmd) Synopsis() string { return "list all installed packages" }
 func (*installedCmd) Usage() string {
 	return fmt.Sprintf("%s installed [-filter <name>] [-info]\n", path.Base(os.Args[0]))
 }

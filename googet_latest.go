@@ -34,7 +34,7 @@ type latestCmd struct {
 }
 
 func (*latestCmd) Name() string     { return "latest" }
-func (*latestCmd) Synopsis() string { return "Get the latest available version of a package." }
+func (*latestCmd) Synopsis() string { return "get the latest available version of a package" }
 func (*latestCmd) Usage() string {
 	return fmt.Sprintf("%s latest [-sources repo1,repo2...] [-compare] <name>\n", filepath.Base(os.Args[0]))
 }

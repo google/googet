@@ -38,7 +38,7 @@ type installCmd struct {
 }
 
 func (*installCmd) Name() string     { return "install" }
-func (*installCmd) Synopsis() string { return "Download and install a package and its dependencies." }
+func (*installCmd) Synopsis() string { return "download and install a package and its dependencies" }
 func (*installCmd) Usage() string {
 	return fmt.Sprintf("%s install [-reinstall] [-source repo1,repo2...] <name>\n", filepath.Base(os.Args[0]))
 }
