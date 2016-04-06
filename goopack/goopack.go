@@ -228,7 +228,7 @@ func writeFiles(tw *tar.Writer, fm fileMap) error {
 			if err != nil {
 				return err
 			}
-			fih.Name = fpath
+			fih.Name = filepath.ToSlash(fpath)
 			if err := tw.WriteHeader(fih); err != nil {
 				return err
 			}
