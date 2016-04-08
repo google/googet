@@ -27,7 +27,7 @@ func TestRootDir(t *testing.T) {
 	}
 	for _, tt := range table {
 		if got := rootDir(tt.path); got != tt.want {
-			t.Fatal("rootDir did not retunr expected path, got: %q, want: %q ", got, tt.want)
+			t.Fatalf("rootDir did not retunr expected path, got: %q, want: %q ", got, tt.want)
 		}
 	}
 }
