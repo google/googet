@@ -92,7 +92,7 @@ func MkdirAll(name string, mode os.FileMode) error {
 	baseDir := filepath.Join(vol, name[len(vol)+1 : i])
 	
 	if _, err := Stat(baseDir); err != nil {
-        	if err := Mkdir(baseDir); err != nil {
+        	if err := Mkdir(baseDir, mode); err != nil {
         		return err
         	}
     	}
