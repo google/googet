@@ -82,6 +82,21 @@ func Mkdir(name string, mode os.FileMode) error {
 
 // MkdirAll calls os.MkdirAll with name normalized
 func MkdirAll(name string, mode os.FileMode) error {
+	// os.MkdirAll does not work with extended-length paths if 
+	// nothing in the path exists.
+	vol := filepath.VolumeName(name)
+	i := len(vol) + 1
+	for !os.IsPathSeparator(name[i]) {
+		i++
+	}
+	baseDir := filepath.Join(vol, name[len(vol)+1 : i])
+	
+	if _, err := Stat(baseDir); err != nil {
+        	if err := Mkdir(baseDir); err != nil {
+        		return err
+        	}
+    	}
+	
 	name, err := normPath(name)
 	if err != nil {
 		return err
