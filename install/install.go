@@ -27,9 +27,9 @@ import (
 	"github.com/google/googet/client"
 	"github.com/google/googet/download"
 	"github.com/google/googet/goolib"
+	"github.com/google/googet/oswrap"
 	"github.com/google/googet/system"
 	"github.com/google/logger"
-	"github.com/google/googet/oswrap"
 )
 
 // minInstalled reports whether the package is installed at the given version or greater.

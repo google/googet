@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/google/googet/goolib"
-	"github.com/google/logger"
 	"github.com/google/googet/oswrap"
+	"github.com/google/logger"
 )
 
 var (
@@ -146,7 +146,7 @@ func main() {
 		}
 	}()
 
-  packageDir := filepath.Join(*root, "packages")
+	packageDir := filepath.Join(*root, "packages")
 	if err := runSync(packageDir); err != nil {
 		logger.Error(err)
 	}

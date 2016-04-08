@@ -22,9 +22,9 @@ import (
 	"github.com/google/googet/client"
 	"github.com/google/googet/download"
 	"github.com/google/googet/goolib"
+	"github.com/google/googet/oswrap"
 	"github.com/google/googet/system"
 	"github.com/google/logger"
-	"github.com/google/googet/oswrap"
 )
 
 func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool) error {

@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/google/googet/goolib"
-	"github.com/google/logger"
 	"github.com/google/googet/oswrap"
+	"github.com/google/logger"
 )
 
 const (

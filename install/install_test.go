@@ -22,8 +22,8 @@ import (
 
 	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
-	"github.com/google/logger"
 	"github.com/google/googet/oswrap"
+	"github.com/google/logger"
 )
 
 func init() {
@@ -126,8 +126,7 @@ func TestInstallPkg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	dst += (
-		"/this/is/an/extremely/long/filename/you/wouldnt/expect/to/see/it/" +
+	dst += ("/this/is/an/extremely/long/filename/you/wouldnt/expect/to/see/it/" +
 		"in/the/wild/but/you/would/actually/be/surprised/at/some/of/the/" +
 		"stuff/that/pops/up/and/seriously/two/hundred/and/fify/five/chars" +
 		"is/quite/a/large/number/but/somehow/there/were/real/goo/packages" +

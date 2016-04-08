@@ -22,8 +22,8 @@ import (
 
 	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
-	"github.com/google/logger"
 	"github.com/google/googet/oswrap"
+	"github.com/google/logger"
 )
 
 // Install performs a system specfic install given a package extraction directory and an PkgSpec struct.
