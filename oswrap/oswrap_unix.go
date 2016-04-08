@@ -5,8 +5,8 @@
 package oswrap
 
 import (
-	"path/filepath"
 	"os"
+	"path/filepath"
 )
 
 // Open calls os.Open

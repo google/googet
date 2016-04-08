@@ -6,8 +6,8 @@
 package oswrap
 
 import (
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -82,21 +82,21 @@ func Mkdir(name string, mode os.FileMode) error {
 
 // MkdirAll calls os.MkdirAll with name normalized
 func MkdirAll(name string, mode os.FileMode) error {
-	// os.MkdirAll does not work with extended-length paths if 
+	// os.MkdirAll does not work with extended-length paths if
 	// nothing in the path exists.
 	vol := filepath.VolumeName(name)
 	i := len(vol) + 1
 	for !os.IsPathSeparator(name[i]) {
 		i++
 	}
-	baseDir := filepath.Join(vol, name[len(vol)+1 : i])
-	
+	baseDir := name[:i]
+
 	if _, err := Stat(baseDir); err != nil {
-        	if err := Mkdir(baseDir, mode); err != nil {
-        		return err
-        	}
-    	}
-	
+		if err := Mkdir(baseDir, mode); err != nil {
+			return err
+		}
+	}
+
 	name, err := normPath(name)
 	if err != nil {
 		return err
@@ -116,7 +116,6 @@ func Rename(oldpath, newpath string) error {
 	}
 	return os.Rename(oldpath, newpath)
 }
-
 
 // Lstat calls os.Lstat with name normalized
 func Lstat(name string) (os.FileInfo, error) {
