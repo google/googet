@@ -80,6 +80,21 @@ func unmarshalRepoFile(p string) ([]repoFile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Don't try to unmarshal files with no YAML content
+	var yml bool
+	lns := strings.Split(string(b), "\n")
+	for _, ln := range lns {
+		ln = strings.TrimSpace(ln)
+		if !strings.HasPrefix(ln, "#") && ln != "" {
+			yml = true
+			break
+		}
+	}
+	if !yml {
+		return nil, nil
+	}
+
 	// Both repoFile and []repoFile are valid for backwards compatibilty.
 	var rf repoFile
 	if err := yaml.Unmarshal(b, &rf); err == nil && rf.URL != "" {
