@@ -15,7 +15,7 @@ package main
 
 import (
 	"io/ioutil"
-	"path"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -34,7 +34,7 @@ func TestRepoList(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(tempDir)
 
-	testFile := path.Join(tempDir, "test.repo")
+	testFile := filepath.Join(tempDir, "test.repo")
 
 	repoTests := []struct {
 		content []byte
@@ -92,7 +92,7 @@ func TestReadConf(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(tempDir)
 
-	confPath := path.Join(tempDir, "test.conf")
+	confPath := filepath.Join(tempDir, "test.conf")
 	f, err := oswrap.Create(confPath)
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
@@ -136,7 +136,7 @@ func TestRotateLog(t *testing.T) {
 	}
 
 	for _, tt := range table {
-		logPath := path.Join(tempDir, tt.name)
+		logPath := filepath.Join(tempDir, tt.name)
 		f, err := oswrap.Create(logPath)
 		if err != nil {
 			t.Fatalf("error creating log file: %v", err)
@@ -181,7 +181,7 @@ func TestWriteReadState(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(tempDir)
 
-	sf := path.Join(tempDir, "test.state")
+	sf := filepath.Join(tempDir, "test.state")
 
 	if err := writeState(want, sf); err != nil {
 		t.Errorf("error running writeState: %v", err)
@@ -194,5 +194,92 @@ func TestWriteReadState(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("did not get expected state, got: %+v, want %+v", got, want)
+	}
+}
+
+func TestCleanOld(t *testing.T) {
+	var err error
+	rootDir, err = ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("error creating temp directory: %v", err)
+	}
+	defer oswrap.RemoveAll(rootDir)
+
+	wantDir := filepath.Join(rootDir, cacheDir, "want")
+	notWantDir := filepath.Join(rootDir, cacheDir, "notWant")
+
+	if err := oswrap.MkdirAll(wantDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := oswrap.MkdirAll(notWantDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &client.GooGetState{
+		{
+			UnpackDir: wantDir,
+		},
+	}
+
+	if err := writeState(state, filepath.Join(rootDir, stateFile)); err != nil {
+		t.Fatalf("error running writeState: %v", err)
+	}
+
+	cleanOld()
+
+	if _, err := oswrap.Stat(wantDir); err != nil {
+		t.Errorf("cleanOld removed wantDir, Stat err: %v", err)
+	}
+
+	if _, err := oswrap.Stat(notWantDir); err == nil {
+		t.Errorf("cleanOld did not remove notWantDir")
+	}
+}
+
+func TestCleanPackages(t *testing.T) {
+	var err error
+	rootDir, err = ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("error creating temp directory: %v", err)
+	}
+	defer oswrap.RemoveAll(rootDir)
+
+	wantDir := filepath.Join(rootDir, cacheDir, "want")
+	notWantDir := filepath.Join(rootDir, cacheDir, "notWant")
+
+	if err := oswrap.MkdirAll(wantDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := oswrap.MkdirAll(notWantDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &client.GooGetState{
+		{
+			UnpackDir: wantDir,
+			PackageSpec: &goolib.PkgSpec{
+				Name: "want",
+			},
+		},
+		{
+			UnpackDir: notWantDir,
+			PackageSpec: &goolib.PkgSpec{
+				Name: "notWant",
+			},
+		},
+	}
+
+	if err := writeState(state, filepath.Join(rootDir, stateFile)); err != nil {
+		t.Fatalf("error running writeState: %v", err)
+	}
+
+	cleanPackages([]string{"notWant"})
+
+	if _, err := oswrap.Stat(wantDir); err != nil {
+		t.Errorf("cleanPackages removed wantDir, Stat err: %v", err)
+	}
+
+	if _, err := oswrap.Stat(notWantDir); err == nil {
+		t.Errorf("cleanPackages did not remove notWantDir")
 	}
 }
