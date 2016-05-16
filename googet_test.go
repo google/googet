@@ -40,7 +40,10 @@ func TestRepoList(t *testing.T) {
 		content []byte
 		result  []string
 	}{
+		{[]byte("\n"), nil},
+		{[]byte("# This is just a comment"), nil},
 		{[]byte("url: " + testRepo), []string{testRepo}},
+		{[]byte("\n # Comment\nurl: " + testRepo), []string{testRepo}},
 		{[]byte("- url: " + testRepo), []string{testRepo}},
 		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}},
 	}
