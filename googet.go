@@ -26,13 +26,13 @@ import (
 	"strings"
 	"time"
 
+	yaml "github.com/cloudfoundry-incubator/candiedyaml"
 	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/system"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"
-	yaml "github.com/tjarratt/candiedyaml"
 	"golang.org/x/net/context"
 )
 
