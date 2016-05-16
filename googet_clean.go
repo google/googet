@@ -25,7 +25,9 @@ import (
 	"golang.org/x/net/context"
 )
 
-type cleanCmd struct{}
+type cleanCmd struct{
+	all bool
+}
 
 func (*cleanCmd) Name() string     { return "clean" }
 func (*cleanCmd) Synopsis() string { return "clean the cache directory" }
@@ -33,7 +35,9 @@ func (*cleanCmd) Usage() string {
 	return fmt.Sprintf("%s clean\n", filepath.Base(os.Args[0]))
 }
 
-func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {}
+func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
+	f.BoolVar(&cmd.all, "all", false, "clear out teh entire cache directory")
+}
 
 func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	fmt.Println("Removing all files and directories in cachedir that dont correspond to a currently installed package.")
