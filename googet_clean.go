@@ -40,7 +40,7 @@ func (*cleanCmd) Usage() string {
 
 func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.all, "all", false, "clear out the entire cache directory")
-	f.StringVar(&cmd.packages, "packages", "", "comma delineated list of packages to clear out of the cache")
+	f.StringVar(&cmd.packages, "packages", "", "comma separated list of packages to clear out of the cache")
 }
 
 func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
