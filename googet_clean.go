@@ -46,13 +46,13 @@ func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if cmd.all {
 		fmt.Println("Removing all files and directories in cachedir.")
-		clean([]string{})
+		clean(nil)
 	} else if cmd.packages != "" {
 		pl := strings.Split(cmd.packages, ",")
 		fmt.Printf("Removing package cache for %s\n", pl)
 		cleanPackages(pl)
 	} else {
-		fmt.Println("Removing all files and directories in cachedir that dont correspond to a currently installed package.")
+		fmt.Println("Removing all files and directories in cachedir that don't correspond to a currently installed package.")
 		cleanOld()
 	}
 	return subcommands.ExitSuccess
