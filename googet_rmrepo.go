@@ -19,7 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
-	//"github.com/google/logger"
+	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"golang.org/x/net/context"
 )
@@ -29,12 +29,59 @@ type rmRepoCmd struct{}
 func (*rmRepoCmd) Name() string     { return "rmrepo" }
 func (*rmRepoCmd) Synopsis() string { return "remove repository" }
 func (*rmRepoCmd) Usage() string {
-	return fmt.Sprintf("%s rmrepo <name>\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s rmrepo <name>:
+				Removes the named repository. 
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {}
 
-func (cmd *rmRepoCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	var name string
+	switch f.NArg() {
+	case 0:
+		fmt.Fprintln(os.Stderr, "Not enough arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	case 1:
+		name = f.Arg(0)
+	default:
+		fmt.Fprintln(os.Stderr, "Excessive arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	}
+
+	repoEntries, err := repos(filepath.Join(rootDir, repoDir))
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	var repoPath string
+	for _, re := range repoEntries {
+		if re.Name == name {
+			repoPath = re.fileName
+		}
+	}
+
+	if repoPath == "" {
+		logger.Fatalf("Repo %q not found, nothing to remove.", name)
+	}
+
+	rfs, err := unmarshalRepoFile(repoPath)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	for i, rf := range rfs {
+		if rf.Name == name {
+			rfs = append(rfs[:i], rfs[i+1:]...)
+		}
+	}
+
+	if err := writeRepoFile(repoPath, rfs); err != nil {
+		logger.Fatal(err)
+	}
+	fmt.Printf("Removed repo %q from repo file %s.\n", name, repoPath)
 
 	return subcommands.ExitSuccess
 }

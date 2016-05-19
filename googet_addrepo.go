@@ -83,7 +83,6 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 	}
 
 	rfs, err := unmarshalRepoFile(repoPath)
-
 	if err != nil {
 		logger.Fatal(err)
 	}
