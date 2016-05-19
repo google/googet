@@ -18,23 +18,85 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	//	"github.com/google/logger"
+	"github.com/google/googet/oswrap"
+	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"golang.org/x/net/context"
 )
 
-type addRepoCmd struct{}
+type addRepoCmd struct {
+	file string
+}
 
 func (*addRepoCmd) Name() string     { return "addrepo" }
 func (*addRepoCmd) Synopsis() string { return "add repository" }
 func (*addRepoCmd) Usage() string {
-	return fmt.Sprintf("%s addrepo <name> <url>\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s addrepo [-file] <name> <url>:
+	Add repository to GooGet's repository list. 
+	If -file is not set 'name.repo' will be used for the file name 
+	overwriting any existing file with than name. 
+	If -file is set the specified repo will be appended to that repo file, 
+	creating it if it does not exist.
+`, filepath.Base(os.Args[0]))
 }
 
-func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {}
+func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
+	f.StringVar(&cmd.file, "file", "", "repo file to add this repository to")
+}
 
-func (cmd *addRepoCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	var name, url string
+	switch f.NArg() {
+	case 0, 1:
+		fmt.Fprintln(os.Stderr, "Not enough arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	case 2:
+		name = f.Arg(0)
+		url = f.Arg(1)
+	default:
+		fmt.Fprintln(os.Stderr, "Excessive arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	}
+
+	if cmd.file == "" {
+		cmd.file = name + ".repo"
+	} else {
+		if !strings.HasSuffix(cmd.file, ".repo") {
+			fmt.Fprintln(os.Stderr, "Repo file name must end in '.repo'")
+			return subcommands.ExitUsageError
+		}
+	}
+
+	repoPath := filepath.Join(rootDir, repoDir, cmd.file)
+
+	if _, err := oswrap.Stat(repoPath); err != nil && os.IsNotExist(err) {
+		if err := writeRepoFile(repoPath, []repoFile{repoFile{Name: name, URL: url}}); err != nil {
+			logger.Fatal(err)
+		}
+		return subcommands.ExitSuccess
+	}
+
+	rfs, err := unmarshalRepoFile(repoPath)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	for i, rf := range rfs {
+		if rf.Name == name || rf.URL == url {
+			rfs = append(rfs[:i], rfs[i+1:]...)
+		}
+	}
+
+	rfs = append(rfs, repoFile{Name: name, URL: url})
+
+	if err := writeRepoFile(repoPath, rfs); err != nil {
+		logger.Fatal(err)
+	}
 
 	return subcommands.ExitSuccess
 }

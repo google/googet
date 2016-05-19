@@ -20,7 +20,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,7 +43,7 @@ func (*availableCmd) Usage() string {
 	return fmt.Sprintf(`%s available [-sources repo1,repo2...] [-info] [<initial>]:
 	List available packages beginning with an initial string,
 	if no initial string is provided all available packages will be listed.
-`, path.Base(os.Args[0]))
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {

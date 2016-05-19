@@ -20,7 +20,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -42,7 +41,7 @@ func (*installedCmd) Usage() string {
 	return fmt.Sprintf(`%s installed [-info] [<initial>]:
 	List installed packages beginning with an initial string,
 	if no initial string is provided all installed packages will be listed.
-`, path.Base(os.Args[0]))
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *installedCmd) SetFlags(f *flag.FlagSet) {

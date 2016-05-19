@@ -76,6 +76,14 @@ type repoFile struct {
 	URL      string
 }
 
+func writeRepoFile(p string, rfs []repoFile) error {
+	d, err := yaml.Marshal(rfs)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(p, d, 0664)
+}
+
 func unmarshalRepoFile(p string) ([]repoFile, error) {
 	b, err := ioutil.ReadFile(p)
 	if err != nil {
