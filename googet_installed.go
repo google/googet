@@ -33,22 +33,35 @@ import (
 )
 
 type installedCmd struct {
-	filter string
-	info   bool
+	info bool
 }
 
 func (*installedCmd) Name() string     { return "installed" }
-func (*installedCmd) Synopsis() string { return "list all installed packages" }
+func (*installedCmd) Synopsis() string { return "list installed packages" }
 func (*installedCmd) Usage() string {
-	return fmt.Sprintf("%s installed [-filter <name>] [-info]\n", path.Base(os.Args[0]))
+	return fmt.Sprintf(`%s installed [-info] [<initial>]:
+	List installed packages beginning with an initial string,
+	if no initial string is provided all installed packages will be listed.
+`, path.Base(os.Args[0]))
 }
 
 func (cmd *installedCmd) SetFlags(f *flag.FlagSet) {
-	f.StringVar(&cmd.filter, "filter", "", "package list filter")
 	f.BoolVar(&cmd.info, "info", false, "display package info")
 }
 
-func (cmd *installedCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	var filter string
+	switch f.NArg() {
+	case 0:
+		filter = ""
+	case 1:
+		filter = f.Arg(0)
+	default:
+		fmt.Fprintln(os.Stderr, "Excessive arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	}
+
 	state, err := readState(filepath.Join(rootDir, stateFile))
 	if err != nil {
 		logger.Fatal(err)
@@ -66,14 +79,14 @@ func (cmd *installedCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interf
 	}
 
 	sort.Strings(pl)
-	if cmd.filter != "" {
-		fmt.Printf("Installed packages matching %q:\n", cmd.filter)
+	if filter != "" {
+		fmt.Printf("Installed packages matching %q:\n", filter)
 	} else {
 		fmt.Println("Installed packages:")
 	}
 	exitCode := subcommands.ExitFailure
 	for _, p := range pl {
-		if strings.Contains(p, cmd.filter) {
+		if strings.Contains(p, filter) {
 			exitCode = subcommands.ExitSuccess
 			pi := goolib.PkgNameSplit(p)
 			if cmd.info {
@@ -84,7 +97,7 @@ func (cmd *installedCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interf
 		}
 	}
 	if exitCode != subcommands.ExitSuccess {
-		fmt.Fprintf(os.Stderr, "No package matching filter %q installed.\n", cmd.filter)
+		fmt.Fprintf(os.Stderr, "No package matching filter %q installed.\n", filter)
 	}
 	return exitCode
 }

@@ -39,9 +39,12 @@ type availableCmd struct {
 }
 
 func (*availableCmd) Name() string     { return "available" }
-func (*availableCmd) Synopsis() string { return "list all available packages in repos" }
+func (*availableCmd) Synopsis() string { return "list available packages" }
 func (*availableCmd) Usage() string {
-	return fmt.Sprintf("%s available [-sources repo1,repo2...] [-filter <name>] [-info]\n", path.Base(os.Args[0]))
+	return fmt.Sprintf(`%s available [-sources repo1,repo2...] [-info] [<initial>]:
+	List available packages beginning with an initial string,
+	if no initial string is provided all available packages will be listed.
+`, path.Base(os.Args[0]))
 }
 
 func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {
@@ -50,8 +53,20 @@ func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *availableCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *availableCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitFailure
+
+	var filter string
+	switch f.NArg() {
+	case 0:
+		filter = ""
+	case 1:
+		filter = f.Arg(0)
+	default:
+		fmt.Fprintln(os.Stderr, "Excessive arguments")
+		f.Usage()
+		return subcommands.ExitUsageError
+	}
 
 	repos, err := buildSources(cmd.sources)
 	if err != nil {
@@ -70,17 +85,17 @@ func (cmd *availableCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interf
 	}
 
 	for r, pl := range m {
-		logger.Infof("Searching %q for packages matching filter %q.", r, cmd.filter)
+		logger.Infof("Searching %q for packages matching filter %q.", r, filter)
 		sort.Strings(pl)
-		i := sort.SearchStrings(pl, cmd.filter)
-		if i >= len(pl) || !strings.Contains(pl[i], cmd.filter) {
+		i := sort.SearchStrings(pl, filter)
+		if i >= len(pl) || !strings.Contains(pl[i], filter) {
 			continue
 		}
 		if !cmd.info {
 			fmt.Println(r)
 		}
 		for _, p := range pl {
-			if strings.Contains(p, cmd.filter) {
+			if strings.Contains(p, filter) {
 				exitCode = subcommands.ExitSuccess
 				pi := goolib.PkgNameSplit(p)
 				if cmd.info {
@@ -93,7 +108,7 @@ func (cmd *availableCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interf
 	}
 
 	if exitCode != subcommands.ExitSuccess {
-		fmt.Fprintf(os.Stderr, "No package matching filter %q available in any repo.\n", cmd.filter)
+		fmt.Fprintf(os.Stderr, "No package matching filter %q available in any repo.\n", filter)
 	}
 	return exitCode
 }
