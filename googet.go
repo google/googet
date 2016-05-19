@@ -12,7 +12,7 @@ limitations under the License.
 */
 
 // The googet binary is the client for the GoGet packaging system, it performs the listing,
-// getting, installing and removing functons on client machines.
+// getting, installing and removing functions on client machines.
 package main
 
 import (
