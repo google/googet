@@ -66,7 +66,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 
 	if repoPath == "" {
-		fmt.Fprintf(os.Stderr, "Repo %q not found, nothing to remove.", name)
+		fmt.Fprintf(os.Stderr, "Repo %q not found, nothing to remove.\n", name)
 		return subcommands.ExitUsageError
 	}
 
@@ -76,7 +76,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 
 	for i, rf := range rfs {
-		if rf.Name == name {
+		if strings.ToLower(rf.Name) == strings.ToLower(name) {
 			rfs = append(rfs[:i], rfs[i+1:]...)
 		}
 	}
