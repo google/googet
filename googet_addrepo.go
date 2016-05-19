@@ -74,9 +74,11 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 	repoPath := filepath.Join(rootDir, repoDir, cmd.file)
 
 	if _, err := oswrap.Stat(repoPath); err != nil && os.IsNotExist(err) {
-		if err := writeRepoFile(repoPath, []repoFile{repoFile{Name: name, URL: url}}); err != nil {
+		rf := repoFile{Name: name, URL: url}
+		if err := writeRepoFile(repoPath, []repoFile{rf}); err != nil {
 			logger.Fatal(err)
 		}
+		fmt.Printf("Wrote repo file %s with content:\n  Name: %s\n  URL: %s\n", repoPath, rf.Name, rf.URL)
 		return subcommands.ExitSuccess
 	}
 
@@ -92,11 +94,13 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 		}
 	}
 
-	rfs = append(rfs, repoFile{Name: name, URL: url})
+	rf := repoFile{Name: name, URL: url}
+	rfs = append(rfs, rf)
 
 	if err := writeRepoFile(repoPath, rfs); err != nil {
 		logger.Fatal(err)
 	}
+	fmt.Printf("Appended to repo file %s with the following content:\n  Name: %s\n  URL: %s\n", repoPath, rf.Name, rf.URL)
 
 	return subcommands.ExitSuccess
 }
