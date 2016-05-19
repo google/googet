@@ -115,8 +115,8 @@ func unmarshalRepoFile(p string) ([]repoFile, error) {
 	if err := yaml.Unmarshal(b, &rfs); err != nil {
 		return nil, err
 	}
-	for _, rf := range rfs {
-		rf.fileName = p
+	for i := range rfs {
+		rfs[i].fileName = p
 	}
 	return rfs, nil
 }

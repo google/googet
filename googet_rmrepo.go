@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -30,7 +31,7 @@ func (*rmRepoCmd) Name() string     { return "rmrepo" }
 func (*rmRepoCmd) Synopsis() string { return "remove repository" }
 func (*rmRepoCmd) Usage() string {
 	return fmt.Sprintf(`%s rmrepo <name>:
-				Removes the named repository. 
+	Removes the named repository from GooGet's repository list. 
 `, filepath.Base(os.Args[0]))
 }
 
@@ -58,13 +59,14 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	var repoPath string
 	for _, re := range repoEntries {
-		if re.Name == name {
+		if strings.ToLower(re.Name) == strings.ToLower(name) {
 			repoPath = re.fileName
 		}
 	}
 
 	if repoPath == "" {
-		logger.Fatalf("Repo %q not found, nothing to remove.", name)
+		fmt.Fprintf(os.Stderr, "Repo %q not found, nothing to remove.", name)
+		return subcommands.ExitUsageError
 	}
 
 	rfs, err := unmarshalRepoFile(repoPath)
@@ -78,10 +80,17 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		}
 	}
 
-	if err := writeRepoFile(repoPath, rfs); err != nil {
+	if len(rfs) > 0 {
+		if err := writeRepoFile(repoPath, rfs); err != nil {
+			logger.Fatal(err)
+		}
+		fmt.Printf("Removed repo %q from repo file %s.\n", name, repoPath)
+		return subcommands.ExitSuccess
+	}
+
+	if err := oswrap.Remove(repoPath); err != nil {
 		logger.Fatal(err)
 	}
-	fmt.Printf("Removed repo %q from repo file %s.\n", name, repoPath)
-
+	fmt.Printf("Removed repo %q and repo file %s.\n", name, repoPath)
 	return subcommands.ExitSuccess
 }
