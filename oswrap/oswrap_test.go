@@ -24,10 +24,11 @@ func TestRootDir(t *testing.T) {
 	}{
 		{"/some/abs/path", "/some"},
 		{"some/rel/path", "some"},
+		{"/path", "/path"},
 	}
 	for _, tt := range table {
 		if got := rootDir(tt.path); got != tt.want {
-			t.Fatalf("rootDir did not retunr expected path, got: %q, want: %q ", got, tt.want)
+			t.Fatalf("rootDir did not return expected path, got: %q, want: %q ", got, tt.want)
 		}
 	}
 }
