@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"golang.org/x/net/context"
