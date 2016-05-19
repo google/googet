@@ -71,8 +71,9 @@ func installedPackages(state client.GooGetState) packageMap {
 }
 
 type repoFile struct {
-	Name string
-	URL  string
+	fileName string
+	Name     string
+	URL      string
 }
 
 func unmarshalRepoFile(p string) ([]repoFile, error) {
@@ -98,11 +99,18 @@ func unmarshalRepoFile(p string) ([]repoFile, error) {
 	// Both repoFile and []repoFile are valid for backwards compatibilty.
 	var rf repoFile
 	if err := yaml.Unmarshal(b, &rf); err == nil && rf.URL != "" {
+		rf.fileName = p
 		return []repoFile{rf}, nil
 	}
 
 	var rfs []repoFile
-	return rfs, yaml.Unmarshal(b, &rfs)
+	if err := yaml.Unmarshal(b, &rfs); err != nil {
+		return nil, err
+	}
+	for _, rf := range rfs {
+		rf.fileName = p
+	}
+	return rfs, nil
 }
 
 type conf struct {
@@ -120,22 +128,32 @@ func unmarshalConfFile(p string) (*conf, error) {
 }
 
 func repoList(dir string) ([]string, error) {
-	fl, err := filepath.Glob(filepath.Join(dir, "*.repo"))
+	repoEntries, err := repos(dir)
 	if err != nil {
 		return nil, err
 	}
 	var rl []string
+	for _, re := range repoEntries {
+		rl = append(rl, re.URL)
+	}
+	return rl, nil
+}
+
+func repos(dir string) ([]repoFile, error) {
+	fl, err := filepath.Glob(filepath.Join(dir, "*.repo"))
+	if err != nil {
+		return nil, err
+	}
+	var repoEntries []repoFile
 	for _, f := range fl {
 		rfs, err := unmarshalRepoFile(f)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
-		for _, rf := range rfs {
-			rl = append(rl, rf.URL)
-		}
+		repoEntries = append(repoEntries, rfs...)
 	}
-	return rl, nil
+	return repoEntries, nil
 }
 
 func writeState(s *client.GooGetState, sf string) error {
@@ -335,6 +353,9 @@ func run() int {
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
+	cmdr.Register(&listReposCmd{}, "repository management")
+	cmdr.Register(&addRepoCmd{}, "repository management")
+	cmdr.Register(&rmRepoCmd{}, "repository management")
 	cmdr.Register(&cleanCmd{}, "")
 
 	cmdr.ImportantFlag("verbose")
