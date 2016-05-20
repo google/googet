@@ -70,14 +70,15 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		return subcommands.ExitUsageError
 	}
 
-	rfs, err := unmarshalRepoFile(repoPath)
+	urf, err := unmarshalRepoFile(repoPath)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	for i, rf := range rfs {
-		if strings.ToLower(rf.Name) == strings.ToLower(name) {
-			rfs = append(rfs[:i], rfs[i+1:]...)
+	var rfs []repoFile
+	for i, rf := range urf {
+		if strings.ToLower(rf.Name) != strings.ToLower(name) {
+			rfs = append(rfs, rf)
 		}
 	}
 

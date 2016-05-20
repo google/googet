@@ -82,14 +82,15 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 		return subcommands.ExitSuccess
 	}
 
-	rfs, err := unmarshalRepoFile(repoPath)
+	ufs, err := unmarshalRepoFile(repoPath)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	for i, rf := range rfs {
+	var rfs []repoFile
+	for i, rf := range ufs {
 		if rf.Name == name || rf.URL == url {
-			rfs = append(rfs[:i], rfs[i+1:]...)
+			rfs = append(rfs, rf)
 		}
 	}
 
