@@ -76,7 +76,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 
 	var rfs []repoFile
-	for i, rf := range urf {
+	for _, rf := range urf {
 		if strings.ToLower(rf.Name) != strings.ToLower(name) {
 			rfs = append(rfs, rf)
 		}
