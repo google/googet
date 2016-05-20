@@ -89,7 +89,7 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 
 	var rfs []repoFile
 	for _, rf := range ufs {
-		if rf.Name == name || rf.URL == url {
+		if rf.Name != name && rf.URL != url {
 			rfs = append(rfs, rf)
 		}
 	}
