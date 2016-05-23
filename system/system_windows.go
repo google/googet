@@ -69,75 +69,6 @@ func removeUninstallEntry(name string) error {
 	return registry.DeleteKey(registry.LOCAL_MACHINE, reg)
 }
 
-func refreshEnv() {
-	logger.Info("Refreshing environment...")
-	envMap := make(map[string]string)
-	exEnvMap := make(map[string]string)
-	// Order is important as USER variables will override SYSTEM ones.
-	for _, et := range []struct {
-		envPath string
-		rootKey registry.Key
-	}{
-		{`System\CurrentControlSet\Control\Session Manager\Environment`, registry.LOCAL_MACHINE},
-		{"Environment", registry.CURRENT_USER},
-	} {
-		env, err := registry.OpenKey(et.rootKey, et.envPath, registry.READ)
-		if err != nil {
-			logger.Error(err)
-			return
-		}
-		defer env.Close()
-
-		envList, err := env.ReadValueNames(0)
-		if err != nil {
-			logger.Error(err)
-			return
-		}
-
-		keyBlacklist := []string{"TEMP", "TMP", "USERNAME"}
-
-		for _, key := range envList {
-			if goolib.ContainsString(key, keyBlacklist) {
-				continue
-			}
-			val, _, err := env.GetStringValue(key)
-			if err != nil {
-				logger.Error(err)
-			}
-			if key == "Path" {
-				if ov, ok := exEnvMap[key]; ok {
-					val = ov + ";" + val
-				}
-				exEnvMap[key] = val
-				continue
-			}
-			if strings.Contains(val, "%") {
-				exEnvMap[key] = val
-			} else {
-				envMap[key] = val
-			}
-		}
-	}
-	for key, val := range envMap {
-		if err := os.Setenv(key, val); err != nil {
-			logger.Errorf("Error setting environment: %v", err)
-		}
-	}
-	for key, val := range exEnvMap {
-		exVal, err := registry.ExpandString(val)
-		if err != nil {
-			logger.Error(err)
-		} else {
-			val = exVal
-		}
-		fmt.Printf("setting %s to %s\n", key, val)
-		if err := os.Setenv(key, val); err != nil {
-			logger.Errorf("error setting environment: %v", err)
-		}
-	}
-
-}
-
 // Install performs a system specfic install given a package extraction directory and a PkgSpec struct.
 func Install(dir string, ps *goolib.PkgSpec) error {
 	in := ps.Install
@@ -182,7 +113,7 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	if err := addUninstallEntry(dir, ps); err != nil {
 		logger.Error(err)
 	}
-	refreshEnv()
+
 	return nil
 }
 
@@ -228,7 +159,6 @@ func Uninstall(st client.PackageState) error {
 		logger.Error(err)
 	}
 
-	refreshEnv()
 	return nil
 }
 
