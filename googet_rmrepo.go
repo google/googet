@@ -53,46 +53,44 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		return subcommands.ExitUsageError
 	}
 
-	repoEntries, err := repos(filepath.Join(rootDir, repoDir))
+	rfs, err := repos(filepath.Join(rootDir, repoDir))
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	var repoPath string
-	for _, re := range repoEntries {
-		if strings.ToLower(re.Name) == strings.ToLower(name) {
-			repoPath = re.fileName
+	var foundRepo repoFile
+	for _, rf := range rfs {
+		for _, re := range rf.repoEntries {
+			if strings.ToLower(re.Name) == strings.ToLower(name) {
+				foundRepo = rf
+				break
+			}
 		}
 	}
 
-	if repoPath == "" {
+	if foundRepo.fileName == "" {
 		fmt.Fprintf(os.Stderr, "Repo %q not found, nothing to remove.\n", name)
 		return subcommands.ExitUsageError
 	}
 
-	urf, err := unmarshalRepoFile(repoPath)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	var rfs []repoFile
-	for _, rf := range urf {
-		if strings.ToLower(rf.Name) != strings.ToLower(name) {
-			rfs = append(rfs, rf)
+	var res []repoEntry
+	for _, re := range foundRepo.repoEntries {
+		if strings.ToLower(re.Name) != strings.ToLower(name) {
+			res = append(res, re)
 		}
 	}
 
-	if len(rfs) > 0 {
-		if err := writeRepoFile(repoPath, rfs); err != nil {
+	if len(res) > 0 {
+		if err := writeRepoFile(repoFile{foundRepo.fileName, res}); err != nil {
 			logger.Fatal(err)
 		}
-		fmt.Printf("Removed repo %q from repo file %s.\n", name, repoPath)
+		fmt.Printf("Removed repo %q from repo file %s.\n", name, foundRepo.fileName)
 		return subcommands.ExitSuccess
 	}
 
-	if err := oswrap.Remove(repoPath); err != nil {
+	if err := oswrap.Remove(foundRepo.fileName); err != nil {
 		logger.Fatal(err)
 	}
-	fmt.Printf("Removed repo %q and repo file %s.\n", name, repoPath)
+	fmt.Printf("Removed repo %q and repo file %s.\n", name, foundRepo.fileName)
 	return subcommands.ExitSuccess
 }

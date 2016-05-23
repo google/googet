@@ -74,33 +74,34 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 	repoPath := filepath.Join(rootDir, repoDir, cmd.file)
 
 	if _, err := oswrap.Stat(repoPath); err != nil && os.IsNotExist(err) {
-		rf := repoFile{Name: name, URL: url}
-		if err := writeRepoFile(repoPath, []repoFile{rf}); err != nil {
+		re := repoEntry{Name: name, URL: url}
+		if err := writeRepoFile(repoFile{repoPath, []repoEntry{re}}); err != nil {
 			logger.Fatal(err)
 		}
-		fmt.Printf("Wrote repo file %s with content:\n  Name: %s\n  URL: %s\n", repoPath, rf.Name, rf.URL)
+		fmt.Printf("Wrote repo file %s with content:\n  Name: %s\n  URL: %s\n", repoPath, re.Name, re.URL)
 		return subcommands.ExitSuccess
 	}
 
-	ufs, err := unmarshalRepoFile(repoPath)
+	rf, err := unmarshalRepoFile(repoPath)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	var rfs []repoFile
-	for _, rf := range ufs {
-		if rf.Name != name && rf.URL != url {
-			rfs = append(rfs, rf)
+	var res []repoEntry
+	for _, re := range rf.repoEntries {
+		if re.Name != name && re.URL != url {
+			res = append(res, re)
 		}
 	}
 
-	rf := repoFile{Name: name, URL: url}
-	rfs = append(rfs, rf)
+	re := repoEntry{Name: name, URL: url}
+	res = append(res, re)
+	rf = repoFile{rf.fileName, res}
 
-	if err := writeRepoFile(repoPath, rfs); err != nil {
+	if err := writeRepoFile(rf); err != nil {
 		logger.Fatal(err)
 	}
-	fmt.Printf("Appended to repo file %s with the following content:\n  Name: %s\n  URL: %s\n", repoPath, rf.Name, rf.URL)
+	fmt.Printf("Appended to repo file %s with the following content:\n  Name: %s\n  URL: %s\n", repoPath, re.Name, re.URL)
 
 	return subcommands.ExitSuccess
 }

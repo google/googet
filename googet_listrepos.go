@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -36,18 +35,17 @@ func (*listReposCmd) Usage() string {
 func (cmd *listReposCmd) SetFlags(f *flag.FlagSet) {}
 
 func (cmd *listReposCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	repoEntries, err := repos(filepath.Join(rootDir, repoDir))
+	rfs, err := repos(filepath.Join(rootDir, repoDir))
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	for _, re := range repoEntries {
-		if re.Name == "" {
-			re.Name = strings.TrimRight(filepath.Base(re.fileName), ".repo")
+	for _, rf := range rfs {
+		fmt.Println(rf.fileName + ":")
+
+		for _, re := range rf.repoEntries {
+			fmt.Printf("  %s: %s\n", re.Name, re.URL)
 		}
-		fmt.Print(re.Name, ":\n")
-		fmt.Println("  URL:", re.URL)
-		fmt.Println("  File:", re.fileName)
 	}
 	return subcommands.ExitSuccess
 }
