@@ -32,7 +32,6 @@ import (
 )
 
 type availableCmd struct {
-	filter  string
 	info    bool
 	sources string
 }
@@ -47,7 +46,6 @@ func (*availableCmd) Usage() string {
 }
 
 func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {
-	f.StringVar(&cmd.filter, "filter", "", "package search filter")
 	f.BoolVar(&cmd.info, "info", false, "display package info")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
