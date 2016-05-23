@@ -22,7 +22,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/StackExchange/wmi"
 	"github.com/google/googet/client"
