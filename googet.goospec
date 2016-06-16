@@ -40,7 +40,7 @@
       ]
   }],
   "build": {
-    "windows": "build.cmd",
+    "windows": "powershell -file ./build.ps1",
     "linux": "./build.sh"
   }
 }
