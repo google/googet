@@ -37,6 +37,7 @@ var (
 	verbose   = flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog = flag.Bool("system_log", false, "log to Linux Syslog or Windows Event Log")
 	port      = flag.Int("port", 8000, "listen port")
+	repoName  = flag.String("repo_name", "repo", "name of the repo to setup")
 
 	repoContents *repoPackages
 )
@@ -97,8 +98,6 @@ func runSync(packageDir string) error {
 		return err
 	}
 
-	// TODO(ajackura): Don't reset repoContents each run, just append
-	// or remove as needed.
 	repoContents = &repoPackages{}
 	var wg sync.WaitGroup
 	for _, pkg := range pkgs {
@@ -144,7 +143,7 @@ func main() {
 		logger.Error(err)
 	}
 
-	http.HandleFunc("/repo/index", serve)
+	http.HandleFunc(fmt.Sprintf("/%s/index", *repoName), serve)
 	http.Handle("/packages/", http.StripPrefix("/packages/", http.FileServer(http.Dir(packageDir))))
 	go func() {
 		err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
