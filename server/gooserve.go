@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -81,7 +82,7 @@ func packageInfo(pkgPath, packageDir string) error {
 	}
 	defer f.Close()
 
-	repoContents.add(filepath.Join(packageDir, pkg), goolib.Checksum(f), spec)
+	repoContents.add(path.Join(packageDir, pkg), goolib.Checksum(f), spec)
 	return nil
 }
 
@@ -138,18 +139,19 @@ func main() {
 
 	logger.Init("GooServe", *verbose, *systemLog, ioutil.Discard)
 
-	http.HandleFunc("/index", serve)
+	packageDir := filepath.Join(*root, "packages")
+	if err := runSync(packageDir); err != nil {
+		logger.Error(err)
+	}
+
+	http.HandleFunc("/repo/index", serve)
+	http.Handle("/packages/", http.StripPrefix("/packages/", http.FileServer(http.Dir(packageDir))))
 	go func() {
 		err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
 		if err != nil {
 			logger.Fatal(err)
 		}
 	}()
-
-	packageDir := filepath.Join(*root, "packages")
-	if err := runSync(packageDir); err != nil {
-		logger.Error(err)
-	}
 
 	for range time.Tick(*interval) {
 		if err := runSync(packageDir); err != nil {
