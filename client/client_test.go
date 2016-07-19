@@ -34,6 +34,7 @@ import (
 const (
 	cacheLife = 1 * time.Minute
 	port      = 56456
+	proxyServer = ""
 )
 
 func init() {
@@ -197,7 +198,7 @@ func TestUnmarshalRepoPackagesJSON(t *testing.T) {
 
 	go http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 
-	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife)
+	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -239,7 +240,7 @@ func TestUnmarshalRepoPackagesGzip(t *testing.T) {
 
 	go http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 
-	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife)
+	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 
 	// No http server as this should use the cached content.
-	got, err := unmarshalRepoPackages("http://localhost/test-repo", tempDir, cacheLife)
+	got, err := unmarshalRepoPackages("http://localhost/test-repo", tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}

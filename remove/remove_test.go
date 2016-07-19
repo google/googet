@@ -70,7 +70,7 @@ func TestUninstallPkg(t *testing.T) {
 		},
 	}
 
-	if err := uninstallPkg(goolib.PackageInfo{Name: "foo"}, st, false); err != nil {
+	if err := uninstallPkg(goolib.PackageInfo{Name: "foo"}, st, false, ""); err != nil {
 		t.Fatalf("Error running uninstallPkg: %v", err)
 	}
 
