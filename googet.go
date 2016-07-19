@@ -48,14 +48,14 @@ const (
 )
 
 var (
-	rootDir   string
-	noConfirm bool
-	verbose   bool
-	systemLog bool
-	showVer   bool
-	version   string
-	cacheLife = 3 * time.Minute
-	archs     []string
+	rootDir     string
+	noConfirm   bool
+	verbose     bool
+	systemLog   bool
+	showVer     bool
+	version     string
+	cacheLife   = 3 * time.Minute
+	archs       []string
 	proxyServer string
 )
 
@@ -122,8 +122,8 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 }
 
 type conf struct {
-	Archs     []string
-	CacheLife string
+	Archs       []string
+	CacheLife   string
 	ProxyServer string
 }
 

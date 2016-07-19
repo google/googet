@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
-	"net/url"
 
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
@@ -151,7 +151,7 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 		}
 		httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
 	}
-	
+
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
 		logger.Infof("Using cached repo content for %s.", p)

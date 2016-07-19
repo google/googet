@@ -32,8 +32,8 @@ import (
 )
 
 const (
-	cacheLife = 1 * time.Minute
-	port      = 56456
+	cacheLife   = 1 * time.Minute
+	port        = 56456
 	proxyServer = ""
 )
 
