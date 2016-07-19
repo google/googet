@@ -27,7 +27,7 @@ import (
 	"github.com/google/logger"
 )
 
-func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool) error {
+func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, proxyServer string) error {
 	logger.Infof("Executing removal of package %q", pi.Name)
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
@@ -41,7 +41,7 @@ func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool)
 		if os.IsNotExist(err) {
 			dst := ps.UnpackDir + ".goo"
 			logger.Infof("Package directory does not exist for %s.%s.%s, redownloading...", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
-			if err := download.Package(ps.DownloadURL, dst, ps.Checksum); err != nil {
+			if err := download.Package(ps.DownloadURL, dst, ps.Checksum, proxyServer); err != nil {
 				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it form the database: %v", pi.Name, pi.Arch, pi.Ver, err)
 			}
 			if _, err := download.ExtractPkg(dst); err != nil {
@@ -135,17 +135,17 @@ func EnumerateDeps(pi goolib.PackageInfo, state client.GooGetState) (DepMap, []s
 
 // All removes a package and all dependant packages. Packages with no dependant packages
 // will be removed first.
-func All(pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool) error {
+func All(pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, proxyServer string) error {
 	for len(deps) > 1 {
 		for dep := range deps {
 			if len(deps[dep]) == 0 {
 				di := goolib.PkgNameSplit(dep)
-				if err := uninstallPkg(di, state, dbOnly); err != nil {
+				if err := uninstallPkg(di, state, dbOnly, proxyServer); err != nil {
 					return err
 				}
 				deps.remove(dep)
 			}
 		}
 	}
-	return uninstallPkg(pi, state, dbOnly)
+	return uninstallPkg(pi, state, dbOnly, proxyServer)
 }

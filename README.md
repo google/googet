@@ -24,3 +24,13 @@ over and run:
 googet -root 'c:/ProgramData/GooGet' install googet googet.x86_64.VERSION.goo
 ```
 
+## Conf file
+
+GooGet has the ability to use a conf file to change a few of the default settings.
+Place a file named googet.conf in the googet root.
+
+```
+proxyserver: http://address_to_proxy:port
+archs: [noarch, x86_64]
+cachelife: 10m
+```

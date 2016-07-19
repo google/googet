@@ -55,7 +55,7 @@ func (cmd *latestCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inter
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife)
+	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 	v, _, a, err := client.FindRepoLatest(pi, rm, archs)
 	if err != nil {
 		logger.Fatal(err)

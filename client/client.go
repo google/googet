@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"net/url"
 
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
@@ -87,10 +88,10 @@ func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 type RepoMap map[string][]goolib.RepoSpec
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration) RepoMap {
+func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
 	rm := make(RepoMap)
 	for _, r := range srcs {
-		rf, err := unmarshalRepoPackages(r, cacheDir, cacheLife)
+		rf, err := unmarshalRepoPackages(r, cacheDir, cacheLife, proxyServer)
 		if err != nil {
 			logger.Errorf("error reading repo %q: %v", r, err)
 			continue
@@ -140,8 +141,17 @@ func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
-func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
 	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
+	httpClient := &http.Client{}
+	if proxyServer != "" {
+		proxyUrl, err := url.Parse(proxyServer)
+		if err != nil {
+			logger.Fatal("%q", err)
+		}
+		httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
+	}
+	
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
 		logger.Infof("Using cached repo content for %s.", p)
@@ -165,7 +175,7 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration) ([]gooli
 
 	url := p + "/index.gz"
 	logger.Infof("Fetching %q", url)
-	res, err := http.Get(url)
+	res, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +187,7 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration) ([]gooli
 	logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
 	url = p + "/index"
 	logger.Infof("Fetching %q", url)
-	res, err = http.Get(url)
+	res, err = httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}

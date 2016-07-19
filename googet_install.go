@@ -116,7 +116,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 			continue
 		}
 		if len(rm) == 0 {
-			rm = client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife)
+			rm = client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 		}
 		if pi.Ver == "" {
 			v, _, a, err := client.FindRepoLatest(pi, rm, archs)
@@ -161,7 +161,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 				continue
 			}
 		}
-		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly); err != nil {
+		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -184,7 +184,7 @@ func reinstall(pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
 			return nil
 		}
 	}
-	if err := install.Reinstall(ps, state, rd); err != nil {
+	if err := install.Reinstall(ps, state, rd, proxyServer); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil

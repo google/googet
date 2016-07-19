@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,8 +37,16 @@ import (
 
 // Package downloads a package from the given url,
 // if a SHA256 checksum is provided it will be checked.
-func Package(pkgURL, dst, chksum string) error {
-	resp, err := http.Get(pkgURL)
+func Package(pkgURL, dst, chksum string, proxyServer string) error {
+	httpClient := &http.Client{}
+	if proxyServer != "" {
+		proxyUrl, err := url.Parse(proxyServer)
+		if err != nil {
+			logger.Fatal("%q", err)
+		}
+		httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
+	}
+	resp, err := httpClient.Get(pkgURL)
 	if err != nil {
 		return err
 	}
@@ -46,22 +55,22 @@ func Package(pkgURL, dst, chksum string) error {
 	if err := oswrap.RemoveAll(dst); err != nil {
 		return err
 	}
-	if err := download(resp.Body, dst, chksum); err != nil {
+	if err := download(resp.Body, dst, chksum, proxyServer); err != nil {
 		return err
 	}
 	return nil
 }
 
 // FromRepo downloads a package from a repo.
-func FromRepo(rs goolib.RepoSpec, repo, dir string) (string, error) {
+func FromRepo(rs goolib.RepoSpec, repo, dir string, proxyServer string) (string, error) {
 	pkgURL := strings.TrimSuffix(repo, filepath.Base(repo)) + rs.Source
 	pn := goolib.PackageInfo{rs.PackageSpec.Name, rs.PackageSpec.Arch, rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
-	return dst, Package(pkgURL, dst, rs.Checksum)
+	return dst, Package(pkgURL, dst, rs.Checksum, proxyServer)
 }
 
 // Latest downloads the latest available version of a package.
-func Latest(name, dir string, rm client.RepoMap, archs []string) (string, error) {
+func Latest(name, dir string, rm client.RepoMap, archs []string, proxyServer string) (string, error) {
 	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{name, "", ""}, rm, archs)
 	if err != nil {
 		return "", err
@@ -70,10 +79,10 @@ func Latest(name, dir string, rm client.RepoMap, archs []string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return FromRepo(rs, repo, dir)
+	return FromRepo(rs, repo, dir, proxyServer)
 }
 
-func download(r io.Reader, p, chksum string) (err error) {
+func download(r io.Reader, p, chksum string, proxyServer string) (err error) {
 	f, err := oswrap.Create(p)
 	if err != nil {
 		return err

@@ -67,7 +67,7 @@ func (cmd *updateCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife)
+	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 	ud := updates(pm, rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
@@ -87,7 +87,7 @@ func (cmd *updateCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly); err != nil {
+		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
