@@ -42,7 +42,7 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
 		if err != nil {
-			logger.Fatalf("%q", err)
+			logger.Fatal(err)
 		}
 		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
