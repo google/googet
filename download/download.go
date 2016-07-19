@@ -40,11 +40,11 @@ import (
 func Package(pkgURL, dst, chksum string, proxyServer string) error {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
-		proxyUrl, err := url.Parse(proxyServer)
+		proxyURL, err := url.Parse(proxyServer)
 		if err != nil {
-			logger.Fatal("%q", err)
+			logger.Fatalf("%q", err)
 		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyUrl)}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
 	resp, err := httpClient.Get(pkgURL)
 	if err != nil {
