@@ -44,7 +44,7 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 		if err != nil {
 			logger.Fatal("%q", err)
 		}
-		httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyUrl)}}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyUrl)}
 	}
 	resp, err := httpClient.Get(pkgURL)
 	if err != nil {
