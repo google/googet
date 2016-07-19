@@ -145,11 +145,11 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
 	httpClient := &http.Client{}
 	if proxyServer != "" {
-		proxyURL, err := url.Parse(proxyServer)
+		proxyUrl, err := url.Parse(proxyServer)
 		if err != nil {
-			logger.Fatalf("%q", err)
+			logger.Fatal("%q", err)
 		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyUrl)}
 	}
 
 	fi, err := oswrap.Stat(cf)
