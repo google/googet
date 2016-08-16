@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/bash
 version=$(cat googet.goospec | grep -Po '"version":\s+"\K.+(?=",)')
 if [[ $? -ne 0 ]]; then
   echo "could not match verson in goospec"
