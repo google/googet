@@ -1,9 +1,9 @@
 {
   "name": "googet",
-  "version": "2.9.1@1",
+  "version": "2.9.1@2",
   "arch": "x86_64",
-  "authors": "ajackura",
-  "owners": "ajackura",
+  "authors": "ajackura@google.com",
+  "license": "http://www.apache.org/licenses/LICENSE-2.0",
   "description": "GooGet Package Manager",
   "files": {
     "googet.exe": "<ProgramData>/GooGet/googet.exe"
