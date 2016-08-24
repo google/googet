@@ -32,6 +32,7 @@ var interpreter = map[string]string{
 	".ps1": "powershell",
 	".cmd": "cmd",
 	".bat": "cmd",
+	".exe": "cmd",
 }
 
 // scriptInterpreter reads a scripts extension and returns the interpreter to use.

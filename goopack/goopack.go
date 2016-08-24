@@ -337,14 +337,22 @@ func verifyFiles(gs goolib.GooSpec, fm fileMap) error {
 	return nil
 }
 
-func createPackage(gs goolib.GooSpec, dir string) error {
+func createPackage(gs goolib.GooSpec, baseDir, outDir string) error {
 	switch {
 	case gs.Build.Linux != "" && runtime.GOOS == "linux":
-		if err := goolib.Exec(gs.Build.Linux, nil, nil, ioutil.Discard); err != nil {
+		cmd := gs.Build.Linux
+		if !filepath.IsAbs(cmd) {
+			cmd = filepath.Join(baseDir, cmd)
+		}
+		if err := goolib.Exec(cmd, gs.Build.LinuxArgs, nil, ioutil.Discard); err != nil {
 			return err
 		}
 	case gs.Build.Windows != "" && runtime.GOOS == "windows":
-		if err := goolib.Exec(gs.Build.Windows, nil, nil, ioutil.Discard); err != nil {
+		cmd := gs.Build.Windows
+		if !filepath.IsAbs(cmd) {
+			cmd = filepath.Join(baseDir, cmd)
+		}
+		if err := goolib.Exec(cmd, gs.Build.WindowsArgs, nil, ioutil.Discard); err != nil {
 			return err
 		}
 	}
@@ -355,7 +363,7 @@ func createPackage(gs goolib.GooSpec, dir string) error {
 	if err := verifyFiles(gs, fm); err != nil {
 		return err
 	}
-	return packageFiles(fm, gs, dir)
+	return packageFiles(fm, gs, outDir)
 }
 
 func usage() {
@@ -379,10 +387,11 @@ func main() {
 		usage()
 		os.Exit(0)
 	}
-	dir := *outputDir
-	if dir == "" {
+
+	outDir := *outputDir
+	if outDir == "" {
 		var err error
-		dir, err = os.Getwd()
+		outDir, err = os.Getwd()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -392,7 +401,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := createPackage(gs, dir); err != nil {
+	baseDir := filepath.Dir(filepath.Clean(flag.Arg(0)))
+	if baseDir == "." {
+		baseDir, err = os.Getwd()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if err := createPackage(gs, baseDir, outDir); err != nil {
 		log.Fatal(err)
 	}
 }

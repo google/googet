@@ -32,7 +32,8 @@ import (
 )
 
 type build struct {
-	Windows, Linux string
+	Windows, Linux         string
+	WindowsArgs, LinuxArgs []string
 }
 
 // PkgSources is a list of includes, excludes and their target in the package.
