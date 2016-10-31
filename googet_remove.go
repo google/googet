@@ -17,6 +17,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,7 +27,6 @@ import (
 	"github.com/google/googet/remove"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type removeCmd struct {

@@ -14,6 +14,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -21,7 +22,6 @@ import (
 
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type listReposCmd struct{}

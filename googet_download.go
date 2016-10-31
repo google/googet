@@ -16,6 +16,7 @@ package main
 // The download subcommand handles the downloading of a package.
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,7 +27,6 @@ import (
 	"github.com/google/googet/goolib"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type downloadCmd struct {

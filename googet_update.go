@@ -16,6 +16,7 @@ package main
 // The update subcommand handles bulk updating of packages.
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,7 +27,6 @@ import (
 	"github.com/google/googet/install"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type updateCmd struct {

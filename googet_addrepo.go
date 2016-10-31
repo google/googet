@@ -14,6 +14,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -23,7 +24,6 @@ import (
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type addRepoCmd struct {

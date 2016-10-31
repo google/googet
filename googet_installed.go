@@ -17,6 +17,7 @@ package main
 // The default filter is an empty string and will return all packages.
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -28,7 +29,6 @@ import (
 	"github.com/google/googet/goolib"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type installedCmd struct {

@@ -16,6 +16,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,7 +34,6 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"
-	"golang.org/x/net/context"
 )
 
 const (

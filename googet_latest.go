@@ -16,6 +16,7 @@ package main
 // The latest subcommand searches the repo for the specified package and returns the latest version.
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -25,7 +26,6 @@ import (
 	"github.com/google/googet/goolib"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"golang.org/x/net/context"
 )
 
 type latestCmd struct {
