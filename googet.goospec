@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.9.3@1",
+  "version": "2.9.3@2",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
