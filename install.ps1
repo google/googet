@@ -1,12 +1,11 @@
-$googet_root = "$env:ProgramData\GooGet"
+$googet_root = "${env:ProgramData}\GooGet"
+$machine_env = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
 
-$root = [Environment]::GetEnvironmentVariable('GooGetRoot', 'Machine')
-if ($root -ne "$googet_root") {
-  [Environment]::SetEnvironmentVariable('GooGetRoot', "$googet_root", 'Machine')
+if ((Get-ItemProperty $machine_env).GooGetRoot -ne $googet_root) {
+  Set-ItemProperty $machine_env -Name 'GooGetRoot' -Value $googet_root
 }
 
-$path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-if ($path -notlike "*%GooGetRoot%*") {
-  $path = $path + ";%GooGetRoot%"
-  [Environment]::SetEnvironmentVariable('Path', $path, 'Machine')
+$path = (Get-ItemProperty $machine_env).Path
+if ($path -notlike "*${googet_root}*") {
+  Set-ItemProperty $machine_env -Name 'Path' -Value ($path + ";${googet_root}")
 }
