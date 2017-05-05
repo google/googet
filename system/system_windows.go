@@ -88,20 +88,19 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	}()
 	s := filepath.Join(dir, in.Path)
 	msiLog := filepath.Join(dir, "msi_install.log")
+	ec := append(msiSuccessCodes, in.ExitCodes...)
 	switch filepath.Ext(s) {
 	case ".msi":
 		args := append([]string{"/i", s, "/qn", "/norestart", "/log", msiLog}, in.Args...)
-		ec := append(msiSuccessCodes, in.ExitCodes...)
 		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
 	case ".msp":
 		args := append([]string{"/update", s, "/qn", "/norestart", "/log", msiLog}, in.Args...)
-		ec := append(msiSuccessCodes, in.ExitCodes...)
 		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
 	case ".msu":
 		args := append([]string{s, "/quiet", "/norestart"}, in.Args...)
-		err = goolib.Run(exec.Command("wusa", args...), in.ExitCodes, out)
+		err = goolib.Run(exec.Command("wusa", args...), ec, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(s, in.Args...), in.ExitCodes, out)
+		err = goolib.Run(exec.Command(s, in.Args...), ec, out)
 	default:
 		err = goolib.Exec(s, in.Args, in.ExitCodes, out)
 	}
@@ -136,17 +135,17 @@ func Uninstall(st client.PackageState) error {
 		}
 	}()
 	s := filepath.Join(st.UnpackDir, un.Path)
+	ec := append(msiSuccessCodes, un.ExitCodes...)
 	switch filepath.Ext(s) {
 	case ".msi":
 		msiLog := filepath.Join(st.UnpackDir, "msi_uninstall.log")
 		args := append([]string{"/x", s, "/qn", "/norestart", "/log", msiLog}, un.Args...)
-		ec := append(msiSuccessCodes, un.ExitCodes...)
 		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
 	case ".msu":
 		args := append([]string{s, "/uninstall", "/quiet", "/norestart"}, un.Args...)
-		err = goolib.Run(exec.Command("wusa", args...), un.ExitCodes, out)
+		err = goolib.Run(exec.Command("wusa", args...), ec, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(s, un.Args...), un.ExitCodes, out)
+		err = goolib.Run(exec.Command(s, un.Args...), ec, out)
 	default:
 		err = goolib.Exec(filepath.Join(st.UnpackDir, un.Path), un.Args, un.ExitCodes, out)
 	}
