@@ -304,7 +304,7 @@ func lock(lf string) (*os.File, error) {
 			return lk, nil
 		}
 		if i == 1 {
-			fmt.Fprintln(os.Stderr, "GooGet lock already held, waiting...")
+			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
 		}
 		time.Sleep(5 * time.Second)
 	}
