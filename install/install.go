@@ -50,7 +50,7 @@ func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []st
 	logger.Infof("Resolving dependencies for %s %s version %s", ps.Arch, ps.Name, ps.Version)
 	for p, ver := range ps.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
-		mi, err := minInstalled(goolib.PackageInfo{pi.Name, pi.Arch, ver}, *state)
+		mi, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, *state)
 		if err != nil {
 			return err
 		}
@@ -59,7 +59,7 @@ func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []st
 			continue
 		}
 		var ins bool
-		v, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{pi.Name, pi.Arch, ""}, rm, archs)
+		v, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}, rm, archs)
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []st
 		}
 		if c > -1 {
 			logger.Infof("Dependency found: %s.%s %s is available", pi.Name, arch, v)
-			if err := FromRepo(goolib.PackageInfo{pi.Name, arch, v}, repo, cache, rm, archs, state, dbOnly, proxyServer); err != nil {
+			if err := FromRepo(goolib.PackageInfo{Name: pi.Name, Arch: arch, Ver: v}, repo, cache, rm, archs, state, dbOnly, proxyServer); err != nil {
 				return err
 			}
 			ins = true
@@ -79,15 +79,6 @@ func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []st
 		}
 	}
 	return nil
-}
-
-// Latest installs the latest version of a package.
-func Latest(pi goolib.PackageInfo, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string) error {
-	ver, repo, arch, err := client.FindRepoLatest(pi, rm, archs)
-	if err != nil {
-		return err
-	}
-	return FromRepo(goolib.PackageInfo{pi.Name, arch, ver}, repo, cache, rm, archs, state, dbOnly, proxyServer)
 }
 
 // FromRepo installs a package and all dependencies from a repository.
@@ -128,7 +119,7 @@ func FromRepo(pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, arch
 	logger.Infof("Installation of %s.%s.%s completed", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installation of %s.%s.%s and all dependencies completed\n", pi.Name, pi.Arch, pi.Ver)
 	// Clean up old version, if applicable.
-	pi = goolib.PackageInfo{pi.Name, pi.Arch, ""}
+	pi = goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}
 	if st, err := state.GetPackageState(pi); err == nil {
 		if !dbOnly {
 			cleanOldFiles(dir, st, insFiles)
@@ -163,7 +154,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 	}
 
 	if !ri {
-		ni, err := NeedsInstallation(goolib.PackageInfo{zs.Name, zs.Arch, zs.Version}, *state)
+		ni, err := NeedsInstallation(goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: zs.Version}, *state)
 		if err != nil {
 			return err
 		}
@@ -178,7 +169,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 
 	for p, ver := range zs.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
-		mi, err := minInstalled(goolib.PackageInfo{pi.Name, pi.Arch, ver}, *state)
+		mi, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, *state)
 		if err != nil {
 			return err
 		}
@@ -189,7 +180,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 		return fmt.Errorf("Package dependency %s %s (min version %s) not installed.\n", pi.Name, pi.Arch, ver)
 	}
 
-	dst := filepath.Join(cache, goolib.PackageInfo{zs.Name, zs.Arch, zs.Version}.PkgName())
+	dst := filepath.Join(cache, goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: zs.Version}.PkgName())
 	if err := copyPkg(arg, dst); err != nil {
 		return err
 	}
@@ -214,7 +205,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 	fmt.Printf("Installation of %s completed\n", zs.Name)
 
 	// Clean up old version, if applicable.
-	pi := goolib.PackageInfo{zs.Name, zs.Arch, ""}
+	pi := goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: ""}
 	if st, err := state.GetPackageState(pi); err == nil {
 		if !dbOnly {
 			cleanOldFiles(dir, st, insFiles)
@@ -236,7 +227,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 
 // Reinstall reinstalls and optionally redownloads, a package.
 func Reinstall(ps client.PackageState, state client.GooGetState, rd bool, proxyServer string) error {
-	pi := goolib.PackageInfo{ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version}
+	pi := goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch, Ver: ps.PackageSpec.Version}
 	logger.Infof("Starting reinstall of %s.%s, version %s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	_, err := oswrap.Stat(ps.UnpackDir)

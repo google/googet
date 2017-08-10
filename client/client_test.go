@@ -55,17 +55,17 @@ func TestRemove(t *testing.T) {
 		PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
 		PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
-	if err := s.Remove(goolib.PackageInfo{"test", "", ""}); err != nil {
+	if err := s.Remove(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}); err != nil {
 		t.Errorf("error running Remove: %v", err)
 	}
 	if len(*s) != 1 {
-		t.Errorf("Remove did not remove anything, want: len of 1, got: len of %s", len(*s))
+		t.Errorf("Remove did not remove anything, want: len of 1, got: len of %d", len(*s))
 	}
 }
 
 func TestRemoveNoMatch(t *testing.T) {
 	s := &GooGetState{PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
-	if err := s.Remove(goolib.PackageInfo{"test", "", ""}); err == nil {
+	if err := s.Remove(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}); err == nil {
 		t.Error("did not get expected error when running Remove")
 	}
 }
@@ -76,7 +76,7 @@ func TestGetPackageState(t *testing.T) {
 		want,
 		PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
-	got, err := s.GetPackageState(goolib.PackageInfo{"test", "", ""})
+	got, err := s.GetPackageState(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""})
 	if err != nil {
 		t.Errorf("error running GetPackageState: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestGetPackageState(t *testing.T) {
 
 func TestGetPackageStateNoMatch(t *testing.T) {
 	s := &GooGetState{PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
-	if _, err := s.GetPackageState(goolib.PackageInfo{"test", "", ""}); err == nil {
+	if _, err := s.GetPackageState(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}); err == nil {
 		t.Error("did not get expected error when running GetPackageState")
 	}
 }
@@ -105,7 +105,7 @@ func TestWhatRepo(t *testing.T) {
 		},
 	}
 
-	got, err := WhatRepo(goolib.PackageInfo{"foo_pkg", "noarch", "1.2.3@4"}, rm)
+	got, err := WhatRepo(goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch", Ver: "1.2.3@4"}, rm)
 	if err != nil {
 		t.Fatalf("error running WhatRepo: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestFindRepoLatest(t *testing.T) {
 		{"foo_pkg", "", "1.2.3@4", "noarch", "foo_repo"},
 	}
 	for _, tt := range table {
-		gotVer, gotRepo, gotArch, err := FindRepoLatest(goolib.PackageInfo{tt.pkg, tt.arch, ""}, rm, archs)
+		gotVer, gotRepo, gotArch, err := FindRepoLatest(goolib.PackageInfo{Name: tt.pkg, Arch: tt.arch, Ver: ""}, rm, archs)
 		if err != nil {
 			t.Fatalf("FindRepoLatest failed: %v", err)
 		}
@@ -169,7 +169,7 @@ func TestFindRepoLatest(t *testing.T) {
 	}
 
 	werr := "no versions of package bar_pkg.x86_64 found in any repo"
-	if _, _, _, err := FindRepoLatest(goolib.PackageInfo{"bar_pkg", "x86_64", ""}, rm, archs); err.Error() != werr {
+	if _, _, _, err := FindRepoLatest(goolib.PackageInfo{Name: "bar_pkg", Arch: "x86_64", Ver: ""}, rm, archs); err.Error() != werr {
 		t.Errorf("did not get expected error: got %q, want %q", err, werr)
 	}
 }
@@ -294,7 +294,7 @@ func TestFindRepoSpec(t *testing.T) {
 		{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
 
-	got, err := FindRepoSpec(goolib.PackageInfo{"test", "", ""}, rs)
+	got, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs)
 	if err != nil {
 		t.Errorf("error running FindRepoSpec: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestFindRepoSpec(t *testing.T) {
 func TestFindRepoSpecNoMatch(t *testing.T) {
 	rs := []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
 
-	if _, err := FindRepoSpec(goolib.PackageInfo{"test", "", ""}, rs); err == nil {
+	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs); err == nil {
 		t.Error("did not get expected error when running FindRepoSpec")
 	}
 }

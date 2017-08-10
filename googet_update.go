@@ -120,7 +120,7 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 		if c == 1 {
 			fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
 			logger.Infof("Update for package %s, %s installed and %s available from %s.", p, ver, v, r)
-			ud = append(ud, goolib.PackageInfo{pi.Name, pi.Arch, v})
+			ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
 			continue
 		}
 		logger.Infof("%s - latest version installed", p)

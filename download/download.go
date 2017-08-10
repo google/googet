@@ -64,18 +64,18 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 // FromRepo downloads a package from a repo.
 func FromRepo(rs goolib.RepoSpec, repo, dir string, proxyServer string) (string, error) {
 	pkgURL := strings.TrimSuffix(repo, filepath.Base(repo)) + rs.Source
-	pn := goolib.PackageInfo{rs.PackageSpec.Name, rs.PackageSpec.Arch, rs.PackageSpec.Version}.PkgName()
+	pn := goolib.PackageInfo{Name: rs.PackageSpec.Name, Arch: rs.PackageSpec.Arch, Ver: rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
 	return dst, Package(pkgURL, dst, rs.Checksum, proxyServer)
 }
 
 // Latest downloads the latest available version of a package.
 func Latest(name, dir string, rm client.RepoMap, archs []string, proxyServer string) (string, error) {
-	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{name, "", ""}, rm, archs)
+	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
 		return "", err
 	}
-	rs, err := client.FindRepoSpec(goolib.PackageInfo{name, arch, ver}, rm[repo])
+	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: ver}, rm[repo])
 	if err != nil {
 		return "", err
 	}
