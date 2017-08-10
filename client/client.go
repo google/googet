@@ -280,30 +280,36 @@ func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {
 
 // RemoveOrRename attempts to remove a file or directory. If it fails
 // and it's a file, attempt to rename it into a temp file on windows so
-// that it can be effectively overridden
-func RemoveOrRename(filename string) error {
+// that it can be effectively overridden returning the name of the temp file.
+func RemoveOrRename(filename string) (string, error) {
 	rmErr := oswrap.Remove(filename)
 	if rmErr == nil || os.IsNotExist(rmErr) {
-		return nil
+		return "", nil
 	}
 	fi, err := oswrap.Stat(filename)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if fi.IsDir() {
-		return rmErr
+		return "", rmErr
 	}
-	tmpfile, err := ioutil.TempFile("", "")
+
+	tmpDir := os.TempDir()
+	if filepath.VolumeName(tmpDir) != filepath.VolumeName(filename) {
+		tmpDir = filepath.Dir(filename)
+	}
+
+	tmpFile, err := ioutil.TempFile(tmpDir, filepath.Base(filename)+".old")
 	if err != nil {
-		return err
+		return "", err
 	}
-	newname := tmpfile.Name()
-	tmpfile.Close()
-	if err = oswrap.Remove(newname); err != nil {
-		return err
+	newName := tmpFile.Name()
+	tmpFile.Close()
+	if err := oswrap.Remove(newName); err != nil {
+		return "", err
 	}
-	if err = oswrap.Rename(filename, newname); err != nil {
-		return err
+	if err := oswrap.Rename(filename, newName); err != nil {
+		return "", err
 	}
-	return nil
+	return newName, oswrap.RemoveOnReboot(newName)
 }

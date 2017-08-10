@@ -206,7 +206,7 @@ func TestCleanOldFiles(t *testing.T) {
 		},
 	}
 
-	cleanOldFiles(dst, st, map[string]string{want: "", dst: ""})
+	cleanOldFiles(st, map[string]string{want: "", dst: ""})
 
 	for _, n := range []string{want, dontCare} {
 		if _, err := oswrap.Stat(n); err != nil {

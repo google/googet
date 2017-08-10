@@ -16,10 +16,28 @@ limitations under the License.
 package oswrap
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+var (
+	kernel32       = windows.NewLazySystemDLL("Kernel32.dll")
+	procMoveFileEx = kernel32.NewProc("MoveFileExW")
+)
+
+type (
+	DWORD   uint32
+	LPCTSTR *uint16
+)
+
+const MOVEFILE_DELAY_UNTIL_REBOOT = 4
 
 // normPath transforms a windows path into an extended-length path as described in
 // https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx#maxpath
@@ -34,6 +52,27 @@ func normPath(path string) (string, error) {
 	}
 	path = filepath.Clean(path)
 	return "\\\\?\\" + path, nil
+}
+
+// RemoveOnReboot schedules a file for removal on next reboot.
+func RemoveOnReboot(name string) error {
+	name, err := normPath(name)
+	if err != nil {
+		return err
+	}
+
+	nPtr, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return fmt.Errorf("error encoding path to UTF16: %v", err)
+	}
+	ret, _, _ := procMoveFileEx.Call(
+		uintptr(unsafe.Pointer(nPtr)),
+		uintptr(0),
+		MOVEFILE_DELAY_UNTIL_REBOOT)
+	if ret == 0 {
+		return errors.New("return code of '0' (failure) from MoveFileEx")
+	}
+	return nil
 }
 
 // Open calls os.Open with name normalized

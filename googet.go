@@ -77,7 +77,10 @@ type repoFile struct {
 }
 
 type repoEntry struct {
-	Name, URL string
+	LName string `yaml:"name,omitempty"`
+	LURL  string `yaml:"url,omitempty"`
+	Name  string `yaml:"Name,omitempty"`
+	URL   string `yaml:"URL,omitempty"`
 }
 
 func writeRepoFile(rf repoFile) error {
@@ -108,9 +111,9 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 		return repoFile{}, nil
 	}
 
-	// Both repoFile and []repoFile are valid for backwards compatibilty.
+	// Both repoFile and []repoFile are valid for backwards compatibility.
 	var re repoEntry
-	if err := yaml.Unmarshal(b, &re); err == nil && re.URL != "" {
+	if err := yaml.Unmarshal(b, &re); err == nil && (re.URL != "" || re.LURL != "") {
 		return repoFile{fileName: p, repoEntries: []repoEntry{re}}, nil
 	}
 
@@ -144,7 +147,12 @@ func repoList(dir string) ([]string, error) {
 	var rl []string
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
-			rl = append(rl, re.URL)
+			switch {
+			case re.URL != "":
+				rl = append(rl, re.URL)
+			case re.LURL != "":
+				rl = append(rl, re.LURL)
+			}
 		}
 	}
 	return rl, nil

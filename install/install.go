@@ -32,6 +32,8 @@ import (
 	"github.com/google/logger"
 )
 
+var toRemove []string
+
 // minInstalled reports whether the package is installed at the given version or greater.
 func minInstalled(pi goolib.PackageInfo, state client.GooGetState) (bool, error) {
 	for _, p := range state {
@@ -122,7 +124,7 @@ func FromRepo(pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, arch
 	pi = goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}
 	if st, err := state.GetPackageState(pi); err == nil {
 		if !dbOnly {
-			cleanOldFiles(dir, st, insFiles)
+			cleanOldFiles(st, insFiles)
 		}
 		if err := oswrap.RemoveAll(st.UnpackDir); err != nil {
 			logger.Error(err)
@@ -208,7 +210,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 	pi := goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: ""}
 	if st, err := state.GetPackageState(pi); err == nil {
 		if !dbOnly {
-			cleanOldFiles(dir, st, insFiles)
+			cleanOldFiles(st, insFiles)
 		}
 		if err := oswrap.RemoveAll(st.UnpackDir); err != nil {
 			logger.Error(err)
@@ -353,8 +355,12 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly boo
 			insFiles[outPath] = ""
 			return oswrap.MkdirAll(outPath, fi.Mode())
 		}
-		if err = client.RemoveOrRename(outPath); err != nil {
+		fn, err := client.RemoveOrRename(outPath)
+		if err != nil {
 			return err
+		}
+		if fn != "" {
+			toRemove = append(toRemove, fn)
 		}
 		logger.Infof("Copying file %q", outPath)
 		oFile, err := oswrap.Create(outPath)
@@ -403,26 +409,26 @@ func resolveDst(dst string) string {
 	return dst
 }
 
-func cleanOldFiles(dir string, oldState client.PackageState, insFiles map[string]string) {
+func cleanOldFiles(oldState client.PackageState, insFiles map[string]string) {
 	if len(oldState.InstalledFiles) == 0 {
 		return
 	}
-	var dirs []string
+	var files []string
 	for file := range oldState.InstalledFiles {
 		if chksum, ok := insFiles[file]; !ok {
 			if chksum == "" {
-				dirs = append(dirs, file)
+				files = append(files, file)
 				continue
 			}
 			logger.Infof("Cleaning up old file %q", file)
-			if err := client.RemoveOrRename(file); err != nil {
+			if _, err := client.RemoveOrRename(file); err != nil {
 				logger.Error(err)
 			}
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
-	for _, dir := range dirs {
-		if err := client.RemoveOrRename(dir); err != nil {
+	sort.Sort(sort.Reverse(sort.StringSlice(files)))
+	for _, dir := range files {
+		if _, err := client.RemoveOrRename(dir); err != nil {
 			logger.Info(err)
 		}
 	}
@@ -430,6 +436,14 @@ func cleanOldFiles(dir string, oldState client.PackageState, insFiles map[string
 
 func installPkg(dir string, ps *goolib.PkgSpec, dbOnly bool) (map[string]string, error) {
 	logger.Infof("Executing install of package %q", filepath.Base(dir))
+	toRemove = []string{}
+	// Try to cleanup moved files after package is installed.
+	defer func() {
+		for _, fn := range toRemove {
+			oswrap.Remove(fn)
+		}
+	}()
+
 	insFiles := make(map[string]string)
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)

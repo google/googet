@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.9.6@1",
+  "version": "2.10.0@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,8 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.10.0 - Files that had to be moved during install are cleaned up at end of package install or next reboot.",
+    "       - When replacing files during install files are not moved between volumes.",
     "2.9.5 - Expand MSI success code usage to MSU and EXE files.",
     "2.9.1 - Add ability to add proxy server.",
     "2.9.0 - Add addrepo, rmrepo, and listrepos commands.",

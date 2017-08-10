@@ -62,14 +62,14 @@ func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool,
 					continue
 				}
 				logger.Infof("Removing %q", file)
-				if err := client.RemoveOrRename(file); err != nil {
+				if _, err := client.RemoveOrRename(file); err != nil {
 					logger.Error(err)
 				}
 			}
 			sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
 			for _, dir := range dirs {
 				logger.Infof("Removing %q", dir)
-				if err := client.RemoveOrRename(dir); err != nil {
+				if _, err := client.RemoveOrRename(dir); err != nil {
 					logger.Info(err)
 				}
 			}

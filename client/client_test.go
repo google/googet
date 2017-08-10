@@ -17,10 +17,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -33,7 +33,6 @@ import (
 
 const (
 	cacheLife   = 1 * time.Minute
-	port        = 56456
 	proxyServer = ""
 )
 
@@ -191,14 +190,17 @@ func TestUnmarshalRepoPackagesJSON(t *testing.T) {
 	}
 	br := bytes.NewReader(j)
 
-	http.HandleFunc("/test-repo/index", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		io.Copy(w, br)
-	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.String() == "/index" {
+			w.Header().Set("Content-Type", "application/json")
+			io.Copy(w, br)
+		} else {
+			w.WriteHeader(404)
+		}
+	}))
+	defer ts.Close()
 
-	go http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-
-	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(ts.URL, tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -233,14 +235,17 @@ func TestUnmarshalRepoPackagesGzip(t *testing.T) {
 		t.Fatalf("Error closing gzip writer: %v", err)
 	}
 
-	http.HandleFunc("/test-repo/index.gz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/gzip")
-		io.Copy(w, &b)
-	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.String() == "/index.gz" {
+			w.Header().Set("Content-Type", "application/gzip")
+			io.Copy(w, &b)
+		} else {
+			w.WriteHeader(404)
+		}
+	}))
+	defer ts.Close()
 
-	go http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-
-	got, err := unmarshalRepoPackages(fmt.Sprintf("http://localhost:%d/test-repo", port), tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(ts.URL, tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}

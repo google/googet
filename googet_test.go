@@ -45,10 +45,12 @@ func TestRepoList(t *testing.T) {
 		{[]byte("url: " + testRepo), []string{testRepo}},
 		{[]byte("\n # Comment\nurl: " + testRepo), []string{testRepo}},
 		{[]byte("- url: " + testRepo), []string{testRepo}},
+		{[]byte("- URL: " + testRepo), []string{testRepo}},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), []string{testRepo, testRepo}},
 		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}},
 	}
 
-	for _, tt := range repoTests {
+	for i, tt := range repoTests {
 		if err := ioutil.WriteFile(testFile, tt.content, 0660); err != nil {
 			t.Fatalf("error writing repo: %v", err)
 		}
@@ -57,7 +59,7 @@ func TestRepoList(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(got, tt.result) {
-			t.Errorf("returned repo does not match expected repo: got %v, want %v", got, testRepo)
+			t.Errorf("test case %d: returned repo does not match expected repo: got %q, want %q", i+1, got, tt.result)
 		}
 	}
 }
