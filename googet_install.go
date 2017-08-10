@@ -79,9 +79,6 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 	if err != nil {
 		logger.Fatal(err)
 	}
-	if repos == nil {
-		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
-	}
 
 	var rm client.RepoMap
 	for _, arg := range args {
@@ -116,6 +113,9 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 			continue
 		}
 		if len(rm) == 0 {
+			if repos == nil {
+				logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
+			}
 			rm = client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 		}
 		if pi.Ver == "" {
