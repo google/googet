@@ -23,9 +23,9 @@ import (
 	"github.com/blang/semver"
 )
 
-func mkVer(maj, min, pat uint64, rel int) Version {
+func mkVer(sem string, rel int) Version {
 	return Version{
-		Semver: semver.Version{Major: maj, Minor: min, Patch: pat},
+		Semver: semver.MustParse(sem),
 		GsVer:  rel,
 	}
 }
@@ -35,18 +35,22 @@ func TestParseVersion(t *testing.T) {
 		ver string
 		res Version
 	}{
-		{"1.2.3@4", mkVer(1, 2, 3, 4)},
-		{"1.2.3", mkVer(1, 2, 3, 0)},
-		{"1.02.3", mkVer(1, 2, 3, 0)},
-		{"1.2@7", mkVer(0, 1, 2, 7)},
+		{"1.2.3@4", mkVer("1.2.3", 4)},
+		{"1.2.3", mkVer("1.2.3", 0)},
+		{"1.02.3", mkVer("1.2.3", 0)},
+		{"1.2@7", mkVer("0.1.2", 7)},
+		{"1.2.0", mkVer("1.2.0", 0)},
+		{"1.2.3+1", mkVer("1.2.3+1", 0)},
+		{"1.2.03-1", mkVer("1.2.3-1", 0)},
+		{"1.2.3+4@5", mkVer("1.2.3+4", 5)},
 	}
 	for _, tt := range table {
 		v, err := ParseVersion(tt.ver)
 		if err != nil {
-			t.Errorf("error parsing version: %v", err)
+			t.Errorf("ParseVersion(%v): %v", tt.ver, err)
 		}
 		if !reflect.DeepEqual(v, tt.res) {
-			t.Errorf("parsed version unexpected: got %v, want %v", v, tt.res)
+			t.Errorf("ParseVersion(%v) = %v, want %v", tt.ver, v, tt.res)
 		}
 	}
 }

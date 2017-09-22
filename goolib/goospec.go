@@ -136,6 +136,12 @@ func Compare(v1, v2 string) (int, error) {
 }
 
 func fixVer(ver string) string {
+	suffix := ""
+	// Patch number can contain PreRelease/Build meta data suffix.
+	if i := strings.IndexAny(ver, "+-"); i != -1 {
+		suffix = ver[i:]
+		ver = ver[:i]
+	}
 	out := []string{"0", "0", "0"}
 	nums := strings.SplitN(ver, ".", 3)
 	offset := len(out) - len(nums)
@@ -146,10 +152,14 @@ func fixVer(ver string) string {
 		}
 		out[i+offset] = trimmed
 	}
-	return strings.Join(out, ".")
+	return strings.Join(out, ".") + suffix
 }
 
-// ParseVersion parses the string version into goospec.Version.
+// ParseVersion parses the string version into goospec.Version. ParseVersion
+// attempts to fix non-compliant Semver strings by removing leading zeros from
+// components, and replacing any missing components with zero values after
+// using existing components for the least significant components first (i.e.
+// "1" will become "0.0.1", not "1.0.0").
 func ParseVersion(ver string) (Version, error) {
 	v := strings.SplitN(ver, "@", 2)
 	v[0] = fixVer(v[0])
