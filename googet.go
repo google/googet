@@ -48,15 +48,16 @@ const (
 )
 
 var (
-	rootDir     string
-	noConfirm   bool
-	verbose     bool
-	systemLog   bool
-	showVer     bool
-	version     string
-	cacheLife   = 3 * time.Minute
-	archs       []string
-	proxyServer string
+	rootDir        string
+	noConfirm      bool
+	verbose        bool
+	systemLog      bool
+	showVer        bool
+	version        string
+	cacheLife      = 3 * time.Minute
+	archs          []string
+	proxyServer    string
+	allowUnsafeURL bool
 )
 
 type packageMap map[string]string
@@ -125,9 +126,10 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 }
 
 type conf struct {
-	Archs       []string
-	CacheLife   string
-	ProxyServer string
+	Archs          []string
+	CacheLife      string
+	ProxyServer    string
+	AllowUnsafeURL bool
 }
 
 func unmarshalConfFile(p string) (*conf, error) {
@@ -154,6 +156,18 @@ func repoList(dir string) ([]string, error) {
 				rl = append(rl, re.LURL)
 			}
 		}
+	}
+
+	if !allowUnsafeURL {
+		var srl []string
+		for _, r := range rl {
+			if strings.ToLower(r[0:5]) != "https" {
+				logger.Errorf("%s will not be used as a repository, only https endpoints will be used unless AllowUnsafeURL is set to 'true' in googet.conf", r)
+				continue
+			}
+			srl = append(srl, r)
+		}
+		return srl, nil
 	}
 	return rl, nil
 }
@@ -348,6 +362,8 @@ func readConf(cf string) {
 	if gc.ProxyServer != "" {
 		proxyServer = gc.ProxyServer
 	}
+
+	allowUnsafeURL = gc.AllowUnsafeURL
 }
 
 func run() int {

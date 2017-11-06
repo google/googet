@@ -27,6 +27,7 @@ import (
 
 func TestRepoList(t *testing.T) {
 	testRepo := "https://foo.com/googet/bar"
+	testHTTPRepo := "http://foo.com/googet/bar"
 
 	tempDir, err := ioutil.TempDir("", "")
 	if err != nil {
@@ -37,29 +38,39 @@ func TestRepoList(t *testing.T) {
 	testFile := filepath.Join(tempDir, "test.repo")
 
 	repoTests := []struct {
-		content []byte
-		result  []string
+		content        []byte
+		want           []string
+		allowUnsafeURL bool
 	}{
-		{[]byte("\n"), nil},
-		{[]byte("# This is just a comment"), nil},
-		{[]byte("url: " + testRepo), []string{testRepo}},
-		{[]byte("\n # Comment\nurl: " + testRepo), []string{testRepo}},
-		{[]byte("- url: " + testRepo), []string{testRepo}},
-		{[]byte("- URL: " + testRepo), []string{testRepo}},
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), []string{testRepo, testRepo}},
-		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}},
+		{[]byte("\n"), nil, false},
+		{[]byte("# This is just a comment"), nil, false},
+		{[]byte("url: " + testRepo), []string{testRepo}, false},
+		{[]byte("\n # Comment\nurl: " + testRepo), []string{testRepo}, false},
+		{[]byte("- url: " + testRepo), []string{testRepo}, false},
+		// The HTTP repo should be dropped.
+		{[]byte("- url: " + testHTTPRepo), nil, false},
+		// The HTTP repo should not be dropped.
+		{[]byte("- url: " + testHTTPRepo), []string{testHTTPRepo}, true},
+		{[]byte("- URL: " + testRepo), []string{testRepo}, false},
+		// The HTTP repo should be dropped.
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), []string{testRepo}, false},
+		// The HTTP repo should not be dropped.
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), []string{testRepo, testHTTPRepo}, true},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), []string{testRepo, testRepo}, false},
+		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}, false},
 	}
 
 	for i, tt := range repoTests {
 		if err := ioutil.WriteFile(testFile, tt.content, 0660); err != nil {
 			t.Fatalf("error writing repo: %v", err)
 		}
+		allowUnsafeURL = tt.allowUnsafeURL
 		got, err := repoList(tempDir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(got, tt.result) {
-			t.Errorf("test case %d: returned repo does not match expected repo: got %q, want %q", i+1, got, tt.result)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("test case %d: returned repo does not match expected repo: got %q, want %q", i+1, got, tt.want)
 		}
 	}
 }
@@ -103,7 +114,7 @@ func TestReadConf(t *testing.T) {
 		t.Fatalf("error creating conf file: %v", err)
 	}
 
-	content := []byte("archs: [noarch, x86_64]\ncachelife: 10m")
+	content := []byte("archs: [noarch, x86_64]\ncachelife: 10m\nallowunsafeurl: true")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -121,6 +132,10 @@ func TestReadConf(t *testing.T) {
 	ecl := time.Duration(10 * time.Minute)
 	if cacheLife != ecl {
 		t.Errorf("readConf did not create expected cacheLife, want: %s, got: %s", ecl, cacheLife)
+	}
+
+	if allowUnsafeURL != true {
+		t.Error("readConf did not set allowunsafeurl to true")
 	}
 }
 
