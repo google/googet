@@ -100,7 +100,7 @@ func TestBadVerify(t *testing.T) {
 				Arch: "noarch",
 				Name: "name",
 			},
-		}, "Version string empty"},
+		}, "version string empty"},
 		{GooSpec{
 			PackageSpec: &PkgSpec{
 				Arch:    "noarch",
