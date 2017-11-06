@@ -179,7 +179,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 			logger.Infof("Dependency met: %s.%s with version greater than %s installed", pi.Name, pi.Arch, ver)
 			continue
 		}
-		return fmt.Errorf("Package dependency %s %s (min version %s) not installed.\n", pi.Name, pi.Arch, ver)
+		return fmt.Errorf("package dependency %s %s (min version %s) not installed", pi.Name, pi.Arch, ver)
 	}
 
 	dst := filepath.Join(cache, goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: zs.Version}.PkgName())

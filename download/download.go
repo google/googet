@@ -36,7 +36,7 @@ import (
 )
 
 // Package downloads a package from the given url,
-// if a SHA256 checksum is provided it will be checked.
+// the provided SHA256 checksum will be checked during download.
 func Package(pkgURL, dst, chksum string, proxyServer string) error {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
@@ -55,10 +55,7 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 	if err := oswrap.RemoveAll(dst); err != nil {
 		return err
 	}
-	if err := download(resp.Body, dst, chksum, proxyServer); err != nil {
-		return err
-	}
-	return nil
+	return download(resp.Body, dst, chksum, proxyServer)
 }
 
 // FromRepo downloads a package from a repo.
@@ -103,7 +100,7 @@ func download(r io.Reader, p, chksum string, proxyServer string) (err error) {
 
 	logger.Infof("Successfully downloaded %s", humanize.IBytes(uint64(b)))
 
-	if chksum != "" && hex.EncodeToString(hash.Sum(nil)) != chksum {
+	if hex.EncodeToString(hash.Sum(nil)) != chksum {
 		return errors.New("checksum of downloaded file does not match expected checksum")
 	}
 	return nil

@@ -49,7 +49,7 @@ type GooSpec struct {
 	PackageSpec *PkgSpec
 }
 
-// RepoSpec is the repository specfication of a package.
+// RepoSpec is the repository specification of a package.
 type RepoSpec struct {
 	Checksum, Source string
 	PackageSpec      *PkgSpec
@@ -305,7 +305,7 @@ func (spec *PkgSpec) verify() error {
 		return fmt.Errorf("invalid architecture: %q", spec.Arch)
 	}
 	if spec.Version == "" {
-		return errors.New("Version string empty")
+		return errors.New("version string empty")
 	}
 	if _, err := ParseVersion(spec.Version); err != nil {
 		return fmt.Errorf("can't parse %q: %v", spec.Version, err)
