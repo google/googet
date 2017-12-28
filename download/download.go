@@ -25,10 +25,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-
-	"path"
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/google/googet/client"

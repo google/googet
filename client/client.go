@@ -32,9 +32,9 @@ import (
 
 // PackageState describes the state of a package on a client.
 type PackageState struct {
-	SourceRepo, DownloadURL, Checksum, UnpackDir string
-	PackageSpec                                  *goolib.PkgSpec
-	InstalledFiles                               map[string]string
+	SourceRepo, DownloadURL, Checksum, LocalPath, UnpackDir string
+	PackageSpec                                             *goolib.PkgSpec
+	InstalledFiles                                          map[string]string
 }
 
 // GooGetState describes the overall package state on a client.
