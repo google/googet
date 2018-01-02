@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.11.0@1",
+  "version": "2.12.0@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.12.0 - Store goo files unextracted in cache, ensure checksum match on reinstall.",
     "2.11.0 - Add allowunsafeurl config option to enable HTTP repos, otherwise disable.",
     "       - Force the use of a package checksum when downloading from a repository.",
     "2.10.1 - Semver compatibility bug fix for '0' patch numbers.",
