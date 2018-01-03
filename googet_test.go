@@ -225,19 +225,23 @@ func TestCleanOld(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(rootDir)
 
-	wantDir := filepath.Join(rootDir, cacheDir, "want")
+	wantFile := filepath.Join(rootDir, cacheDir, "want.goo")
 	notWantDir := filepath.Join(rootDir, cacheDir, "notWant")
+	notWantFile := filepath.Join(rootDir, cacheDir, "notWant.goo")
 
-	if err := oswrap.MkdirAll(wantDir, 0700); err != nil {
+	if err := oswrap.MkdirAll(notWantDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := oswrap.MkdirAll(notWantDir, 0700); err != nil {
+	if err := ioutil.WriteFile(notWantFile, nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ioutil.WriteFile(wantFile, nil, 0700); err != nil {
 		t.Fatal(err)
 	}
 
 	state := &client.GooGetState{
 		{
-			UnpackDir: wantDir,
+			LocalPath: wantFile,
 		},
 	}
 
@@ -247,12 +251,16 @@ func TestCleanOld(t *testing.T) {
 
 	cleanOld()
 
-	if _, err := oswrap.Stat(wantDir); err != nil {
+	if _, err := oswrap.Stat(wantFile); err != nil {
 		t.Errorf("cleanOld removed wantDir, Stat err: %v", err)
 	}
 
 	if _, err := oswrap.Stat(notWantDir); err == nil {
 		t.Errorf("cleanOld did not remove notWantDir")
+	}
+
+	if _, err := oswrap.Stat(notWantFile); err == nil {
+		t.Errorf("cleanOld did not remove notWantFile")
 	}
 }
 
@@ -264,25 +272,28 @@ func TestCleanPackages(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(rootDir)
 
-	wantDir := filepath.Join(rootDir, cacheDir, "want")
-	notWantDir := filepath.Join(rootDir, cacheDir, "notWant")
+	wantFile := filepath.Join(rootDir, cacheDir, "want")
+	notWantFile := filepath.Join(rootDir, cacheDir, "notWant")
 
-	if err := oswrap.MkdirAll(wantDir, 0700); err != nil {
+	if err := oswrap.MkdirAll(filepath.Join(rootDir, cacheDir), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := oswrap.MkdirAll(notWantDir, 0700); err != nil {
+	if err := ioutil.WriteFile(wantFile, nil, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ioutil.WriteFile(notWantFile, nil, 0700); err != nil {
 		t.Fatal(err)
 	}
 
 	state := &client.GooGetState{
 		{
-			UnpackDir: wantDir,
+			LocalPath: wantFile,
 			PackageSpec: &goolib.PkgSpec{
 				Name: "want",
 			},
 		},
 		{
-			UnpackDir: notWantDir,
+			LocalPath: notWantFile,
 			PackageSpec: &goolib.PkgSpec{
 				Name: "notWant",
 			},
@@ -295,11 +306,11 @@ func TestCleanPackages(t *testing.T) {
 
 	cleanPackages([]string{"notWant"})
 
-	if _, err := oswrap.Stat(wantDir); err != nil {
+	if _, err := oswrap.Stat(wantFile); err != nil {
 		t.Errorf("cleanPackages removed wantDir, Stat err: %v", err)
 	}
 
-	if _, err := oswrap.Stat(notWantDir); err == nil {
+	if _, err := oswrap.Stat(notWantFile); err == nil {
 		t.Errorf("cleanPackages did not remove notWantDir")
 	}
 }
