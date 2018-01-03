@@ -68,7 +68,7 @@ const (
 
 var validArch = []string{"noarch", "x86_64", "x86_32", "arm"}
 
-// PkgSpec is the internal package specification.
+// PkgSpec is an individual package specification.
 type PkgSpec struct {
 	Name            string
 	Version         string
@@ -80,6 +80,8 @@ type PkgSpec struct {
 	Owners          string            `json:",omitempty"`
 	Tags            map[string][]byte `json:",omitempty"`
 	PkgDependencies map[string]string `json:",omitempty"`
+	Replaces        []string
+	Conflicts       []string
 	Install         ExecFile
 	Uninstall       ExecFile
 	Files           map[string]string `json:",omitempty"`

@@ -297,6 +297,8 @@ func TestMarshal(t *testing.T) {
 			ReleaseNotes: []string{"1.2.3@4 - something new", "1.2.3@4 - something"},
 			Description:  "blah blah",
 			Owners:       "someone",
+			Replaces:     []string{"foo"},
+			Conflicts:    []string{"bar"},
 			Install: ExecFile{
 				Path: "install.ps1",
 			},
@@ -315,6 +317,12 @@ func TestMarshal(t *testing.T) {
     ],
     "Description": "blah blah",
     "Owners": "someone",
+    "Replaces": [
+      "foo"
+    ],
+    "Conflicts": [
+      "bar"
+    ],
     "Install": {
       "Path": "install.ps1"
     },

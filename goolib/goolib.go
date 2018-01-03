@@ -102,6 +102,16 @@ type PackageInfo struct {
 	Name, Arch, Ver string
 }
 
+func (pi PackageInfo) String() string {
+	if pi.Arch != "" && pi.Ver != "" {
+		return fmt.Sprintf("%s.%s.%s", pi.Name, pi.Arch, pi.Ver)
+	}
+	if pi.Arch != "" {
+		return fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
+	}
+	return pi.Name
+}
+
 // PkgName returns the proper goo package name.
 func (pi PackageInfo) PkgName() string {
 	return fmt.Sprintf("%s.%s.%s.goo", pi.Name, pi.Arch, pi.Ver)

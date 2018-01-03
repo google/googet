@@ -28,6 +28,7 @@ import (
 	"github.com/google/googet/download"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
+	"github.com/google/googet/remove"
 	"github.com/google/googet/system"
 	"github.com/google/logger"
 )
@@ -48,8 +49,51 @@ func minInstalled(pi goolib.PackageInfo, state client.GooGetState) (bool, error)
 	return false, nil
 }
 
+func resolveConflicts(ps *goolib.PkgSpec, state *client.GooGetState) error {
+	// Check for any conflicting packages.
+	// TODO(ajackura): Make sure no conflicting packages are listed as
+	// dependencies or subdependancies.
+	for _, pkg := range ps.Conflicts {
+		pi := goolib.PkgNameSplit(pkg)
+		ins, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, *state)
+		if err != nil {
+			return err
+		}
+		if ins {
+			return fmt.Errorf("cannot install, conflict with installed package: %s", pi)
+		}
+	}
+	return nil
+}
+
+func resolveReplacements(ps *goolib.PkgSpec, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+	// Check for and remove any package this replaces.
+	// TODO(ajackura): Make sure no replacements are listed as
+	// dependencies or subdependancies.
+	for _, pkg := range ps.Replaces {
+		pi := goolib.PkgNameSplit(pkg)
+		ins, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, *state)
+		if err != nil {
+			return err
+		}
+		if !ins {
+			continue
+		}
+		deps, _ := remove.EnumerateDeps(pi, *state)
+		logger.Infof("%s replaces %s, removing", ps, pi)
+		if err := remove.All(pi, deps, state, dbOnly, proxyServer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string) error {
-	logger.Infof("Resolving dependencies for %s %s version %s", ps.Arch, ps.Name, ps.Version)
+	logger.Infof("Resolving conflicts and dependencies for %s %s version %s", ps.Arch, ps.Name, ps.Version)
+	if err := resolveConflicts(ps, state); err != nil {
+		return err
+	}
+	// Check for and install any dependencies.
 	for p, ver := range ps.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
 		mi, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, *state)
@@ -80,7 +124,7 @@ func installDeps(ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []st
 			return fmt.Errorf("cannot resolve dependancy, %s.%s version %s or greater not installed and not available in any repo", pi.Name, arch, ver)
 		}
 	}
-	return nil
+	return resolveReplacements(ps, state, dbOnly, proxyServer)
 }
 
 // FromRepo installs a package and all dependencies from a repository.
@@ -157,6 +201,9 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 	logger.Infof("Starting install of %q, version %q from %q", zs.Name, zs.Version, arg)
 	fmt.Printf("Installing %s %s...\n", zs.Name, zs.Version)
 
+	if err := resolveConflicts(zs, state); err != nil {
+		return err
+	}
 	for p, ver := range zs.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
 		mi, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, *state)
@@ -168,6 +215,16 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 			continue
 		}
 		return fmt.Errorf("package dependency %s %s (min version %s) not installed", pi.Name, pi.Arch, ver)
+	}
+	for _, pkg := range zs.Replaces {
+		pi := goolib.PkgNameSplit(pkg)
+		ins, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, *state)
+		if err != nil {
+			return err
+		}
+		if ins {
+			return fmt.Errorf("cannot install, replaces installed package, remove first then try installation again: %s", pi)
+		}
 	}
 
 	dst := filepath.Join(cache, goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: zs.Version}.PkgName())
@@ -208,6 +265,11 @@ func Reinstall(ps client.PackageState, state client.GooGetState, rd bool, proxyS
 	pi := goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch, Ver: ps.PackageSpec.Version}
 	logger.Infof("Starting reinstall of %s.%s, version %s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
+	// Fix for package install by older versions of GooGet.
+	if ps.LocalPath == "" {
+		ps.LocalPath = ps.UnpackDir + ".goo"
+	}
+
 	f, err := os.Open(ps.LocalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err

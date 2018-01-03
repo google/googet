@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
@@ -51,16 +50,15 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 }
 
 // Uninstall performs a system specfic uninstall given a packages PackageState.
-func Uninstall(st client.PackageState) error {
-	un := st.PackageSpec.Uninstall
+func Uninstall(dir string, ps *goolib.PkgSpec) error {
+	un := ps.Uninstall
 	if un.Path == "" {
-		logger.Info("No uninstaller specified")
 		return nil
 	}
 
 	logger.Infof("Running uninstall: %q", un.Path)
 	// logging is only useful for failed uninstalls
-	out, err := oswrap.Create(filepath.Join(st.UnpackDir, "googet_remove.log"))
+	out, err := oswrap.Create(filepath.Join(dir, "googet_remove.log"))
 	if err != nil {
 		return err
 	}
@@ -69,7 +67,7 @@ func Uninstall(st client.PackageState) error {
 			logger.Error(err)
 		}
 	}()
-	return goolib.Exec(filepath.Join(st.UnpackDir, un.Path), un.Args, un.ExitCodes, out)
+	return goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
 }
 
 // InstallableArchs returns a slice of archs supported by this machine.
