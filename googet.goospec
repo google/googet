@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.15.0 - Add verify subcommand.",
     "2.14.1 - Prevent path traversal in package unpack and install/uninstall paths.",
     "2.14.0 - Add support for GCS repositories.",
     "2.13.0 - Add Conflicts and Replaces fields to the GooGet PkgSpec.",

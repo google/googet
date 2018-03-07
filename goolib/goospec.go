@@ -84,6 +84,7 @@ type PkgSpec struct {
 	Conflicts       []string
 	Install         ExecFile
 	Uninstall       ExecFile
+	Verify          ExecFile
 	Files           map[string]string `json:",omitempty"`
 }
 
@@ -287,7 +288,7 @@ func ReadPackageSpec(r io.Reader) (*PkgSpec, error) {
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
-			return nil, io.ErrUnexpectedEOF
+			return nil, fmt.Errorf("no file with suffix %q found in package", pkgSpecSuffix)
 		}
 		if err != nil {
 			return nil, err

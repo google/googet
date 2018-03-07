@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package system handles system specific functions.
 package system
 
 import (
@@ -71,11 +70,10 @@ func removeUninstallEntry(name string) error {
 func Install(dir string, ps *goolib.PkgSpec) error {
 	in := ps.Install
 	if in.Path == "" {
-		logger.Info("No installer specified")
 		return nil
 	}
 
-	logger.Infof("Running install: %q", in.Path)
+	logger.Infof("Running install command: %q", in.Path)
 	out, err := oswrap.Create(filepath.Join(dir, in.Path+".log"))
 	if err != nil {
 		return err

@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package system handles system specific functions.
 package system
 
 import (
@@ -25,15 +24,14 @@ import (
 	"github.com/google/logger"
 )
 
-// Install performs a system specfic install given a package extraction directory and an PkgSpec struct.
+// Install performs a system specfic install given a package extraction directory and a PkgSpec struct.
 func Install(dir string, ps *goolib.PkgSpec) error {
 	in := ps.Install
 	if in.Path == "" {
-		logger.Info("No installer specified")
 		return nil
 	}
 
-	logger.Infof("Running install: %q", in.Path)
+	logger.Infof("Running install command: %q", in.Path)
 	out, err := oswrap.Create(filepath.Join(dir, "googet_install.log"))
 	if err != nil {
 		return err
@@ -49,14 +47,14 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	return nil
 }
 
-// Uninstall performs a system specfic uninstall given a packages PackageState.
+// Uninstall performs a system specfic uninstall given a package extraction directory and a PkgSpec struct.
 func Uninstall(dir string, ps *goolib.PkgSpec) error {
 	un := ps.Uninstall
 	if un.Path == "" {
 		return nil
 	}
 
-	logger.Infof("Running uninstall: %q", un.Path)
+	logger.Infof("Running uninstall command: %q", un.Path)
 	// logging is only useful for failed uninstalls
 	out, err := oswrap.Create(filepath.Join(dir, "googet_remove.log"))
 	if err != nil {

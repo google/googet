@@ -61,7 +61,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			}
 		}
 		if len(ins) == 0 {
-			logger.Errorf("Package %s.%s not installed, cannot remove.", pi.Name, pi.Arch)
+			logger.Errorf("Package %q not installed, cannot remove.", arg)
 			continue
 		}
 		if len(ins) > 1 {
