@@ -162,7 +162,7 @@ func repoList(dir string) ([]string, error) {
 		var srl []string
 		for _, r := range rl {
 			if strings.ToLower(r[0:5]) != "https" {
-				logger.Errorf("%s will not be used as a repository, only https endpoints will be used unless AllowUnsafeURL is set to 'true' in googet.conf", r)
+				logger.Errorf("%s will not be used as a repository, only https endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
 				continue
 			}
 			srl = append(srl, r)
