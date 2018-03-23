@@ -60,7 +60,7 @@ func (r *repoPackages) add(src, chksum string, spec *goolib.PkgSpec) {
 	})
 }
 
-func packageInfo(pkgPath, packageDir string) error {
+func packageInfo(pkgPath string) error {
 	pkg := filepath.Base(pkgPath)
 	pi := goolib.PkgNameSplit(strings.TrimSuffix(pkg, ".goo"))
 
