@@ -105,7 +105,7 @@ func runSync(packageDir string) error {
 		wg.Add(1)
 		go func(pkg string) {
 			defer wg.Done()
-			if err := packageInfo(pkg, packageDir); err != nil {
+			if err := packageInfo(pkg); err != nil {
 				logger.Error(err)
 			}
 		}(pkg)
