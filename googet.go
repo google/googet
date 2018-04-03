@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -161,8 +162,13 @@ func repoList(dir string) ([]string, error) {
 	if !allowUnsafeURL {
 		var srl []string
 		for _, r := range rl {
-			if strings.ToLower(r[0:5]) != "https" {
-				logger.Errorf("%s will not be used as a repository, only https endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
+			parsed, err := url.Parse(r)
+			if err != nil {
+				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
+				continue
+			}
+			if parsed.Scheme != "https" && parsed.Scheme != "gs" {
+				logger.Errorf("%s will not be used as a repository, only https and gs endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
 				continue
 			}
 			srl = append(srl, r)

@@ -34,3 +34,20 @@ proxyserver: http://address_to_proxy:port
 archs: [noarch, x86_64]
 cachelife: 10m
 ```
+
+## Google Cloud Storage as a back-end
+
+Googet supports using Google Cloud Storage as its server.
+
+```
+set GOOREPO=%TEMP%\googet-repo
+mkdir %GOOREPO%\packages
+go run goopack/goopack.go googet.goospec
+copy *.goo %GOOREPO%\packages
+go run server\gooserve.go -root %GOOREPO% -dump_index > %GOOREPO%\index
+gsutil mb --project my-project my-googet-server
+gsutil rsync -r %GOOREPO% gs://my-googet-server
+```
+
+Note that you must regenerate the index and re-upload it to your bucket each time
+you add or change packges.

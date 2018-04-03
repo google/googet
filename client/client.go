@@ -15,7 +15,9 @@ limitations under the License.
 package client
 
 import (
+	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -23,8 +25,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
@@ -101,21 +105,25 @@ func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, 
 	return rm
 }
 
-func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
-	ct := res.Header.Get("content-type")
+func decode(index []byte, cf string) ([]goolib.RepoSpec, error) {
+
+	ctFull := http.DetectContentType(index)
+	ct := regexp.MustCompile("; .*$").ReplaceAllString(ctFull, "")
+	indexReader := bytes.NewReader(index)
 	var dec *json.Decoder
 	switch ct {
-	case "application/gzip":
-		gr, err := gzip.NewReader(res.Body)
+	case "application/gzip", "application/x-gzip":
+		gr, err := gzip.NewReader(indexReader)
 		if err != nil {
 			return nil, err
 		}
 		dec = json.NewDecoder(gr)
-	case "application/json":
-		dec = json.NewDecoder(res.Body)
+	case "application/json", "text/plain":
+		dec = json.NewDecoder(indexReader)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
+
 	var m []goolib.RepoSpec
 	for dec.More() {
 		if err := dec.Decode(&m); err != nil {
@@ -143,14 +151,6 @@ func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
 // Sucessfully unmarshalled contents will be written to a cache.
 func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
 	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
-	httpClient := &http.Client{}
-	if proxyServer != "" {
-		proxyURL, err := url.Parse(proxyServer)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-	}
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
@@ -173,30 +173,99 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
 
-	url := p + "/index.gz"
-	logger.Infof("Fetching %q", url)
-	res, err := httpClient.Get(url)
+	parsedP, err := url.Parse(p)
 	if err != nil {
 		return nil, err
 	}
-
-	if res.StatusCode == 200 {
-		return decode(res, cf)
+	switch parsedP.Scheme {
+	case "http", "https":
+		return unmarshalRepoPackagesHTTP(parsedP, cf, proxyServer)
+	case "gs":
+		return unmarshalRepoPackagesGCS(parsedP, cf, proxyServer)
 	}
 
-	logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
-	url = p + "/index"
-	logger.Infof("Fetching %q", url)
-	res, err = httpClient.Get(url)
+	return nil, fmt.Errorf("Unsupported URL Scheme '%s' for '%s'", parsedP.Scheme, p)
+}
+
+func unmarshalRepoPackagesHTTP(repoURL *url.URL, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+	httpClient := &http.Client{}
+	if proxyServer != "" {
+		proxyURL, err := url.Parse(proxyServer)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	}
+
+	indexURL := repoURL.String() + "/index.gz"
+	logger.Infof("Fetching %q", indexURL)
+	res, err := httpClient.Get(indexURL)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
+		indexURL = repoURL.String() + "/index"
+		logger.Infof("Fetching %q", indexURL)
+		res, err = httpClient.Get(indexURL)
+		if err != nil {
+			return nil, err
+		}
+
+		if res.StatusCode != 200 {
+			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		}
 	}
 
-	return decode(res, cf)
+	index, err := ioutil.ReadAll(res.Body)
+	return decode(index, cf)
+}
+
+func unmarshalRepoPackagesGCS(repoURL *url.URL, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+
+	if proxyServer != "" {
+		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo '%s'", repoURL.String())
+		var empty []goolib.RepoSpec
+		return empty, nil
+	}
+
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			logger.Errorf("Failed to close gcloud storage client: %v", err)
+		}
+	}()
+	bkt := client.Bucket(repoURL.Host)
+	indexPath := regexp.MustCompile("^/*").ReplaceAllString(regexp.MustCompile("/*$").ReplaceAllString(repoURL.Path, ""), "") + "/" + "index"
+
+	var index []byte
+	obj := bkt.Object(indexPath + ".gz")
+	if r, err := obj.NewReader(ctx); err == nil {
+		defer r.Close()
+		index, err = ioutil.ReadAll(r)
+		if err != nil {
+			index = nil
+		}
+	}
+	if index == nil {
+		obj := bkt.Object(indexPath)
+		r, err := obj.NewReader(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to read gs://%s/%s and gs://%s/%s.gz: %v", repoURL.Host, indexPath, repoURL.Host, indexPath, err)
+		}
+		defer r.Close()
+		index, err = ioutil.ReadAll(r)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to read gs://%s/%s and gs://%s/%s.gz: %v", repoURL.Host, indexPath, repoURL.Host, indexPath, err)
+		}
+	}
+
+	return decode(index, cf)
 }
 
 // FindRepoSpec returns the element of pl whose PackageSpec matches pi.
