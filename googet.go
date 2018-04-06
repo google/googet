@@ -162,13 +162,14 @@ func repoList(dir string) ([]string, error) {
 	if !allowUnsafeURL {
 		var srl []string
 		for _, r := range rl {
+			isGCSURL, _, _ := goolib.SplitGCSUrl(r)
 			parsed, err := url.Parse(r)
 			if err != nil {
 				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
 				continue
 			}
-			if parsed.Scheme != "https" && parsed.Scheme != "gs" {
-				logger.Errorf("%s will not be used as a repository, only https and gs endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
+			if parsed.Scheme != "https" && !isGCSURL {
+				logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
 				continue
 			}
 			srl = append(srl, r)

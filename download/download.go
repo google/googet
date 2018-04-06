@@ -30,7 +30,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -44,21 +43,15 @@ import (
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
 func Package(pkgURL, dst, chksum string, proxyServer string) error {
-	parsedPkgURL, err := url.Parse(pkgURL)
-	if err != nil {
-		return err
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
+	if isGCSURL {
+		return packageGCS(bucket, object, dst, chksum, proxyServer)
 	}
-	switch parsedPkgURL.Scheme {
-	case "gs":
-		return packageGCS(parsedPkgURL, dst, chksum, proxyServer)
-	case "http", "https":
-		return packageHTTP(parsedPkgURL, dst, chksum, proxyServer)
-	}
-	return fmt.Errorf("Unsupported URL scheme '%s' for '%s'", parsedPkgURL.Scheme, pkgURL)
+	return packageHTTP(pkgURL, dst, chksum, proxyServer)
 }
 
 // Downloads a package from an HTTP(s) server
-func packageHTTP(pkgURL *url.URL, dst, chksum string, proxyServer string) error {
+func packageHTTP(pkgURL, dst, chksum string, proxyServer string) error {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -67,12 +60,12 @@ func packageHTTP(pkgURL *url.URL, dst, chksum string, proxyServer string) error 
 		}
 		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
-	resp, err := httpClient.Get(pkgURL.String())
+	resp, err := httpClient.Get(pkgURL)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	logger.Infof("Downloading %q", pkgURL.String())
+	logger.Infof("Downloading %q", pkgURL)
 	if err := oswrap.RemoveAll(dst); err != nil {
 		return err
 	}
@@ -80,7 +73,7 @@ func packageHTTP(pkgURL *url.URL, dst, chksum string, proxyServer string) error 
 }
 
 // Downloads a package from Google Cloud Storage
-func packageGCS(pkgURL *url.URL, dst, chksum string, proxyServer string) error {
+func packageGCS(bucket, object string, dst, chksum string, proxyServer string) error {
 
 	if proxyServer != "" {
 		return fmt.Errorf("Proxy server not supported with gs:// URLs")
@@ -91,11 +84,11 @@ func packageGCS(pkgURL *url.URL, dst, chksum string, proxyServer string) error {
 	if err != nil {
 		return err
 	}
-	bkt := client.Bucket(pkgURL.Host)
-	obj := bkt.Object(regexp.MustCompile("^/*").ReplaceAllString(pkgURL.Path, ""))
+	bkt := client.Bucket(bucket)
+	obj := bkt.Object(object)
 	defer func() {
 		if err := client.Close(); err != nil {
-			logger.Errorf("Failed to close gcloud storage client after reading 'gs://%s/%s': %s", pkgURL.Host, pkgURL.Path, err)
+			logger.Errorf("Failed to close gcloud storage client after reading 'gs://%s/%s': %s", bucket, object, err)
 		}
 	}()
 	r, err := obj.NewReader(ctx)

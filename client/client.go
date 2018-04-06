@@ -173,21 +173,14 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
 
-	parsedP, err := url.Parse(p)
-	if err != nil {
-		return nil, err
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
+	if isGCSURL {
+		return unmarshalRepoPackagesGCS(bucket, object, cf, proxyServer)
 	}
-	switch parsedP.Scheme {
-	case "http", "https":
-		return unmarshalRepoPackagesHTTP(parsedP, cf, proxyServer)
-	case "gs":
-		return unmarshalRepoPackagesGCS(parsedP, cf, proxyServer)
-	}
-
-	return nil, fmt.Errorf("Unsupported URL Scheme '%s' for '%s'", parsedP.Scheme, p)
+	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
 }
 
-func unmarshalRepoPackagesHTTP(repoURL *url.URL, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -197,7 +190,7 @@ func unmarshalRepoPackagesHTTP(repoURL *url.URL, cf string, proxyServer string) 
 		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
 
-	indexURL := repoURL.String() + "/index.gz"
+	indexURL := repoURL + "/index.gz"
 	logger.Infof("Fetching %q", indexURL)
 	res, err := httpClient.Get(indexURL)
 	if err != nil {
@@ -206,7 +199,7 @@ func unmarshalRepoPackagesHTTP(repoURL *url.URL, cf string, proxyServer string) 
 
 	if res.StatusCode != 200 {
 		logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
-		indexURL = repoURL.String() + "/index"
+		indexURL = repoURL + "/index"
 		logger.Infof("Fetching %q", indexURL)
 		res, err = httpClient.Get(indexURL)
 		if err != nil {
@@ -222,10 +215,10 @@ func unmarshalRepoPackagesHTTP(repoURL *url.URL, cf string, proxyServer string) 
 	return decode(index, cf)
 }
 
-func unmarshalRepoPackagesGCS(repoURL *url.URL, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackagesGCS(bucket, object string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 
 	if proxyServer != "" {
-		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo '%s'", repoURL.String())
+		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
 		var empty []goolib.RepoSpec
 		return empty, nil
 	}
@@ -240,11 +233,15 @@ func unmarshalRepoPackagesGCS(repoURL *url.URL, cf string, proxyServer string) (
 			logger.Errorf("Failed to close gcloud storage client: %v", err)
 		}
 	}()
-	bkt := client.Bucket(repoURL.Host)
-	indexPath := regexp.MustCompile("^/*").ReplaceAllString(regexp.MustCompile("/*$").ReplaceAllString(repoURL.Path, ""), "") + "/" + "index"
+	bkt := client.Bucket(bucket)
+	if len(object) != 0 {
+		object += "/"
+	}
+	indexPath := object + "index"
+	indexPath_gz := indexPath + ".gz"
 
 	var index []byte
-	obj := bkt.Object(indexPath + ".gz")
+	obj := bkt.Object(indexPath_gz)
 	if r, err := obj.NewReader(ctx); err == nil {
 		defer r.Close()
 		index, err = ioutil.ReadAll(r)
@@ -253,15 +250,16 @@ func unmarshalRepoPackagesGCS(repoURL *url.URL, cf string, proxyServer string) (
 		}
 	}
 	if index == nil {
+		eStr := fmt.Sprintf("Failed to read gs://%s/%s and gs://%s/%s: %v", bucket, indexPath, bucket, indexPath_gz)
 		obj := bkt.Object(indexPath)
 		r, err := obj.NewReader(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to read gs://%s/%s and gs://%s/%s.gz: %v", repoURL.Host, indexPath, repoURL.Host, indexPath, err)
+			return nil, fmt.Errorf("%s: %v", eStr, err)
 		}
 		defer r.Close()
 		index, err = ioutil.ReadAll(r)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to read gs://%s/%s and gs://%s/%s.gz: %v", repoURL.Host, indexPath, repoURL.Host, indexPath, err)
+			return nil, fmt.Errorf("%s: %v", eStr, err)
 		}
 	}
 
