@@ -1,2 +1,7 @@
+dist: trusty
+sudo: false
 language: go
-go: tip
+go: 1.x
+script:
+  - go vet $(go list ./... | grep -v /vendor/)
+  - go test -v -race $(go list ./... | grep -v /vendor/)
