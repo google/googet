@@ -50,7 +50,7 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if len(flags.Args()) == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
@@ -116,7 +116,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 			if repos == nil {
 				logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 			}
-			rm = client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+			rm = client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 		}
 		if pi.Ver == "" {
 			v, _, a, err := client.FindRepoLatest(pi, rm, archs)
