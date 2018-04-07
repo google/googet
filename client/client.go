@@ -250,7 +250,7 @@ func unmarshalRepoPackagesGCS(bucket, object string, cf string, proxyServer stri
 		}
 	}
 	if index == nil {
-		eStr := fmt.Sprintf("Failed to read gs://%s/%s and gs://%s/%s: %v", bucket, indexPath, bucket, indexPath_gz)
+		eStr := fmt.Sprintf("Failed to read gs://%s/%s and gs://%s/%s", bucket, indexPath, bucket, indexPath_gz)
 		obj := bkt.Object(indexPath)
 		r, err := obj.NewReader(ctx)
 		if err != nil {
