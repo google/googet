@@ -14,10 +14,10 @@ limitations under the License.
 package goolib
 
 import (
-	"testing"
 	"fmt"
 	"math/rand"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -82,8 +82,8 @@ func TestContainsString(t *testing.T) {
 	}
 }
 
-func randString(runes []rune, min , max int) string {
-	s := make([]rune, rand.Intn(1 + max - min) + min)
+func randString(runes []rune, min, max int) string {
+	s := make([]rune, rand.Intn(1+max-min)+min)
 	for i := range s {
 		s[i] = runes[rand.Intn(len(runes))]
 	}
@@ -94,7 +94,7 @@ func TestSplitGCSUrl(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 	const alphanum = "abcdefghijklmnopqrstuvwxyz0123456789"
 	objChars := alphanum + "ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~@%^=+"
-	bucket := randString([]rune(alphanum), 1, 1) + randString([]rune(alphanum + "-_."), 0, 61) + randString([]rune(alphanum), 1, 1)
+	bucket := randString([]rune(alphanum), 1, 1) + randString([]rune(alphanum+"-_."), 0, 61) + randString([]rune(alphanum), 1, 1)
 	object := randString([]rune(objChars+"/"), 0, 49) + randString([]rune(objChars), 1, 1)
 
 	var domains = []string{
@@ -104,7 +104,7 @@ func TestSplitGCSUrl(t *testing.T) {
 	}
 	var urls, urlsNoObjs []string
 	for i := range domains {
-		for _, s := range []string{"","s"} {
+		for _, s := range []string{"", "s"} {
 			// Without Objects
 			urlsNoObjs = append(urlsNoObjs, fmt.Sprintf("http%s://%s/%s", s, domains[i], bucket))
 			urlsNoObjs = append(urlsNoObjs, fmt.Sprintf("http%s://%s/%s", s, strings.ToUpper(domains[i]), bucket))
@@ -125,40 +125,40 @@ func TestSplitGCSUrl(t *testing.T) {
 	for _, url := range urls {
 		ok := true
 		isGCSUrl, bkt, obj := SplitGCSUrl(url)
-		if (!isGCSUrl) {
+		if !isGCSUrl {
 			t.Errorf("Failed to parse '%s', expecting bucket='%s', object='%s'", url, bucket, object)
 			ok = false
 		} else {
-			if (bkt != bucket) {
+			if bkt != bucket {
 				t.Errorf("Parsed bucket '%s' from '%s', expecting '%s'", bkt, url, bucket)
 				ok = false
 			}
-			if (obj != object) {
+			if obj != object {
 				t.Errorf("Parsed object '%s' from '%s', expecting '%s'", obj, url, object)
 				ok = false
 			}
 		}
-		if (ok) {
+		if ok {
 			t.Logf("Successfully parsed object='%s', bucket='%s' from '%s'", obj, bkt, url)
 		}
 	}
 	for _, url := range urlsNoObjs {
 		ok := true
 		isGCSUrl, bkt, obj := SplitGCSUrl(url)
-		if (!isGCSUrl) {
+		if !isGCSUrl {
 			t.Errorf("Failed to parse '%s', expecting bucket='%s', no object", url, bucket)
 			ok = false
 		} else {
-			if (bkt != bucket) {
+			if bkt != bucket {
 				t.Errorf("Parsed bucket '%s' from '%s', expecting '%s'", bkt, url, bucket)
 				ok = false
 			}
-			if (obj != "") {
+			if obj != "" {
 				t.Errorf("Parsed object '%s' from '%s', expecting an empty string", obj, url)
 				ok = false
 			}
 		}
-		if (ok) {
+		if ok {
 			t.Logf("Successfully parsed object='%s', bucket='%s' from '%s'", obj, bkt, url)
 		}
 	}

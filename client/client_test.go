@@ -15,8 +15,8 @@ package client
 
 import (
 	"bytes"
-	"context"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"io/ioutil"

@@ -175,7 +175,7 @@ func SplitGCSUrl(p string) (isGCSURL bool, bucket, object string) {
 	bucket = `([a-z0-9][-_.a-z0-9]*)`
 	object = `(/(?U)(.+)/*)?`
 	bucketRegex := regexp.MustCompile(fmt.Sprintf(`^gs://%s/?$`, bucket))
-	gsRegex     := regexp.MustCompile(fmt.Sprintf(`^gs://%s%s$`, bucket, object))
+	gsRegex := regexp.MustCompile(fmt.Sprintf(`^gs://%s%s$`, bucket, object))
 	gsHTTPRegex1 := regexp.MustCompile(fmt.Sprintf(`^http[s]?://%s\.(?i:storage\.googleapis\.com)%s$`, bucket, object))
 	gsHTTPRegex2 := regexp.MustCompile(fmt.Sprintf(`^http[s]?://(?i:storage\.cloud\.google\.com)/%s%s$`, bucket, object))
 	gsHTTPRegex3 := regexp.MustCompile(fmt.Sprintf(`^http[s]?://(?i:(?:commondata)?storage\.googleapis\.com)/%s%s$`, bucket, object))
