@@ -16,12 +16,15 @@ package download
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"cloud.google.com/go/storage"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
@@ -39,6 +43,15 @@ import (
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
 func Package(pkgURL, dst, chksum string, proxyServer string) error {
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
+	if isGCSURL {
+		return packageGCS(bucket, object, dst, chksum, proxyServer)
+	}
+	return packageHTTP(pkgURL, dst, chksum, proxyServer)
+}
+
+// Downloads a package from an HTTP(s) server
+func packageHTTP(pkgURL, dst, chksum string, proxyServer string) error {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -57,6 +70,37 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 		return err
 	}
 	return download(resp.Body, dst, chksum, proxyServer)
+}
+
+// Downloads a package from Google Cloud Storage
+func packageGCS(bucket, object string, dst, chksum string, proxyServer string) error {
+
+	if proxyServer != "" {
+		return fmt.Errorf("Proxy server not supported with gs:// URLs")
+	}
+
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return err
+	}
+	bkt := client.Bucket(bucket)
+	obj := bkt.Object(object)
+	defer func() {
+		if err := client.Close(); err != nil {
+			logger.Errorf("Failed to close gcloud storage client after reading 'gs://%s/%s': %s", bucket, object, err)
+		}
+	}()
+	r, err := obj.NewReader(ctx)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	body, err := ioutil.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return download(bytes.NewReader(body), dst, chksum, proxyServer)
 }
 
 // FromRepo downloads a package from a repo.

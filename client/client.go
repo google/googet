@@ -15,7 +15,9 @@ limitations under the License.
 package client
 
 import (
+	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -23,8 +25,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
@@ -88,10 +92,10 @@ func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 type RepoMap map[string][]goolib.RepoSpec
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
+func AvailableVersions(ctx context.Context, srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
 	rm := make(RepoMap)
 	for _, r := range srcs {
-		rf, err := unmarshalRepoPackages(r, cacheDir, cacheLife, proxyServer)
+		rf, err := unmarshalRepoPackages(ctx, r, cacheDir, cacheLife, proxyServer)
 		if err != nil {
 			logger.Errorf("error reading repo %q: %v", r, err)
 			continue
@@ -101,21 +105,25 @@ func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, 
 	return rm
 }
 
-func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
-	ct := res.Header.Get("content-type")
+func decode(index []byte, cf string) ([]goolib.RepoSpec, error) {
+
+	ctFull := http.DetectContentType(index)
+	ct := regexp.MustCompile("; .*$").ReplaceAllString(ctFull, "")
+	indexReader := bytes.NewReader(index)
 	var dec *json.Decoder
 	switch ct {
-	case "application/gzip":
-		gr, err := gzip.NewReader(res.Body)
+	case "application/gzip", "application/x-gzip":
+		gr, err := gzip.NewReader(indexReader)
 		if err != nil {
 			return nil, err
 		}
 		dec = json.NewDecoder(gr)
-	case "application/json":
-		dec = json.NewDecoder(res.Body)
+	case "application/json", "text/plain":
+		dec = json.NewDecoder(indexReader)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
+
 	var m []goolib.RepoSpec
 	for dec.More() {
 		if err := dec.Decode(&m); err != nil {
@@ -141,16 +149,8 @@ func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
-func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
 	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
-	httpClient := &http.Client{}
-	if proxyServer != "" {
-		proxyURL, err := url.Parse(proxyServer)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-	}
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
@@ -173,30 +173,96 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
 
-	url := p + "/index.gz"
-	logger.Infof("Fetching %q", url)
-	res, err := httpClient.Get(url)
-	if err != nil {
-		return nil, err
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
+	if isGCSURL {
+		return unmarshalRepoPackagesGCS(ctx, bucket, object, cf, proxyServer)
+	}
+	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
+}
+
+func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+	httpClient := &http.Client{}
+	if proxyServer != "" {
+		proxyURL, err := url.Parse(proxyServer)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
 
-	if res.StatusCode == 200 {
-		return decode(res, cf)
-	}
-
-	logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
-	url = p + "/index"
-	logger.Infof("Fetching %q", url)
-	res, err = httpClient.Get(url)
+	indexURL := repoURL + "/index.gz"
+	logger.Infof("Fetching %q", indexURL)
+	res, err := httpClient.Get(indexURL)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
+		indexURL = repoURL + "/index"
+		logger.Infof("Fetching %q", indexURL)
+		res, err = httpClient.Get(indexURL)
+		if err != nil {
+			return nil, err
+		}
+
+		if res.StatusCode != 200 {
+			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		}
 	}
 
-	return decode(res, cf)
+	index, err := ioutil.ReadAll(res.Body)
+	return decode(index, cf)
+}
+
+func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+
+	if proxyServer != "" {
+		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
+		var empty []goolib.RepoSpec
+		return empty, nil
+	}
+
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			logger.Errorf("Failed to close gcloud storage client: %v", err)
+		}
+	}()
+	bkt := client.Bucket(bucket)
+	if len(object) != 0 {
+		object += "/"
+	}
+	indexPath := object + "index"
+	indexPath_gz := indexPath + ".gz"
+
+	var index []byte
+	obj := bkt.Object(indexPath_gz)
+	if r, err := obj.NewReader(ctx); err == nil {
+		defer r.Close()
+		index, err = ioutil.ReadAll(r)
+		if err != nil {
+			index = nil
+		}
+	}
+	if index == nil {
+		eStr := fmt.Sprintf("Failed to read gs://%s/%s and gs://%s/%s", bucket, indexPath, bucket, indexPath_gz)
+		obj := bkt.Object(indexPath)
+		r, err := obj.NewReader(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", eStr, err)
+		}
+		defer r.Close()
+		index, err = ioutil.ReadAll(r)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", eStr, err)
+		}
+	}
+
+	return decode(index, cf)
 }
 
 // FindRepoSpec returns the element of pl whose PackageSpec matches pi.

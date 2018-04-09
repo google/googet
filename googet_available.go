@@ -50,7 +50,7 @@ func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *availableCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitFailure
 
 	var filter string
@@ -74,7 +74,7 @@ func (cmd *availableCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	}
 
 	m := make(map[string][]string)
-	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 	for r, pl := range rm {
 		for _, p := range pl {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)
