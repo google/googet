@@ -15,23 +15,23 @@ limitations under the License.
 package client
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
+	"google.golang.org/api/googleapi"
 )
 
 // PackageState describes the state of a package on a client.
@@ -105,21 +105,19 @@ func AvailableVersions(ctx context.Context, srcs []string, cacheDir string, cach
 	return rm
 }
 
-func decode(index []byte, cf string) ([]goolib.RepoSpec, error) {
+func decode(index io.ReadCloser, ct, cf string) ([]goolib.RepoSpec, error) {
+	defer index.Close()
 
-	ctFull := http.DetectContentType(index)
-	ct := regexp.MustCompile("; .*$").ReplaceAllString(ctFull, "")
-	indexReader := bytes.NewReader(index)
 	var dec *json.Decoder
 	switch ct {
-	case "application/gzip", "application/x-gzip":
-		gr, err := gzip.NewReader(indexReader)
+	case "application/x-gzip":
+		gr, err := gzip.NewReader(index)
 		if err != nil {
 			return nil, err
 		}
 		dec = json.NewDecoder(gr)
-	case "application/json", "text/plain":
-		dec = json.NewDecoder(indexReader)
+	case "application/json":
+		dec = json.NewDecoder(index)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
@@ -191,6 +189,7 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 	}
 
 	indexURL := repoURL + "/index.gz"
+	ct := "application/x-gzip"
 	logger.Infof("Fetching %q", indexURL)
 	res, err := httpClient.Get(indexURL)
 	if err != nil {
@@ -200,6 +199,7 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 	if res.StatusCode != 200 {
 		logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
 		indexURL = repoURL + "/index"
+		ct = "application/json"
 		logger.Infof("Fetching %q", indexURL)
 		res, err = httpClient.Get(indexURL)
 		if err != nil {
@@ -211,12 +211,10 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 		}
 	}
 
-	index, err := ioutil.ReadAll(res.Body)
-	return decode(index, cf)
+	return decode(res.Body, ct, cf)
 }
 
 func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
-
 	if proxyServer != "" {
 		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
 		var empty []goolib.RepoSpec
@@ -227,42 +225,30 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf str
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			logger.Errorf("Failed to close gcloud storage client: %v", err)
-		}
-	}()
+
 	bkt := client.Bucket(bucket)
 	if len(object) != 0 {
 		object += "/"
 	}
-	indexPath := object + "index"
-	indexPath_gz := indexPath + ".gz"
 
-	var index []byte
-	obj := bkt.Object(indexPath_gz)
-	if r, err := obj.NewReader(ctx); err == nil {
-		defer r.Close()
-		index, err = ioutil.ReadAll(r)
-		if err != nil {
-			index = nil
-		}
-	}
-	if index == nil {
-		eStr := fmt.Sprintf("Failed to read gs://%s/%s and gs://%s/%s", bucket, indexPath, bucket, indexPath_gz)
-		obj := bkt.Object(indexPath)
-		r, err := obj.NewReader(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %v", eStr, err)
-		}
-		defer r.Close()
-		index, err = ioutil.ReadAll(r)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %v", eStr, err)
-		}
+	indexPath := object + "index.gz"
+	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
+	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
+		return decode(r, "application/x-gzip", cf)
 	}
 
-	return decode(index, cf)
+	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
+		return nil, err
+	}
+
+	logger.Info("Failed to read gzipped index, trying plain JSON.")
+	indexPath = object + "index"
+	r, err := bkt.Object(indexPath).NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return decode(r, "application/json", cf)
 }
 
 // FindRepoSpec returns the element of pl whose PackageSpec matches pi.

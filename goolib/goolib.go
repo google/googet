@@ -169,11 +169,12 @@ func ContainsString(a string, slice []string) bool {
 	return false
 }
 
+// SplitGCSUrl pasrses and splits a GCS URL returning if the URL belongs to a GCS object,
+// and if so the bucket and object.
 // Code modified from https://github.com/GoogleCloudPlatform/compute-image-tools/blob/master/daisy/storage.go
-func SplitGCSUrl(p string) (isGCSURL bool, bucket, object string) {
-
-	bucket = `([a-z0-9][-_.a-z0-9]*)`
-	object = `(/(?U)(.+)/*)?`
+func SplitGCSUrl(p string) (bool, string, string) {
+	bucket := `([a-z0-9][-_.a-z0-9]*)`
+	object := `(/(?U)(.+)/*)?`
 	bucketRegex := regexp.MustCompile(fmt.Sprintf(`^gs://%s/?$`, bucket))
 	gsRegex := regexp.MustCompile(fmt.Sprintf(`^gs://%s%s$`, bucket, object))
 	gsHTTPRegex1 := regexp.MustCompile(fmt.Sprintf(`^http[s]?://%s\.(?i:storage\.googleapis\.com)%s$`, bucket, object))
@@ -186,10 +187,11 @@ func SplitGCSUrl(p string) (isGCSURL bool, bucket, object string) {
 			return true, matches[1], matches[3]
 		}
 	}
+
 	matches := bucketRegex.FindStringSubmatch(p)
 	if matches != nil {
 		return true, matches[1], ""
 	}
-	return false, "", ""
 
+	return false, "", ""
 }
