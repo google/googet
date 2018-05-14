@@ -16,6 +16,7 @@ package goolib
 import (
 	"archive/tar"
 	"bytes"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -284,6 +285,50 @@ func TestUnmarshalGooSpec(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("did not get expected GooSpec, got: \n%+v\nwant: \n%+v", got, want)
 	}
+}
+
+func TestNoPathTraversal(t *testing.T) {
+	c1 := []byte(`{
+  "name": "pkg",
+  "version": "1.2.3@4",
+  "arch": "noarch",
+  "releaseNotes": [],
+  "description": "blah blah",
+  "owners": "someone",
+  "install": {
+    "path": "../../../../install.ps1"
+  },
+  "sources": []
+}`)
+	fail := []byte(`{
+  "name": "pkg",
+  "version": "1.2.3@4",
+  "arch": "noarch",
+  "releaseNotes": [],
+  "description": "blah blah",
+  "owners": "someone",
+  "install": {
+    "path": "/usr/bin/sudo"
+  },
+  "sources": []
+}`)
+	got, err := UnmarshalPackageSpec(c1)
+	if err != nil {
+		t.Fatalf("error running unmarshalGooSpec: %v", err)
+	}
+	path := got.Install.Path
+	if strings.Contains(path, "..") {
+		t.Errorf("install path %s allows path traversal", path)
+	}
+	if filepath.IsAbs(path) {
+		t.Errorf("install path %s is absolute", path)
+	}
+
+	_, err = UnmarshalPackageSpec(fail)
+	if err == nil {
+		t.Errorf("goospec containing absolute path successfully unmarshalled %s", fail)
+	}
+
 }
 
 func TestMarshal(t *testing.T) {
