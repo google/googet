@@ -44,10 +44,10 @@ func TestDownload(t *testing.T) {
 		t.Errorf("error seeking to front of reader: %v", err)
 	}
 	tempFile := path.Join(tempDir, "test")
-	if err := download(r, tempFile, chksum, ""); err != nil {
+	if err := download(r, tempFile, chksum); err != nil {
 		t.Errorf("error downloading and checking checksum: %v", err)
 	}
-	if err := download(r, tempFile, "notachecksum", ""); err == nil {
+	if err := download(r, tempFile, "notachecksum"); err == nil {
 		t.Error("wanted but did not recieve checksum error")
 	}
 }

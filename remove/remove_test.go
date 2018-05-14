@@ -14,7 +14,11 @@ limitations under the License.
 package remove
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -49,9 +53,42 @@ func TestUninstallPkg(t *testing.T) {
 		t.Fatalf("Failed to create test folder: %v", err)
 	}
 
-	testFile := filepath.Join(testFolder3, "foo")
-	if err := ioutil.WriteFile(testFile, []byte{}, 0666); err != nil {
+	f, err := oswrap.Create(filepath.Join(src, "test.goo"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer oswrap.Remove(f.Name())
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	testFile, err := oswrap.Create(filepath.Join(testFolder3, "foo"))
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	fi, err := testFile.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fih, err := tar.FileInfoHeader(fi, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(fih); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(tw, testFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := testFile.Close(); err != nil {
+		t.Fatalf("Failed to close test file: %v", err)
+	}
+
+	tw.Close()
+	gw.Close()
+	if err := f.Close(); err != nil {
+		log.Fatal(err)
 	}
 
 	st := &client.GooGetState{
@@ -60,13 +97,13 @@ func TestUninstallPkg(t *testing.T) {
 				Name: "foo",
 			},
 			InstalledFiles: map[string]string{
-				testFile:    "chksum",
-				testFolder:  "",
-				testFolder2: "",
-				testFolder3: "",
-				dst:         "",
+				testFile.Name(): "chksum",
+				testFolder:      "",
+				testFolder2:     "",
+				testFolder3:     "",
+				dst:             "",
 			},
-			UnpackDir: dst,
+			LocalPath: f.Name(),
 		},
 	}
 
@@ -74,7 +111,7 @@ func TestUninstallPkg(t *testing.T) {
 		t.Fatalf("Error running uninstallPkg: %v", err)
 	}
 
-	for _, n := range []string{testFile, dst} {
+	for _, n := range []string{testFile.Name(), dst} {
 		if _, err := oswrap.Stat(n); err == nil {
 			t.Errorf("%s was not removed", n)
 		}

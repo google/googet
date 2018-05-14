@@ -17,6 +17,7 @@ package download
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -25,11 +26,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
-	"path"
-
+	"cloud.google.com/go/storage"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/google/googet/client"
 	"github.com/google/googet/goolib"
@@ -39,7 +40,21 @@ import (
 
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-func Package(pkgURL, dst, chksum string, proxyServer string) error {
+func Package(pkgURL, dst, chksum, proxyServer string) error {
+	if err := oswrap.RemoveAll(dst); err != nil {
+		return err
+	}
+
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
+	if isGCSURL {
+		return packageGCS(bucket, object, dst, chksum, "")
+	}
+
+	return packageHTTP(pkgURL, dst, chksum, proxyServer)
+}
+
+// Downloads a package from an HTTP(s) server
+func packageHTTP(pkgURL, dst, chksum string, proxyServer string) error {
 	httpClient := &http.Client{}
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -48,16 +63,38 @@ func Package(pkgURL, dst, chksum string, proxyServer string) error {
 		}
 		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
+
 	resp, err := httpClient.Get(pkgURL)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
 	logger.Infof("Downloading %q", pkgURL)
-	if err := oswrap.RemoveAll(dst); err != nil {
+	return download(resp.Body, dst, chksum)
+}
+
+// Downloads a package from Google Cloud Storage
+func packageGCS(bucket, object string, dst, chksum string, proxyServer string) error {
+	if proxyServer != "" {
+		return fmt.Errorf("Proxy server not supported with GCS URLs")
+	}
+
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
 		return err
 	}
-	return download(resp.Body, dst, chksum, proxyServer)
+	defer client.Close()
+
+	r, err := client.Bucket(bucket).Object(object).NewReader(ctx)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	logger.Infof("Downloading gs://%s/%s", bucket, object)
+	return download(r, dst, chksum)
 }
 
 // FromRepo downloads a package from a repo.
@@ -95,8 +132,8 @@ func Latest(name, dir string, rm client.RepoMap, archs []string, proxyServer str
 	return FromRepo(rs, repo, dir, proxyServer)
 }
 
-func download(r io.Reader, p, chksum string, proxyServer string) (err error) {
-	f, err := oswrap.Create(p)
+func download(r io.Reader, dst, chksum string) (err error) {
+	f, err := oswrap.Create(dst)
 	if err != nil {
 		return err
 	}

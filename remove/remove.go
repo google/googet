@@ -33,27 +33,50 @@ func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool,
 	if err != nil {
 		return fmt.Errorf("package not found in state file: %v", err)
 	}
+	// Fix for package install by older versions of GooGet.
+	if ps.LocalPath == "" {
+		ps.LocalPath = ps.UnpackDir + ".goo"
+	}
 	if !dbOnly {
-		_, err := oswrap.Stat(ps.UnpackDir)
+		f, err := os.Open(ps.LocalPath)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		var rd bool
 		if os.IsNotExist(err) {
-			dst := ps.UnpackDir + ".goo"
-			logger.Infof("Package directory does not exist for %s.%s.%s, redownloading...", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
-			if err := download.Package(ps.DownloadURL, dst, ps.Checksum, proxyServer); err != nil {
+			logger.Infof("Local package does not exist for %s.%s.%s, redownloading...", pi.Name, pi.Arch, pi.Ver)
+			rd = true
+		}
+		// Force redownload if checksum does not match.
+		// If checksum is empty this was a local install so ignore.
+		if !rd && ps.Checksum != "" && goolib.Checksum(f) != ps.Checksum {
+			logger.Info("Local package checksum does not match, redownloading...")
+			rd = true
+		}
+		f.Close()
+
+		if rd {
+			if ps.DownloadURL == "" {
+				return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
+			}
+			if err := download.Package(ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
 				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it form the database: %v", pi.Name, pi.Arch, pi.Ver, err)
 			}
-			if _, err := download.ExtractPkg(dst); err != nil {
-				return err
-			}
-			if err := oswrap.Remove(dst); err != nil {
-				logger.Errorf("error cleaning up package file: %v", err)
-			}
 		}
-		if err := system.Uninstall(ps); err != nil {
+
+		eDir, err := download.ExtractPkg(ps.LocalPath)
+		if err != nil {
 			return err
 		}
+
+		if err := system.Uninstall(eDir, ps.PackageSpec); err != nil {
+			return err
+		}
+
+		if err := oswrap.RemoveAll(eDir); err != nil {
+			logger.Error(err)
+		}
+
 		if len(ps.InstalledFiles) > 0 {
 			var dirs []string
 			for file, chksum := range ps.InstalledFiles {
@@ -76,7 +99,7 @@ func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool,
 		}
 	}
 
-	if err := oswrap.RemoveAll(ps.UnpackDir); err != nil {
+	if err := oswrap.RemoveAll(ps.LocalPath); err != nil {
 		logger.Errorf("error removing package data from cache directory: %v", err)
 	}
 	return state.Remove(pi)
