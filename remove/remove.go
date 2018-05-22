@@ -15,6 +15,7 @@ limitations under the License.
 package remove
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -27,7 +28,7 @@ import (
 	"github.com/google/logger"
 )
 
-func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, proxyServer string) error {
 	logger.Infof("Executing removal of package %q", pi.Name)
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
@@ -59,7 +60,7 @@ func uninstallPkg(pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool,
 			if ps.DownloadURL == "" {
 				return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
 			}
-			if err := download.Package(ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+			if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
 				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it form the database: %v", pi.Name, pi.Arch, pi.Ver, err)
 			}
 		}
@@ -158,17 +159,17 @@ func EnumerateDeps(pi goolib.PackageInfo, state client.GooGetState) (DepMap, []s
 
 // All removes a package and all dependant packages. Packages with no dependant packages
 // will be removed first.
-func All(pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, proxyServer string) error {
 	for len(deps) > 1 {
 		for dep := range deps {
 			if len(deps[dep]) == 0 {
 				di := goolib.PkgNameSplit(dep)
-				if err := uninstallPkg(di, state, dbOnly, proxyServer); err != nil {
+				if err := uninstallPkg(ctx, di, state, dbOnly, proxyServer); err != nil {
 					return err
 				}
 				deps.remove(dep)
 			}
 		}
 	}
-	return uninstallPkg(pi, state, dbOnly, proxyServer)
+	return uninstallPkg(ctx, pi, state, dbOnly, proxyServer)
 }

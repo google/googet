@@ -102,7 +102,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 
 		pi := goolib.PkgNameSplit(arg)
 		if cmd.reinstall {
-			if err := reinstall(pi, *state, cmd.redownload); err != nil {
+			if err := reinstall(ctx, pi, *state, cmd.redownload); err != nil {
 				logger.Errorf("Error reinstalling %s: %v", pi.Name, err)
 				exitCode = subcommands.ExitFailure
 				continue
@@ -161,7 +161,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 				continue
 			}
 		}
-		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -173,7 +173,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 	return exitCode
 }
 
-func reinstall(pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
+func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
 		return fmt.Errorf("cannot reinstall something that is not already installed")
@@ -184,7 +184,7 @@ func reinstall(pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
 			return nil
 		}
 	}
-	if err := install.Reinstall(ps, state, rd, proxyServer); err != nil {
+	if err := install.Reinstall(ctx, ps, state, rd, proxyServer); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil
