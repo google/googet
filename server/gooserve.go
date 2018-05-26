@@ -41,6 +41,7 @@ var (
 	repoName    = flag.String("repo_name", "repo", "name of the repo to setup")
 	packagePath = flag.String("package_path", "packages", "path under both the filesystem (-root flag) and webserver root where packages are located")
 	dumpIndex   = flag.Bool("dump_index", false, "dump the package index to stdout and quit")
+	saveIndex   = flag.String("save_index", "", "save the package index to the specified file and quit")
 
 	repoContents *repoPackages
 )
@@ -145,12 +146,20 @@ func main() {
 	if err := runSync(packageDir); err != nil {
 		logger.Error(err)
 	}
-	if *dumpIndex {
+	if *dumpIndex || *saveIndex != "" {
 		out, err := json.MarshalIndent(repoContents.rs, "", "  ")
 		if err != nil {
 			logger.Fatal(err)
 		}
-		fmt.Println(string(out))
+		if *dumpIndex {
+			fmt.Println(string(out))
+		}
+		if *saveIndex != "" {
+			err := ioutil.WriteFile(*saveIndex, out, 0644)
+			if err != nil {
+				logger.Fatal(err)
+			}
+		}
 		return
 	}
 
