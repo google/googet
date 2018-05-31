@@ -14,9 +14,10 @@ The server code can also be used to generate a package index that can be used
 by a web server or Google Cloud Storage like so:
 
 ```dos
+mkdir -p /tmp/goorepo/myrepo/
 mkdir -p /tmp/goorepo/packages/
 cp /somewhere/else/*.goo /tmp/goorepo/packages/
-go run gooserve.go -root /tmp/goorepo/ -save_index /tmp/goorepo/index
+go run gooserve.go -root /tmp/goorepo/ -save_index /tmp/goorepo/myrepo/index
 gsutil rsync -r /tmp/goorepo/ gs://my-bucket/goorepo/
 ```
 WARNING: If you use Powershell and -dump_index instead of -save_index, make sure to save the file as UTF-8. If you see an error like *ERROR: 2018/05/26 09:23:56.329402 client.go:100: error reading repo "gs://my-bucket/googet/": invalid character 'ÿ' looking for beginning of value*, that's likely the problem.

@@ -41,10 +41,12 @@ Googet supports using Google Cloud Storage as its server.
 
 ```
 set GOOREPO=%TEMP%\googet-repo
+set REPONAME=my_repo
+mkdir %GOOREPO%\%REPONAME%
 mkdir %GOOREPO%\packages
 go run goopack/goopack.go googet.goospec
 copy *.goo %GOOREPO%\packages
-go run server\gooserve.go -root %GOOREPO% -dump_index > %GOOREPO%\index
+go run server\gooserve.go -root %GOOREPO% -save_index %GOOREPO%\%REPONAME%\index
 gsutil mb --project my-project my-googet-server
 gsutil rsync -r %GOOREPO% gs://my-googet-server
 ./googet.exe addrepo gcs gs://my-googet-server
