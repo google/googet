@@ -105,12 +105,11 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxySe
 	}
 	// We strip training slashes to make sure path.Dir() removes the final component (the repo name).
 	// Otherwise '/myrepo' would correctly resolve to '/', but '/myrepo/' would incorrectly resolve to '/myrepo'
-	normalize := regexp.MustCompile("/*$")
 	pkgURL := &url.URL{
 		Scheme:  repoURL.Scheme,
 		Host:    repoURL.Host,
 		User:    repoURL.User,
-		RawPath: path.Join(path.Dir(normalize.ReplaceAllString(repoURL.EscapedPath(), "")), rs.Source),
+		RawPath: path.Join(path.Dir(regexp.MustCompile("/*$").ReplaceAllString(repoURL.EscapedPath(), "")), rs.Source),
 	}
 	pkgURL.Path, err = url.PathUnescape(pkgURL.RawPath)
 	if err != nil {
