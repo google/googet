@@ -28,7 +28,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -109,7 +108,7 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxySe
 		Scheme:  repoURL.Scheme,
 		Host:    repoURL.Host,
 		User:    repoURL.User,
-		RawPath: path.Join(path.Dir(regexp.MustCompile("/*$").ReplaceAllString(repoURL.EscapedPath(), "")), rs.Source),
+		RawPath: path.Join(path.Dir(strings.TrimSuffix(repoURL.EscapedPath(), "/")), rs.Source),
 	}
 	pkgURL.Path, err = url.PathUnescape(pkgURL.RawPath)
 	if err != nil {
