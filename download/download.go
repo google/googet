@@ -110,7 +110,7 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxySe
 		Scheme:  repoURL.Scheme,
 		Host:    repoURL.Host,
 		User:    repoURL.User,
-		RawPath: path.Join(path.Dir(normalize.ReplaceAllString(repoURL.EscapedPath(),"")), rs.Source),
+		RawPath: path.Join(path.Dir(normalize.ReplaceAllString(repoURL.EscapedPath(), "")), rs.Source),
 	}
 	pkgURL.Path, err = url.PathUnescape(pkgURL.RawPath)
 	if err != nil {
