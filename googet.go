@@ -79,10 +79,33 @@ type repoFile struct {
 }
 
 type repoEntry struct {
-	LName string `yaml:"name,omitempty"`
-	LURL  string `yaml:"url,omitempty"`
-	Name  string `yaml:"Name,omitempty"`
-	URL   string `yaml:"URL,omitempty"`
+	Name string
+	URL  string
+}
+
+// UnmarshalYAML provides custom unmarshalling for repoEntry objects.
+func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var u map[string]string
+	if err := unmarshal(&u); err != nil {
+		return err
+	}
+	for k, v := range u {
+		switch key := strings.ToLower(k); key {
+		case "name":
+			r.Name = v
+		case "url":
+			r.URL = v
+		default:
+			return fmt.Errorf("unexpected key in repo entry: %v", key)
+		}
+	}
+	if r.Name == "" {
+		return fmt.Errorf("repo entry missing name: %+v", u)
+	}
+	if r.URL == "" {
+		return fmt.Errorf("repo entry missing url: %+v", u)
+	}
+	return nil
 }
 
 func writeRepoFile(rf repoFile) error {
@@ -115,7 +138,7 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 
 	// Both repoFile and []repoFile are valid for backwards compatibility.
 	var re repoEntry
-	if err := yaml.Unmarshal(b, &re); err == nil && (re.URL != "" || re.LURL != "") {
+	if err := yaml.Unmarshal(b, &re); err == nil && re.URL != "" {
 		return repoFile{fileName: p, repoEntries: []repoEntry{re}}, nil
 	}
 
@@ -153,8 +176,6 @@ func repoList(dir string) ([]string, error) {
 			switch {
 			case re.URL != "":
 				rl = append(rl, re.URL)
-			case re.LURL != "":
-				rl = append(rl, re.LURL)
 			}
 		}
 	}
