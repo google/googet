@@ -50,7 +50,7 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if len(flags.Args()) == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
@@ -79,9 +79,6 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 	if err != nil {
 		logger.Fatal(err)
 	}
-	if repos == nil {
-		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
-	}
 
 	var rm client.RepoMap
 	for _, arg := range args {
@@ -105,7 +102,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 
 		pi := goolib.PkgNameSplit(arg)
 		if cmd.reinstall {
-			if err := reinstall(pi, *state, cmd.redownload); err != nil {
+			if err := reinstall(ctx, pi, *state, cmd.redownload); err != nil {
 				logger.Errorf("Error reinstalling %s: %v", pi.Name, err)
 				exitCode = subcommands.ExitFailure
 				continue
@@ -116,7 +113,10 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 			continue
 		}
 		if len(rm) == 0 {
-			rm = client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+			if repos == nil {
+				logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
+			}
+			rm = client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 		}
 		if pi.Ver == "" {
 			v, _, a, err := client.FindRepoLatest(pi, rm, archs)
@@ -161,7 +161,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 				continue
 			}
 		}
-		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -173,7 +173,7 @@ func (cmd *installCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inte
 	return exitCode
 }
 
-func reinstall(pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
+func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
 		return fmt.Errorf("cannot reinstall something that is not already installed")
@@ -184,7 +184,7 @@ func reinstall(pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
 			return nil
 		}
 	}
-	if err := install.Reinstall(ps, state, rd, proxyServer); err != nil {
+	if err := install.Reinstall(ctx, ps, state, rd, proxyServer); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil

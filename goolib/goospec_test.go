@@ -16,6 +16,7 @@ package goolib
 import (
 	"archive/tar"
 	"bytes"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,9 +24,9 @@ import (
 	"github.com/blang/semver"
 )
 
-func mkVer(maj, min, pat uint64, rel int) Version {
+func mkVer(sem string, rel int) Version {
 	return Version{
-		Semver: semver.Version{Major: maj, Minor: min, Patch: pat},
+		Semver: semver.MustParse(sem),
 		GsVer:  rel,
 	}
 }
@@ -35,18 +36,22 @@ func TestParseVersion(t *testing.T) {
 		ver string
 		res Version
 	}{
-		{"1.2.3@4", mkVer(1, 2, 3, 4)},
-		{"1.2.3", mkVer(1, 2, 3, 0)},
-		{"1.02.3", mkVer(1, 2, 3, 0)},
-		{"1.2@7", mkVer(0, 1, 2, 7)},
+		{"1.2.3@4", mkVer("1.2.3", 4)},
+		{"1.2.3", mkVer("1.2.3", 0)},
+		{"1.02.3", mkVer("1.2.3", 0)},
+		{"1.2@7", mkVer("0.1.2", 7)},
+		{"1.2.0", mkVer("1.2.0", 0)},
+		{"1.2.3+1", mkVer("1.2.3+1", 0)},
+		{"1.2.03-1", mkVer("1.2.3-1", 0)},
+		{"1.2.3+4@5", mkVer("1.2.3+4", 5)},
 	}
 	for _, tt := range table {
 		v, err := ParseVersion(tt.ver)
 		if err != nil {
-			t.Errorf("error parsing version: %v", err)
+			t.Errorf("ParseVersion(%v): %v", tt.ver, err)
 		}
 		if !reflect.DeepEqual(v, tt.res) {
-			t.Errorf("parsed version unexpected: got %v, want %v", v, tt.res)
+			t.Errorf("ParseVersion(%v) = %v, want %v", tt.ver, v, tt.res)
 		}
 	}
 }
@@ -96,7 +101,7 @@ func TestBadVerify(t *testing.T) {
 				Arch: "noarch",
 				Name: "name",
 			},
-		}, "Version string empty"},
+		}, "version string empty"},
 		{GooSpec{
 			PackageSpec: &PkgSpec{
 				Arch:    "noarch",
@@ -282,6 +287,50 @@ func TestUnmarshalGooSpec(t *testing.T) {
 	}
 }
 
+func TestNoPathTraversal(t *testing.T) {
+	c1 := []byte(`{
+  "name": "pkg",
+  "version": "1.2.3@4",
+  "arch": "noarch",
+  "releaseNotes": [],
+  "description": "blah blah",
+  "owners": "someone",
+  "install": {
+    "path": "../../../../install.ps1"
+  },
+  "sources": []
+}`)
+	fail := []byte(`{
+  "name": "pkg",
+  "version": "1.2.3@4",
+  "arch": "noarch",
+  "releaseNotes": [],
+  "description": "blah blah",
+  "owners": "someone",
+  "install": {
+    "path": "/usr/bin/sudo"
+  },
+  "sources": []
+}`)
+	got, err := UnmarshalPackageSpec(c1)
+	if err != nil {
+		t.Fatalf("error running unmarshalGooSpec: %v", err)
+	}
+	path := got.Install.Path
+	if strings.Contains(path, "..") {
+		t.Errorf("install path %s allows path traversal", path)
+	}
+	if filepath.IsAbs(path) {
+		t.Errorf("install path %s is absolute", path)
+	}
+
+	_, err = UnmarshalPackageSpec(fail)
+	if err == nil {
+		t.Errorf("goospec containing absolute path successfully unmarshalled %s", fail)
+	}
+
+}
+
 func TestMarshal(t *testing.T) {
 	rs := &RepoSpec{
 		Checksum: "asdkgaksd545as4d6",
@@ -293,6 +342,8 @@ func TestMarshal(t *testing.T) {
 			ReleaseNotes: []string{"1.2.3@4 - something new", "1.2.3@4 - something"},
 			Description:  "blah blah",
 			Owners:       "someone",
+			Replaces:     []string{"foo"},
+			Conflicts:    []string{"bar"},
 			Install: ExecFile{
 				Path: "install.ps1",
 			},
@@ -311,6 +362,12 @@ func TestMarshal(t *testing.T) {
     ],
     "Description": "blah blah",
     "Owners": "someone",
+    "Replaces": [
+      "foo"
+    ],
+    "Conflicts": [
+      "bar"
+    ],
     "Install": {
       "Path": "install.ps1"
     },

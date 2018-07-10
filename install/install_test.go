@@ -14,7 +14,11 @@ limitations under the License.
 package install
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -59,7 +63,7 @@ func TestMinInstalled(t *testing.T) {
 		{"baz_pkg", "noarch", false},
 	}
 	for _, tt := range table {
-		ma, err := minInstalled(goolib.PackageInfo{tt.pkg, tt.arch, "1.0.0@1"}, state)
+		ma, err := minInstalled(goolib.PackageInfo{Name: tt.pkg, Arch: tt.arch, Ver: "1.0.0@1"}, state)
 		if err != nil {
 			t.Fatalf("error checking minAvailable: %v", err)
 		}
@@ -105,7 +109,7 @@ func TestNeedsInstallation(t *testing.T) {
 		{"pkg", "1.0.0@1", true},      // not installed
 	}
 	for _, tt := range table {
-		ins, err := NeedsInstallation(goolib.PackageInfo{tt.pkg, "noarch", tt.ver}, state)
+		ins, err := NeedsInstallation(goolib.PackageInfo{Name: tt.pkg, Arch: "noarch", Ver: tt.ver}, state)
 		if err != nil {
 			t.Fatalf("Error checking NeedsInstallation: %v", err)
 		}
@@ -135,6 +139,15 @@ func TestInstallPkg(t *testing.T) {
 
 	defer oswrap.RemoveAll(dst)
 
+	f, err := os.Create(filepath.Join(src, "test.goo"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer oswrap.Remove(f.Name())
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
 	files := []string{"test1", "test2", "test3"}
 	want := map[string]string{dst: ""}
 	for _, n := range files {
@@ -142,15 +155,36 @@ func TestInstallPkg(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
+
+		fi, err := f.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fih, err := tar.FileInfoHeader(fi, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tw.WriteHeader(fih); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			t.Fatal(err)
+		}
+
 		want[filepath.Join(dst, n)] = goolib.Checksum(f)
 		if err := f.Close(); err != nil {
 			t.Fatalf("Failed to close test file: %v", err)
 		}
 	}
 
-	ps := goolib.PkgSpec{Files: map[string]string{filepath.Base(src): dst}}
+	tw.Close()
+	gw.Close()
+	if err := f.Close(); err != nil {
+		log.Fatal(err)
+	}
 
-	got, err := installPkg(filepath.Dir(src), &ps, false)
+	ps := goolib.PkgSpec{Files: map[string]string{"./": dst}}
+	got, err := installPkg(f.Name(), &ps, false)
 	if err != nil {
 		t.Fatalf("Error running installPkg: %v", err)
 	}
@@ -206,7 +240,7 @@ func TestCleanOldFiles(t *testing.T) {
 		},
 	}
 
-	cleanOldFiles(dst, st, map[string]string{want: "", dst: ""})
+	cleanOldFiles(st, map[string]string{want: "", dst: ""})
 
 	for _, n := range []string{want, dontCare} {
 		if _, err := oswrap.Stat(n); err != nil {

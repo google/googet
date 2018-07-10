@@ -49,7 +49,7 @@ type GooSpec struct {
 	PackageSpec *PkgSpec
 }
 
-// RepoSpec is the repository specfication of a package.
+// RepoSpec is the repository specification of a package.
 type RepoSpec struct {
 	Checksum, Source string
 	PackageSpec      *PkgSpec
@@ -68,7 +68,7 @@ const (
 
 var validArch = []string{"noarch", "x86_64", "x86_32", "arm"}
 
-// PkgSpec is the internal package specification.
+// PkgSpec is an individual package specification.
 type PkgSpec struct {
 	Name            string
 	Version         string
@@ -80,6 +80,8 @@ type PkgSpec struct {
 	Owners          string            `json:",omitempty"`
 	Tags            map[string][]byte `json:",omitempty"`
 	PkgDependencies map[string]string `json:",omitempty"`
+	Replaces        []string
+	Conflicts       []string
 	Install         ExecFile
 	Uninstall       ExecFile
 	Files           map[string]string `json:",omitempty"`
@@ -109,6 +111,10 @@ func (gs GooSpec) verify() error {
 	return gs.PackageSpec.verify()
 }
 
+func (gs GooSpec) normalize() {
+	gs.PackageSpec.normalize()
+}
+
 // Compare compares string versions of packages v1 to v2:
 // -1 == v1 is less than v2
 // 0 == v1 is equal to v2
@@ -136,6 +142,12 @@ func Compare(v1, v2 string) (int, error) {
 }
 
 func fixVer(ver string) string {
+	suffix := ""
+	// Patch number can contain PreRelease/Build meta data suffix.
+	if i := strings.IndexAny(ver, "+-"); i != -1 {
+		suffix = ver[i:]
+		ver = ver[:i]
+	}
 	out := []string{"0", "0", "0"}
 	nums := strings.SplitN(ver, ".", 3)
 	offset := len(out) - len(nums)
@@ -146,10 +158,14 @@ func fixVer(ver string) string {
 		}
 		out[i+offset] = trimmed
 	}
-	return strings.Join(out, ".")
+	return strings.Join(out, ".") + suffix
 }
 
-// ParseVersion parses the string version into goospec.Version.
+// ParseVersion parses the string version into goospec.Version. ParseVersion
+// attempts to fix non-compliant Semver strings by removing leading zeros from
+// components, and replacing any missing components with zero values after
+// using existing components for the least significant components first (i.e.
+// "1" will become "0.0.1", not "1.0.0").
 func ParseVersion(ver string) (Version, error) {
 	v := strings.SplitN(ver, "@", 2)
 	v[0] = fixVer(v[0])
@@ -230,6 +246,7 @@ func ReadGooSpec(cf string) (GooSpec, error) {
 	if err != nil {
 		return gs, err
 	}
+	gs.normalize()
 	if err = gs.verify(); err != nil {
 		return gs, err
 	}
@@ -295,7 +312,7 @@ func (spec *PkgSpec) verify() error {
 		return fmt.Errorf("invalid architecture: %q", spec.Arch)
 	}
 	if spec.Version == "" {
-		return errors.New("Version string empty")
+		return errors.New("version string empty")
 	}
 	if _, err := ParseVersion(spec.Version); err != nil {
 		return fmt.Errorf("can't parse %q: %v", spec.Version, err)
@@ -321,7 +338,22 @@ func (spec *PkgSpec) verify() error {
 			return fmt.Errorf("%q is an absolute path, expected relative", src)
 		}
 	}
+	if filepath.IsAbs(spec.Install.Path) {
+		return fmt.Errorf("%q is an absolute path, expected relative", spec.Install.Path)
+	}
+	if filepath.IsAbs(spec.Uninstall.Path) {
+		return fmt.Errorf("%q is an absolute path, expected relative", spec.Uninstall.Path)
+	}
 	return nil
+}
+
+func (spec *PkgSpec) normalize() {
+	for _, str := range []*string{&spec.Install.Path, &spec.Uninstall.Path} {
+		if filepath.IsAbs(*str) {
+			continue
+		}
+		*str = filepath.Clean("/" + *str)[1:]
+	}
 }
 
 // MarshalPackageSpec encodes the given PkgSpec.
@@ -340,6 +372,7 @@ func UnmarshalPackageSpec(data []byte) (*PkgSpec, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, err
 	}
+	p.normalize()
 	if err := p.verify(); err != nil {
 		return nil, err
 	}

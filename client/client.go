@@ -16,8 +16,10 @@ package client
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -25,16 +27,18 @@ import (
 	"path/filepath"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
+	"google.golang.org/api/googleapi"
 )
 
 // PackageState describes the state of a package on a client.
 type PackageState struct {
-	SourceRepo, DownloadURL, Checksum, UnpackDir string
-	PackageSpec                                  *goolib.PkgSpec
-	InstalledFiles                               map[string]string
+	SourceRepo, DownloadURL, Checksum, LocalPath, UnpackDir string
+	PackageSpec                                             *goolib.PkgSpec
+	InstalledFiles                                          map[string]string
 }
 
 // GooGetState describes the overall package state on a client.
@@ -88,10 +92,10 @@ func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 type RepoMap map[string][]goolib.RepoSpec
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
+func AvailableVersions(ctx context.Context, srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
 	rm := make(RepoMap)
 	for _, r := range srcs {
-		rf, err := unmarshalRepoPackages(r, cacheDir, cacheLife, proxyServer)
+		rf, err := unmarshalRepoPackages(ctx, r, cacheDir, cacheLife, proxyServer)
 		if err != nil {
 			logger.Errorf("error reading repo %q: %v", r, err)
 			continue
@@ -101,21 +105,23 @@ func AvailableVersions(srcs []string, cacheDir string, cacheLife time.Duration, 
 	return rm
 }
 
-func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
-	ct := res.Header.Get("content-type")
+func decode(index io.ReadCloser, ct, cf string) ([]goolib.RepoSpec, error) {
+	defer index.Close()
+
 	var dec *json.Decoder
 	switch ct {
-	case "application/gzip":
-		gr, err := gzip.NewReader(res.Body)
+	case "application/x-gzip":
+		gr, err := gzip.NewReader(index)
 		if err != nil {
 			return nil, err
 		}
 		dec = json.NewDecoder(gr)
 	case "application/json":
-		dec = json.NewDecoder(res.Body)
+		dec = json.NewDecoder(index)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
+
 	var m []goolib.RepoSpec
 	for dec.More() {
 		if err := dec.Decode(&m); err != nil {
@@ -141,16 +147,8 @@ func decode(res *http.Response, cf string) ([]goolib.RepoSpec, error) {
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
-func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
 	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
-	httpClient := &http.Client{}
-	if proxyServer != "" {
-		proxyURL, err := url.Parse(proxyServer)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-	}
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
@@ -173,30 +171,84 @@ func unmarshalRepoPackages(p, cacheDir string, cacheLife time.Duration, proxySer
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
 
-	url := p + "/index.gz"
-	logger.Infof("Fetching %q", url)
-	res, err := httpClient.Get(url)
-	if err != nil {
-		return nil, err
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
+	if isGCSURL {
+		return unmarshalRepoPackagesGCS(ctx, bucket, object, cf, proxyServer)
+	}
+	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
+}
+
+func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+	httpClient := &http.Client{}
+	if proxyServer != "" {
+		proxyURL, err := url.Parse(proxyServer)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
 	}
 
-	if res.StatusCode == 200 {
-		return decode(res, cf)
-	}
-
-	logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
-	url = p + "/index"
-	logger.Infof("Fetching %q", url)
-	res, err = httpClient.Get(url)
+	indexURL := repoURL + "/index.gz"
+	ct := "application/x-gzip"
+	logger.Infof("Fetching %q", indexURL)
+	res, err := httpClient.Get(indexURL)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
+		indexURL = repoURL + "/index"
+		ct = "application/json"
+		logger.Infof("Fetching %q", indexURL)
+		res, err = httpClient.Get(indexURL)
+		if err != nil {
+			return nil, err
+		}
+
+		if res.StatusCode != 200 {
+			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		}
 	}
 
-	return decode(res, cf)
+	return decode(res.Body, ct, cf)
+}
+
+func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+	if proxyServer != "" {
+		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
+		var empty []goolib.RepoSpec
+		return empty, nil
+	}
+
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bkt := client.Bucket(bucket)
+	if len(object) != 0 {
+		object += "/"
+	}
+
+	indexPath := object + "index.gz"
+	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
+	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
+		return decode(r, "application/x-gzip", cf)
+	}
+
+	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
+		return nil, err
+	}
+
+	logger.Info("Failed to read gzipped index, trying plain JSON.")
+	indexPath = object + "index"
+	r, err := bkt.Object(indexPath).NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return decode(r, "application/json", cf)
 }
 
 // FindRepoSpec returns the element of pl whose PackageSpec matches pi.
@@ -280,30 +332,36 @@ func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {
 
 // RemoveOrRename attempts to remove a file or directory. If it fails
 // and it's a file, attempt to rename it into a temp file on windows so
-// that it can be effectively overridden
-func RemoveOrRename(filename string) error {
+// that it can be effectively overridden returning the name of the temp file.
+func RemoveOrRename(filename string) (string, error) {
 	rmErr := oswrap.Remove(filename)
 	if rmErr == nil || os.IsNotExist(rmErr) {
-		return nil
+		return "", nil
 	}
 	fi, err := oswrap.Stat(filename)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if fi.IsDir() {
-		return rmErr
+		return "", rmErr
 	}
-	tmpfile, err := ioutil.TempFile("", "")
+
+	tmpDir := os.TempDir()
+	if filepath.VolumeName(tmpDir) != filepath.VolumeName(filename) {
+		tmpDir = filepath.Dir(filename)
+	}
+
+	tmpFile, err := ioutil.TempFile(tmpDir, filepath.Base(filename)+".old")
 	if err != nil {
-		return err
+		return "", err
 	}
-	newname := tmpfile.Name()
-	tmpfile.Close()
-	if err = oswrap.Remove(newname); err != nil {
-		return err
+	newName := tmpFile.Name()
+	tmpFile.Close()
+	if err := oswrap.Remove(newName); err != nil {
+		return "", err
 	}
-	if err = oswrap.Rename(filename, newname); err != nil {
-		return err
+	if err := oswrap.Rename(filename, newName); err != nil {
+		return "", err
 	}
-	return nil
+	return newName, oswrap.RemoveOnReboot(newName)
 }

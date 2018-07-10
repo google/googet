@@ -43,7 +43,7 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform uninstall system actions")
 }
 
-func (cmd *removeCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitSuccess
 
 	sf := filepath.Join(rootDir, stateFile)
@@ -83,7 +83,7 @@ func (cmd *removeCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inter
 			}
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-		if err = remove.All(pi, deps, state, cmd.dbOnly, proxyServer); err != nil {
+		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue

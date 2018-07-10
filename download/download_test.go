@@ -44,10 +44,10 @@ func TestDownload(t *testing.T) {
 		t.Errorf("error seeking to front of reader: %v", err)
 	}
 	tempFile := path.Join(tempDir, "test")
-	if err := download(r, tempFile, chksum, ""); err != nil {
+	if err := download(r, tempFile, chksum); err != nil {
 		t.Errorf("error downloading and checking checksum: %v", err)
 	}
-	if err := download(r, tempFile, "notachecksum", ""); err == nil {
+	if err := download(r, tempFile, "notachecksum"); err == nil {
 		t.Error("wanted but did not recieve checksum error")
 	}
 }
@@ -66,7 +66,7 @@ func TestExtractPkg(t *testing.T) {
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
 
-	name := "test"
+	name := "foo/../test"
 	body := "this is a test file"
 	if err := tw.WriteHeader(&tar.Header{
 		Name: name,
@@ -94,11 +94,53 @@ func TestExtractPkg(t *testing.T) {
 		t.Fatalf("error running ExtractPkg: %v", err)
 	}
 
-	cts, err := ioutil.ReadFile(filepath.Join(dst, name))
+	cts, err := ioutil.ReadFile(filepath.Join(dst, filepath.Clean(name)))
 	if err != nil {
 		t.Fatalf("error opening test file: %v", err)
 	}
 	if string(cts) != body {
 		t.Errorf("contents of extracted file does not match expected contents: got: %q, want: %q", string(cts), body)
+	}
+}
+
+func TestExtractPkgPathTraversal(t *testing.T) {
+	tempDir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("error creating temp directory: %v", err)
+	}
+	defer oswrap.RemoveAll(tempDir)
+	tempFile := filepath.Join(tempDir, "test.pkg")
+	f, err := oswrap.Create(tempFile)
+	if err != nil {
+		t.Fatalf("error creating temp file: %v", err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	name := "foo/../../test"
+	body := "this is a test file"
+	if err := tw.WriteHeader(&tar.Header{
+		Name: name,
+		Mode: 0600,
+		Size: int64(len(body)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatalf("error writing file: %v", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		t.Fatalf("error closing tar: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("error closing gzip: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("error closing file: %v", err)
+	}
+
+	if _, err := ExtractPkg(tempFile); err == nil {
+		t.Fatal("error expected because of path traversal")
 	}
 }

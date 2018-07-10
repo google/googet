@@ -66,7 +66,7 @@ func cleanPackages(pl []string) {
 
 	for _, pkg := range *state {
 		if goolib.ContainsString(pkg.PackageSpec.Name, pl) {
-			if err := oswrap.RemoveAll(pkg.UnpackDir); err != nil {
+			if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
 				logger.Error(err)
 			}
 		}
@@ -95,7 +95,7 @@ func cleanOld() {
 
 	var il []string
 	for _, pkg := range *state {
-		il = append(il, pkg.UnpackDir)
+		il = append(il, pkg.LocalPath)
 	}
 	clean(il)
 }

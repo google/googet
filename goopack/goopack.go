@@ -247,7 +247,7 @@ func writeFiles(tw *tar.Writer, fm fileMap) error {
 }
 
 func packageFiles(fm fileMap, gs goolib.GooSpec, dir string) (err error) {
-	pn := goolib.PackageInfo{gs.PackageSpec.Name, gs.PackageSpec.Arch, gs.PackageSpec.Version}.PkgName()
+	pn := goolib.PackageInfo{Name: gs.PackageSpec.Name, Arch: gs.PackageSpec.Arch, Ver: gs.PackageSpec.Version}.PkgName()
 	f, err := oswrap.Create(filepath.Join(dir, pn))
 	if err != nil {
 		return err

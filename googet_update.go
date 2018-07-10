@@ -45,7 +45,7 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *updateCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	cache := filepath.Join(rootDir, cacheDir)
 	sf := filepath.Join(rootDir, stateFile)
 	state, err := readState(sf)
@@ -67,7 +67,7 @@ func (cmd *updateCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 	ud := updates(pm, rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
@@ -87,7 +87,7 @@ func (cmd *updateCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -120,7 +120,7 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 		if c == 1 {
 			fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
 			logger.Infof("Update for package %s, %s installed and %s available from %s.", p, ver, v, r)
-			ud = append(ud, goolib.PackageInfo{pi.Name, pi.Arch, v})
+			ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
 			continue
 		}
 		logger.Infof("%s - latest version installed", p)

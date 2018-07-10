@@ -20,6 +20,11 @@ import (
 	"path/filepath"
 )
 
+// RemoveOnReboot not implemented on non Windows.
+func RemoveOnReboot(name string) error {
+	return nil
+}
+
 // Open calls os.Open
 func Open(name string) (*os.File, error) {
 	return os.Open(name)

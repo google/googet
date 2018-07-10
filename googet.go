@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -48,15 +49,16 @@ const (
 )
 
 var (
-	rootDir     string
-	noConfirm   bool
-	verbose     bool
-	systemLog   bool
-	showVer     bool
-	version     string
-	cacheLife   = 3 * time.Minute
-	archs       []string
-	proxyServer string
+	rootDir        string
+	noConfirm      bool
+	verbose        bool
+	systemLog      bool
+	showVer        bool
+	version        string
+	cacheLife      = 3 * time.Minute
+	archs          []string
+	proxyServer    string
+	allowUnsafeURL bool
 )
 
 type packageMap map[string]string
@@ -77,7 +79,10 @@ type repoFile struct {
 }
 
 type repoEntry struct {
-	Name, URL string
+	LName string `yaml:"name,omitempty"`
+	LURL  string `yaml:"url,omitempty"`
+	Name  string `yaml:"Name,omitempty"`
+	URL   string `yaml:"URL,omitempty"`
 }
 
 func writeRepoFile(rf repoFile) error {
@@ -108,9 +113,9 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 		return repoFile{}, nil
 	}
 
-	// Both repoFile and []repoFile are valid for backwards compatibilty.
+	// Both repoFile and []repoFile are valid for backwards compatibility.
 	var re repoEntry
-	if err := yaml.Unmarshal(b, &re); err == nil && re.URL != "" {
+	if err := yaml.Unmarshal(b, &re); err == nil && (re.URL != "" || re.LURL != "") {
 		return repoFile{fileName: p, repoEntries: []repoEntry{re}}, nil
 	}
 
@@ -122,9 +127,10 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 }
 
 type conf struct {
-	Archs       []string
-	CacheLife   string
-	ProxyServer string
+	Archs          []string
+	CacheLife      string
+	ProxyServer    string
+	AllowUnsafeURL bool
 }
 
 func unmarshalConfFile(p string) (*conf, error) {
@@ -144,8 +150,31 @@ func repoList(dir string) ([]string, error) {
 	var rl []string
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
-			rl = append(rl, re.URL)
+			switch {
+			case re.URL != "":
+				rl = append(rl, re.URL)
+			case re.LURL != "":
+				rl = append(rl, re.LURL)
+			}
 		}
+	}
+
+	if !allowUnsafeURL {
+		var srl []string
+		for _, r := range rl {
+			isGCSURL, _, _ := goolib.SplitGCSUrl(r)
+			parsed, err := url.Parse(r)
+			if err != nil {
+				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
+				continue
+			}
+			if parsed.Scheme != "https" && !isGCSURL {
+				logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
+				continue
+			}
+			srl = append(srl, r)
+		}
+		return srl, nil
 	}
 	return rl, nil
 }
@@ -304,7 +333,7 @@ func lock(lf string) (*os.File, error) {
 			return lk, nil
 		}
 		if i == 1 {
-			fmt.Fprintln(os.Stderr, "GooGet lock already held, waiting...")
+			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -340,6 +369,8 @@ func readConf(cf string) {
 	if gc.ProxyServer != "" {
 		proxyServer = gc.ProxyServer
 	}
+
+	allowUnsafeURL = gc.AllowUnsafeURL
 }
 
 func run() int {

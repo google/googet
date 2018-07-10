@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.9.4@1",
+  "version": "2.14.2@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,16 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.14.1 - Prevent path traversal in package unpack and install/uninstall paths.",
+    "2.14.0 - Add support for GCS repositories.",
+    "2.13.0 - Add Conflicts and Replaces fields to the GooGet PkgSpec.",
+    "2.12.0 - Store goo files unextracted in cache, ensure checksum match on reinstall.",
+    "2.11.0 - Add allowunsafeurl config option to enable HTTP repos, otherwise disable.",
+    "       - Force the use of a package checksum when downloading from a repository.",
+    "2.10.1 - Semver compatibility bug fix for '0' patch numbers.",
+    "2.10.0 - Files that had to be moved during install are cleaned up at end of package install or next reboot.",
+    "       - When replacing files during install files are not moved between volumes.",
+    "2.9.5 - Expand MSI success code usage to MSU and EXE files.",
     "2.9.1 - Add ability to add proxy server.",
     "2.9.0 - Add addrepo, rmrepo, and listrepos commands.",
     "      - Use args instead of flags for available and installed commands.",
@@ -36,7 +46,7 @@
   ],
   "sources": [{
       "include": [
-        "googet.exe", 
+        "googet.exe",
         "install.ps1"
       ]
   }],

@@ -34,7 +34,7 @@ type latestCmd struct {
 }
 
 func (*latestCmd) Name() string     { return "latest" }
-func (*latestCmd) Synopsis() string { return "get the latest available version of a package" }
+func (*latestCmd) Synopsis() string { return "print the latest available version of a package" }
 func (*latestCmd) Usage() string {
 	return fmt.Sprintf("%s latest [-sources repo1,repo2...] [-compare] <name>\n", filepath.Base(os.Args[0]))
 }
@@ -44,7 +44,7 @@ func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
-func (cmd *latestCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	pi := goolib.PkgNameSplit(flags.Arg(0))
 
 	repos, err := buildSources(cmd.sources)
@@ -55,7 +55,7 @@ func (cmd *latestCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inter
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
 	v, _, a, err := client.FindRepoLatest(pi, rm, archs)
 	if err != nil {
 		logger.Fatal(err)
