@@ -95,8 +95,6 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.Name = v
 		case "url":
 			r.URL = v
-		default:
-			return fmt.Errorf("unexpected key in repo entry: %v", key)
 		}
 	}
 	if r.URL == "" {
