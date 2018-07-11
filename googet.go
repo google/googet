@@ -99,9 +99,6 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			return fmt.Errorf("unexpected key in repo entry: %v", key)
 		}
 	}
-	if r.Name == "" {
-		return fmt.Errorf("repo entry missing name: %+v", u)
-	}
 	if r.URL == "" {
 		return fmt.Errorf("repo entry missing url: %+v", u)
 	}
