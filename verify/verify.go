@@ -17,6 +17,7 @@ package verify
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,7 +71,7 @@ func extractVerify(r io.Reader, verify, dir string) error {
 // RunVerifyCommand runs a packages verify command.
 // Will only return true if the verify command exits with 0 or an approved
 // return code.
-func RunVerifyCommand(ps client.PackageState, proxyServer string) (bool, error) {
+func RunVerifyCommand(ctx context.Context, ps client.PackageState, proxyServer string) (bool, error) {
 	if ps.PackageSpec.Verify.Path == "" {
 		return true, nil
 	}
@@ -124,7 +125,7 @@ func RunVerifyCommand(ps client.PackageState, proxyServer string) (bool, error) 
 	}
 
 	if rd {
-		if err := download.Package(ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
 			return false, fmt.Errorf("error redownloading package: %v", err)
 		}
 	}

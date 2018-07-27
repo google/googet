@@ -43,7 +43,7 @@ func (cmd *verifyCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.reinstall, "reinstall", false, "reinstall package if verify fails")
 }
 
-func (cmd *verifyCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitSuccess
 
 	sf := filepath.Join(rootDir, stateFile)
@@ -73,7 +73,7 @@ func (cmd *verifyCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inter
 			continue
 		}
 
-		v, err := verify.RunVerifyCommand(ps, proxyServer)
+		v, err := verify.RunVerifyCommand(ctx, ps, proxyServer)
 		if err != nil {
 			logger.Errorf("Error running verify for package %s: %v", arg, err)
 			exitCode = subcommands.ExitFailure
@@ -81,7 +81,7 @@ func (cmd *verifyCmd) Execute(_ context.Context, flags *flag.FlagSet, _ ...inter
 		}
 		if !v && cmd.reinstall {
 			logger.Infof("Package %q failed verification, reinstalling...", arg)
-			if err := install.Reinstall(ps, *state, false, proxyServer); err != nil {
+			if err := install.Reinstall(ctx, ps, *state, false, proxyServer); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {
