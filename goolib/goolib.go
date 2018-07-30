@@ -132,7 +132,7 @@ func PkgNameSplit(pn string) PackageInfo {
 	return PackageInfo{pi[0], "", ""}
 }
 
-// Checksum retuns the SHA256 checksum of the provided file.
+// Checksum retuns the SHA256 checksum of the provided reader.
 func Checksum(r io.Reader) string {
 	hash := sha256.New()
 	io.Copy(hash, r)

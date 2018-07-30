@@ -32,7 +32,6 @@ import (
 	"github.com/google/googet/oswrap"
 	"github.com/google/googet/system"
 	"github.com/google/logger"
-	"github.com/prometheus/common/log"
 )
 
 func extractVerify(r io.Reader, verify, dir string) error {
@@ -71,18 +70,25 @@ func extractVerify(r io.Reader, verify, dir string) error {
 // Files compares the checksum of all files that got installed from the package,
 // returning true if all files match.
 func Files(ps client.PackageState) (bool, error) {
+	if len(ps.InstalledFiles) == 0 {
+		return true, nil
+	}
 	pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
-	for file, chksm := range ps.InstalledFiles {
+	logger.Infof("Running file verification for %s", pkg)
+	fmt.Printf("Running file verification for %s...\n", pkg)
+	for file, wantChksm := range ps.InstalledFiles {
 		f, err := os.Open(file)
 		if os.IsNotExist(err) {
-			log.Errorf("%q: verify file %q failed, file does not exist", pkg, file)
+			logger.Errorf("%q: verify file %q failed, file does not exist", pkg, file)
 			return false, nil
 		}
 		if err != nil {
 			return false, err
 		}
-		if chksm != goolib.Checksum(f) {
-			log.Errorf("%q: verify file %q failed, checksum does not match", pkg, file)
+		chksm := goolib.Checksum(f)
+		f.Close()
+		if wantChksm != chksm {
+			logger.Errorf("%q: verify file %q failed, checksum does not match", pkg, file)
 			return false, nil
 		}
 	}
@@ -97,6 +103,8 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 		return true, nil
 	}
 	pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
+	logger.Infof("Running verification command for %s", pkg)
+	fmt.Printf("Running verification command for %s...\n", pkg)
 	f, err := os.Open(ps.LocalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
@@ -159,7 +167,7 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 
 	// Any error is deemed a verification failure.
 	if err := system.Verify(dir, ps.PackageSpec); err != nil {
-		log.Errorf("%q: verify command failed: %v", pkg, err)
+		logger.Errorf("%q: verify command failed: %v", pkg, err)
 		return false, nil
 	}
 	return true, nil

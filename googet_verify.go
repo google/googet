@@ -46,6 +46,10 @@ func (cmd *verifyCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if len(flags.Args()) == 0 {
+		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
+		return subcommands.ExitFailure
+	}
 	exitCode := subcommands.ExitSuccess
 
 	sf := filepath.Join(rootDir, stateFile)
@@ -61,6 +65,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			logger.Errorf("Package %q not installed, cannot verify.", arg)
 			continue
 		}
+		pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
 
 		// Check for multiples.
 		var ins []string
@@ -77,7 +82,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 		v, err := verify.Command(ctx, ps, proxyServer)
 		if err != nil {
-			logger.Errorf("Error running verify for package %s: %v", arg, err)
+			logger.Errorf("Error running verify command for %s: %v", pkg, err)
 			exitCode = subcommands.ExitFailure
 			continue
 		}
@@ -85,22 +90,26 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		if v && !cmd.skipFiles {
 			v, err = verify.Files(ps)
 			if err != nil {
-				logger.Errorf("Error running verify for package %s: %v", arg, err)
+				logger.Errorf("Error running file verification for %s: %v", pkg, err)
 				exitCode = subcommands.ExitFailure
 				continue
 			}
 		}
 		if !v && cmd.reinstall {
-			logger.Infof("Package %q failed verification, reinstalling...", arg)
+			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
+			logger.Info(msg)
+			fmt.Println(msg)
 			if err := install.Reinstall(ctx, ps, *state, false, proxyServer); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {
-			logger.Errorf("Package %q failed verification, reinstall or run verify again with the '-reinstall' flag.", arg)
+			logger.Errorf("Verification failed for %s, reinstall or run verify again with the '-reinstall' flag.", pkg)
 			exitCode = subcommands.ExitFailure
 			continue
 		}
-		logger.Info("Package %q successfully verified.", arg)
+		msg := fmt.Sprintf("Verification of %s completed", pkg)
+		logger.Info(msg)
+		fmt.Println(msg)
 	}
 	return exitCode
 }

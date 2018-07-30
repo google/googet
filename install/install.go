@@ -422,7 +422,6 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly boo
 		if _, err := io.Copy(mw, iFile); err != nil {
 			return err
 		}
-		// TODO(ajackura): actually use file hash for verification and upgrade.
 		insFiles[outPath] = hex.EncodeToString(hash.Sum(nil))
 		return nil
 	}
