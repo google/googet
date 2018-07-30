@@ -68,20 +68,42 @@ func extractVerify(r io.Reader, verify, dir string) error {
 	}
 }
 
-// RunVerifyCommand runs a packages verify command.
+// Files compares the checksum of all files that got installed from the package,
+// returning true if all files match.
+func Files(ps client.PackageState) (bool, error) {
+	pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
+	for file, chksm := range ps.InstalledFiles {
+		f, err := os.Open(file)
+		if os.IsNotExist(err) {
+			log.Errorf("%q: verify file %q failed, file does not exist", pkg, file)
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if chksm != goolib.Checksum(f) {
+			log.Errorf("%q: verify file %q failed, checksum does not match", pkg, file)
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// Command runs a packages verify command.
 // Will only return true if the verify command exits with 0 or an approved
 // return code.
-func RunVerifyCommand(ctx context.Context, ps client.PackageState, proxyServer string) (bool, error) {
+func Command(ctx context.Context, ps client.PackageState, proxyServer string) (bool, error) {
 	if ps.PackageSpec.Verify.Path == "" {
 		return true, nil
 	}
+	pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
 	f, err := os.Open(ps.LocalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
 	var rd bool
 	if os.IsNotExist(err) {
-		logger.Infof("Local package does not exist for %s.%s.%s, pulling from repo...", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
+		logger.Infof("Local package does not exist for %s, pulling from repo...", pkg)
 		rd = true
 	}
 	// Force redownload if checksum does not match.
@@ -96,7 +118,7 @@ func RunVerifyCommand(ctx context.Context, ps client.PackageState, proxyServer s
 	r = f
 	if rd {
 		if ps.DownloadURL == "" {
-			return false, fmt.Errorf("can not pull package %s.%s.%s from repo, DownloadURL not saved", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
+			return false, fmt.Errorf("can not pull package %s from repo, DownloadURL not saved", pkg)
 		}
 
 		httpClient := &http.Client{}
@@ -137,7 +159,7 @@ func RunVerifyCommand(ctx context.Context, ps client.PackageState, proxyServer s
 
 	// Any error is deemed a verification failure.
 	if err := system.Verify(dir, ps.PackageSpec); err != nil {
-		log.Errorf("Package %q verify: %v", err)
+		log.Errorf("%q: verify command failed: %v", pkg, err)
 		return false, nil
 	}
 	return true, nil

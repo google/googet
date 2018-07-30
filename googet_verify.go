@@ -31,16 +31,18 @@ import (
 
 type verifyCmd struct {
 	reinstall bool
+	skipFiles bool
 }
 
 func (*verifyCmd) Name() string     { return "verify" }
 func (*verifyCmd) Synopsis() string { return "verify a package, and reinstall if needed" }
 func (*verifyCmd) Usage() string {
-	return fmt.Sprintf("%s [-noconfirm] verify <name>\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf("%s [-noconfirm] verify [-reinstall] [-skip_files] <name>\n", filepath.Base(os.Args[0]))
 }
 
 func (cmd *verifyCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.reinstall, "reinstall", false, "reinstall package if verify fails")
+	f.BoolVar(&cmd.skipFiles, "skip_files", false, "skip checksum verification of files installed by GooGet")
 }
 
 func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -73,11 +75,20 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			continue
 		}
 
-		v, err := verify.RunVerifyCommand(ctx, ps, proxyServer)
+		v, err := verify.Command(ctx, ps, proxyServer)
 		if err != nil {
 			logger.Errorf("Error running verify for package %s: %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue
+		}
+
+		if v && !cmd.skipFiles {
+			v, err = verify.Files(ps)
+			if err != nil {
+				logger.Errorf("Error running verify for package %s: %v", arg, err)
+				exitCode = subcommands.ExitFailure
+				continue
+			}
 		}
 		if !v && cmd.reinstall {
 			logger.Infof("Package %q failed verification, reinstalling...", arg)

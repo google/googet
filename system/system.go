@@ -22,7 +22,7 @@ import (
 	"github.com/google/logger"
 )
 
-// Verify performs a system specfic verify given a package extraction directory and a PkgSpec struct.
+// Verify runs a verify command given a package extraction directory and a PkgSpec struct.
 func Verify(dir string, ps *goolib.PkgSpec) error {
 	v := ps.Verify
 	if v.Path == "" {
