@@ -414,6 +414,7 @@ func run() int {
 	cmdr.Register(&downloadCmd{}, "package management")
 	cmdr.Register(&removeCmd{}, "package management")
 	cmdr.Register(&updateCmd{}, "package management")
+	cmdr.Register(&verifyCmd{}, "package management")
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
