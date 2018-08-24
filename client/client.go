@@ -144,7 +144,7 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 	}
 
 	// The .url files aren't used by googet but help developers and the
-  // curious figure out which file belongs to which repo/URL.
+	// curious figure out which file belongs to which repo/URL.
 	mf := fmt.Sprintf("%s.url", strings.TrimSuffix(cf, filepath.Ext(cf)))
 	if err = ioutil.WriteFile(mf, []byte(url), 0644); err != nil {
 		logger.Errorf("Failed to write '%s': %v", mf, err)
