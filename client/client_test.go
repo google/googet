@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -271,7 +273,8 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error marshalling json: %v", err)
 	}
-	f, err := oswrap.Create(filepath.Join(tempDir, "test-repo.rs"))
+	url := "http://localhost/test-repo"
+	f, err := oswrap.Create(filepath.Join(tempDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(url)))))
 	if err != nil {
 		t.Fatalf("Error creating cache file: %v", err)
 	}
@@ -283,7 +286,7 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 
 	// No http server as this should use the cached content.
-	got, err := unmarshalRepoPackages(context.Background(), "http://localhost/test-repo", tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife, proxyServer)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}

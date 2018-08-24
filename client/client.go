@@ -17,6 +17,7 @@ package client
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -105,7 +107,7 @@ func AvailableVersions(ctx context.Context, srcs []string, cacheDir string, cach
 	return rm
 }
 
-func decode(index io.ReadCloser, ct, cf string) ([]goolib.RepoSpec, error) {
+func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {
 	defer index.Close()
 
 	var dec *json.Decoder
@@ -141,6 +143,13 @@ func decode(index io.ReadCloser, ct, cf string) ([]goolib.RepoSpec, error) {
 		return nil, err
 	}
 
+	// The .url files aren't used by googet but help developers and the
+  // curious figure out which file belongs to which repo/URL.
+	mf := fmt.Sprintf("%s.url", strings.TrimSuffix(cf, filepath.Ext(cf)))
+	if err = ioutil.WriteFile(mf, []byte(url), 0644); err != nil {
+		logger.Errorf("Failed to write '%s': %v", mf, err)
+	}
+
 	return m, f.Close()
 }
 
@@ -148,7 +157,8 @@ func decode(index io.ReadCloser, ct, cf string) ([]goolib.RepoSpec, error) {
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
 func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
-	cf := filepath.Join(cacheDir, filepath.Base(p)+".rs")
+
+	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(p))))
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
@@ -173,7 +183,7 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
 	if isGCSURL {
-		return unmarshalRepoPackagesGCS(ctx, bucket, object, cf, proxyServer)
+		return unmarshalRepoPackagesGCS(ctx, bucket, object, p, cf, proxyServer)
 	}
 	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
 }
@@ -211,10 +221,10 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 		}
 	}
 
-	return decode(res.Body, ct, cf)
+	return decode(res.Body, ct, repoURL, cf)
 }
 
-func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	if proxyServer != "" {
 		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
 		var empty []goolib.RepoSpec
@@ -234,7 +244,7 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf str
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
 	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
-		return decode(r, "application/x-gzip", cf)
+		return decode(r, "application/x-gzip", url, cf)
 	}
 
 	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
@@ -248,7 +258,7 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string, cf str
 		return nil, err
 	}
 
-	return decode(r, "application/json", cf)
+	return decode(r, "application/json", url, cf)
 }
 
 // FindRepoSpec returns the element of pl whose PackageSpec matches pi.
