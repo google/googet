@@ -88,6 +88,10 @@ type PkgSpec struct {
 	Files           map[string]string `json:",omitempty"`
 }
 
+func (ps PkgSpec) String() string {
+	return fmt.Sprintf("%s.%s.%s", ps.Name, ps.Arch, ps.Version)
+}
+
 // ExecFile contains info involved in running a script or binary file.
 type ExecFile struct {
 	Path      string   `json:",omitempty"`
