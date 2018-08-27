@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.15.0@1",
+  "version": "2.15.1@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.15.1 - Ensure unique cache file for each repo.",
     "2.15.0 - Add verify subcommand.",
     "2.14.1 - Prevent path traversal in package unpack and install/uninstall paths.",
     "2.14.0 - Add support for GCS repositories.",
