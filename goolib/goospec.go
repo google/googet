@@ -104,7 +104,7 @@ type ExecFile struct {
 // GsVer is a GooSpec version number (usually version of installer).
 type Version struct {
 	Semver semver.Version
-	GsVer  int
+	GsVer  int64
 }
 
 // Ver returns the goospec version.
@@ -181,13 +181,13 @@ func ParseVersion(ver string) (Version, error) {
 	}
 	version := Version{Semver: sv}
 	if len(v) == 2 {
-		gv, err := strconv.ParseInt(v[1], 10, 32)
+		gv, err := strconv.ParseInt(v[1], 10, 64)
 		if err != nil {
 			return version, err
 		}
 		version = Version{
 			Semver: sv,
-			GsVer:  int(gv),
+			GsVer:  gv,
 		}
 	} else {
 		version = Version{Semver: sv}

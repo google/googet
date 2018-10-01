@@ -24,7 +24,7 @@ import (
 	"github.com/blang/semver"
 )
 
-func mkVer(sem string, rel int) Version {
+func mkVer(sem string, rel int64) Version {
 	return Version{
 		Semver: semver.MustParse(sem),
 		GsVer:  rel,
