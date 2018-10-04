@@ -231,7 +231,7 @@ func writeState(s *client.GooGetState, sf string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(newStateFile, 0644); err != nil {
+	if err := os.Chmod(newStateFile, 0664); err != nil {
 		return err
 	}
 	// Back up the old state file so we can recover it if need be
