@@ -219,7 +219,28 @@ func writeState(s *client.GooGetState, sf string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(sf, b, 0664)
+	// Write state to a temporary file first
+	tmp, err := ioutil.TempFile(rootDir, "googet.*.state")
+	if err != nil {
+		return err
+	}
+	newStateFile := tmp.Name()
+	if _, err = tmp.Write(b); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(newStateFile, 0644); err != nil {
+		return err
+	}
+	// Back up the old state file so we can recover it if need be
+	backupStateFile := sf + ".bak"
+	if err = os.Rename(sf, backupStateFile); err != nil {
+		logger.Infof("Unable to back up state file %s to %s. Err: %v", sf, backupStateFile, err)
+	}
+	// Move the new temp file to the live path
+	return os.Rename(newStateFile, sf)
 }
 
 func readState(sf string) (*client.GooGetState, error) {
