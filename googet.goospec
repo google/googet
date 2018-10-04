@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.16.0@1",
+  "version": "2.16.1@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.16.1 - Enhance state file handling to minimize loss/corruption",
     "2.16.0 - GooGet release number is now parsed as an int64",
     "2.15.1 - Ensure unique cache file for each repo.",
     "2.15.0 - Add verify subcommand.",
