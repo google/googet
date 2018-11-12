@@ -12,10 +12,15 @@ a package change as well as providing and api for adding/removing packages.
 
 The server code can also be used to generate a package index from files in
 Google Cloud Storage, note that this functionality only works with writing
-out the index, not serving the index via the inbuilt webserver.
+out the index, not serving the index via the inbuilt webserver. The `-root`
+flag should be the root of the package repository, `-repo_name` is the name
+you want for your repo, and `-package_path` is the folder, relative to root,
+where the packages are stored. In the below example the index file will be
+written to gs://my-bucket/goorepos/myrepo/index, packages are store under
+gs://my-bucket/goorepos/packages.
 
 ```cmd
-go run gooserve.go -package_path gs://my-bucket/goorepo -save_index gs://my-bucket/goorepo/myrepo/index
+go run gooserve.go -repo_name myrepo -root gs://my-bucket/goorepos -package_path packages -save_index
 ```
 
 WARNING: If you use Powershell and -dump_index instead of -save_index, make

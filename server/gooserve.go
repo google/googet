@@ -22,7 +22,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,16 +35,16 @@ import (
 )
 
 var (
-	root        = flag.String("root", "", "root location, leave empty for GCS path")
+	root        = flag.String("root", "", "root location")
 	interval    = flag.Duration("interval", 5*time.Minute, "duration between refresh runs")
 	verbose     = flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog   = flag.Bool("system_log", false, "log to Linux Syslog or Windows Event Log")
 	address     = flag.String("address", "", "address to listen on")
 	port        = flag.Int("port", 8000, "listen port")
 	repoName    = flag.String("repo_name", "repo", "name of the repo to setup")
-	packagePath = flag.String("package_path", "packages", "path under both the filesystem (-root flag) and webserver root where packages are located, for GCS paths set the full path here and leave -root empty")
+	packagePath = flag.String("package_path", "packages", "path under both the filesystem (-root flag) and webserver root where packages are located")
 	dumpIndex   = flag.Bool("dump_index", false, "dump the package index to stdout and quit")
-	saveIndex   = flag.String("save_index", "", "save the package index to the specified file and quit")
+	saveIndex   = flag.Bool("save_index", false, "save the package index file and quit")
 
 	repoContents *repoPackages
 )
@@ -74,8 +73,11 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 	var err error
 	var client *storage.Client
 
-	isGCSURL, bucket, folder := goolib.SplitGCSUrl(packageLoc)
+	isGCSURL, bucket, folder := goolib.SplitGCSUrl(rootLoc)
 	if isGCSURL {
+		if packageLoc != "" {
+			folder = fmt.Sprintf("%s/%s", folder, packageLoc)
+		}
 		logger.Infof("Scanning GCS bucket %q, prefix %q for packages...", bucket, folder)
 		client, err = storage.NewClient(ctx)
 		if err != nil {
@@ -117,7 +119,7 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 
 			var r io.ReadCloser
 			if isGCSURL {
-				pkgURI := fmt.Sprintf("%s/%s", *packagePath, pkgPath)
+				pkgURI := fmt.Sprintf("%s/%s", rootLoc, pkgPath)
 				logger.Infof("Reading package %q", pkgURI)
 				r, err = client.Bucket(bucket).Object(pkgPath).NewReader(ctx)
 				if err != nil {
@@ -126,7 +128,7 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 				}
 				defer r.Close()
 			} else {
-				pkgPath = path.Join(*packagePath, filepath.Base(pkgPath))
+				pkgPath = filepath.Join(rootLoc, packageLoc, filepath.Base(pkgPath))
 				logger.Infof("Reading package %q", pkgPath)
 				r, err = oswrap.Open(pkgPath)
 				if err != nil {
@@ -168,7 +170,7 @@ func main() {
 		logger.Error(err)
 	}
 
-	if *dumpIndex || *saveIndex != "" {
+	if *dumpIndex || *saveIndex {
 		out, err := json.MarshalIndent(repoContents.rs, "", "  ")
 		if err != nil {
 			logger.Fatal(err)
@@ -176,9 +178,10 @@ func main() {
 		if *dumpIndex {
 			fmt.Println(string(out))
 		}
-		if *saveIndex != "" {
-			logger.Infof("Writing index to %q", *saveIndex)
-			if isGCSURL, bucket, object := goolib.SplitGCSUrl(*saveIndex); isGCSURL {
+		if *saveIndex {
+			index := fmt.Sprintf("%s/%s/index", *root, *repoName)
+			logger.Infof("Writing index to %q", index)
+			if isGCSURL, bucket, object := goolib.SplitGCSUrl(index); isGCSURL {
 				client, err := storage.NewClient(ctx)
 				if err != nil {
 					logger.Fatal(err)
@@ -193,7 +196,7 @@ func main() {
 					logger.Fatal(err)
 				}
 			} else {
-				err := ioutil.WriteFile(*saveIndex, out, 0644)
+				err := ioutil.WriteFile(index, out, 0644)
 				if err != nil {
 					logger.Fatal(err)
 				}
