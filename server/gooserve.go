@@ -15,9 +15,11 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"path"
@@ -26,20 +28,22 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/googet/goolib"
 	"github.com/google/googet/oswrap"
 	"github.com/google/logger"
+	"google.golang.org/api/iterator"
 )
 
 var (
-	root        = flag.String("root", "", "root location")
+	root        = flag.String("root", "", "root location, leave empty for GCS path")
 	interval    = flag.Duration("interval", 5*time.Minute, "duration between refresh runs")
 	verbose     = flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog   = flag.Bool("system_log", false, "log to Linux Syslog or Windows Event Log")
 	address     = flag.String("address", "", "address to listen on")
 	port        = flag.Int("port", 8000, "listen port")
 	repoName    = flag.String("repo_name", "repo", "name of the repo to setup")
-	packagePath = flag.String("package_path", "packages", "path under both the filesystem (-root flag) and webserver root where packages are located")
+	packagePath = flag.String("package_path", "packages", "path under both the filesystem (-root flag) and webserver root where packages are located, for GCS paths set the full path here and leave -root empty")
 	dumpIndex   = flag.Bool("dump_index", false, "dump the package index to stdout and quit")
 	saveIndex   = flag.String("save_index", "", "save the package index to the specified file and quit")
 
@@ -63,69 +67,87 @@ func (r *repoPackages) add(src, chksum string, spec *goolib.PkgSpec) {
 	})
 }
 
-func packageInfo(pkgPath string) error {
-	pkg := filepath.Base(pkgPath)
-	pi := goolib.PkgNameSplit(strings.TrimSuffix(pkg, ".goo"))
-
-	spec, err := extractSpec(pkgPath)
-	if err != nil {
-		return err
-	}
-	if spec.Name != pi.Name {
-		return fmt.Errorf("%s: name in spec does not match package file name", pkgPath)
-	}
-	if spec.Arch != pi.Arch {
-		return fmt.Errorf("%s: arch in spec does not match package file name", pkgPath)
-	}
-	if spec.Version != pi.Ver {
-		return fmt.Errorf("%s: version in spec does not match package version", pkgPath)
-	}
-
-	f, err := oswrap.Open(pkgPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	repoContents.add(path.Join(*packagePath, pkg), goolib.Checksum(f), spec)
-	return nil
-}
-
-func runSync(packageDir string) error {
+func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 	logger.Info("Beginning sync run")
-	if err := oswrap.MkdirAll(packageDir, 0774); err != nil {
-		return err
-	}
 
-	pkgs, err := filepath.Glob(filepath.Join(packageDir, "*.goo"))
-	if err != nil {
-		return err
+	var pkgs []string
+	var err error
+	var client *storage.Client
+
+	isGCSURL, bucket, folder := goolib.SplitGCSUrl(packageLoc)
+	if isGCSURL {
+		logger.Infof("Scanning GCS bucket %q, prefix %q for packages...", bucket, folder)
+		client, err = storage.NewClient(ctx)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+
+		it := client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: folder})
+		for objAttr, err := it.Next(); err != iterator.Done; objAttr, err = it.Next() {
+			if err != nil {
+				return err
+			}
+			if objAttr.Size == 0 {
+				continue
+			}
+
+			if strings.HasSuffix(objAttr.Name, ".goo") {
+				pkgs = append(pkgs, objAttr.Name)
+			}
+		}
+	} else {
+		packageDir := filepath.Join(rootLoc, packageLoc)
+		logger.Infof("Scanning directory %q for packages...", packageDir)
+		if err := oswrap.MkdirAll(packageDir, 0774); err != nil {
+			return err
+		}
+		pkgs, err = filepath.Glob(filepath.Join(packageDir, "*.goo"))
+		if err != nil {
+			return err
+		}
 	}
 
 	repoContents = &repoPackages{}
 	var wg sync.WaitGroup
-	for _, pkg := range pkgs {
+	for _, pkgPath := range pkgs {
 		wg.Add(1)
-		go func(pkg string) {
+		go func(pkgPath string) {
 			defer wg.Done()
-			if err := packageInfo(pkg); err != nil {
-				logger.Error(err)
+
+			var r io.ReadCloser
+			if isGCSURL {
+				pkgURI := fmt.Sprintf("%s/%s", *packagePath, pkgPath)
+				logger.Infof("Reading package %q", pkgURI)
+				r, err = client.Bucket(bucket).Object(pkgPath).NewReader(ctx)
+				if err != nil {
+					logger.Error(err)
+					return
+				}
+				defer r.Close()
+			} else {
+				pkgPath = path.Join(*packagePath, filepath.Base(pkgPath))
+				logger.Infof("Reading package %q", pkgPath)
+				r, err = oswrap.Open(pkgPath)
+				if err != nil {
+					logger.Error(err)
+					return
+				}
+				defer r.Close()
 			}
-		}(pkg)
+
+			spec, err := goolib.ExtractPkgSpec(r)
+			if err != nil {
+				logger.Error(err)
+				return
+			}
+
+			repoContents.add(pkgPath, goolib.Checksum(r), spec)
+		}(pkgPath)
 	}
 	wg.Wait()
 	logger.Info("Sync run completed successfully")
 	return nil
-}
-
-// extractSpec takes a goopkg file and returns the unmarshalled spec file.
-func extractSpec(pkgPath string) (*goolib.PkgSpec, error) {
-	f, err := oswrap.Open(pkgPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return goolib.ExtractPkgSpec(f)
 }
 
 func serve(w http.ResponseWriter, r *http.Request) {
@@ -139,13 +161,13 @@ func serve(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
-
+	ctx := context.Background()
 	logger.Init("GooServe", *verbose, *systemLog, ioutil.Discard)
 
-	packageDir := filepath.Join(*root, *packagePath)
-	if err := runSync(packageDir); err != nil {
+	if err := runSync(ctx, *root, *packagePath); err != nil {
 		logger.Error(err)
 	}
+
 	if *dumpIndex || *saveIndex != "" {
 		out, err := json.MarshalIndent(repoContents.rs, "", "  ")
 		if err != nil {
@@ -155,9 +177,26 @@ func main() {
 			fmt.Println(string(out))
 		}
 		if *saveIndex != "" {
-			err := ioutil.WriteFile(*saveIndex, out, 0644)
-			if err != nil {
-				logger.Fatal(err)
+			logger.Infof("Writing index to %q", *saveIndex)
+			if isGCSURL, bucket, object := goolib.SplitGCSUrl(*saveIndex); isGCSURL {
+				client, err := storage.NewClient(ctx)
+				if err != nil {
+					logger.Fatal(err)
+				}
+				defer client.Close()
+
+				w := client.Bucket(bucket).Object(object).NewWriter(ctx)
+				if _, err := w.Write(out); err != nil {
+					logger.Fatal(err)
+				}
+				if err := w.Close(); err != nil {
+					logger.Fatal(err)
+				}
+			} else {
+				err := ioutil.WriteFile(*saveIndex, out, 0644)
+				if err != nil {
+					logger.Fatal(err)
+				}
 			}
 		}
 		return
@@ -165,7 +204,7 @@ func main() {
 
 	http.HandleFunc(fmt.Sprintf("/%s/index", *repoName), serve)
 	prefix := "/" + *packagePath + "/"
-	http.Handle(prefix, http.StripPrefix(prefix, http.FileServer(http.Dir(packageDir))))
+	http.Handle(prefix, http.StripPrefix(prefix, http.FileServer(http.Dir(filepath.Join(*root, *packagePath)))))
 	go func() {
 		err := http.ListenAndServe(fmt.Sprintf("%s:%d", *address, *port), nil)
 		if err != nil {
@@ -174,7 +213,7 @@ func main() {
 	}()
 
 	for range time.Tick(*interval) {
-		if err := runSync(packageDir); err != nil {
+		if err := runSync(ctx, *root, *packagePath); err != nil {
 			logger.Error(err)
 		}
 	}

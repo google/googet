@@ -169,7 +169,7 @@ func ContainsString(a string, slice []string) bool {
 	return false
 }
 
-// SplitGCSUrl pasrses and splits a GCS URL returning if the URL belongs to a GCS object,
+// SplitGCSUrl parses and splits a GCS URL returning if the URL belongs to a GCS object,
 // and if so the bucket and object.
 // Code modified from https://github.com/GoogleCloudPlatform/compute-image-tools/blob/master/daisy/storage.go
 func SplitGCSUrl(p string) (bool, string, string) {
