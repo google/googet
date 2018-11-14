@@ -66,6 +66,19 @@ func (r *repoPackages) add(src, chksum string, spec *goolib.PkgSpec) {
 	})
 }
 
+func getReader(ctx context.Context, client *storage.Client, rootLoc, packageLoc, pkgPath string) (io.ReadCloser, error) {
+	isGCSURL, bucket, _ := goolib.SplitGCSUrl(rootLoc)
+	if isGCSURL {
+		pkgURI := fmt.Sprintf("%s/%s", rootLoc, pkgPath)
+		logger.Infof("Reading package %q", pkgURI)
+		return client.Bucket(bucket).Object(pkgPath).NewReader(ctx)
+	} else {
+		pkgPath = filepath.Join(rootLoc, packageLoc, filepath.Base(pkgPath))
+		logger.Infof("Reading package %q", pkgPath)
+		return oswrap.Open(pkgPath)
+	}
+}
+
 func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 	logger.Info("Beginning sync run")
 
@@ -118,33 +131,28 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 			defer wg.Done()
 
 			var r io.ReadCloser
-			if isGCSURL {
-				pkgURI := fmt.Sprintf("%s/%s", rootLoc, pkgPath)
-				logger.Infof("Reading package %q", pkgURI)
-				r, err = client.Bucket(bucket).Object(pkgPath).NewReader(ctx)
-				if err != nil {
-					logger.Error(err)
-					return
-				}
-				defer r.Close()
-			} else {
-				pkgPath = filepath.Join(rootLoc, packageLoc, filepath.Base(pkgPath))
-				logger.Infof("Reading package %q", pkgPath)
-				r, err = oswrap.Open(pkgPath)
-				if err != nil {
-					logger.Error(err)
-					return
-				}
-				defer r.Close()
-			}
 
+			r, err := getReader(ctx, client, rootLoc, packageLoc, pkgPath)
+			if err != nil {
+				logger.Error(err)
+				return
+			}
 			spec, err := goolib.ExtractPkgSpec(r)
 			if err != nil {
 				logger.Error(err)
 				return
 			}
 
-			repoContents.add(pkgPath, goolib.Checksum(r), spec)
+			// Re-get the reader so we can get the checksum, GCS does not
+			// provide a seeker.
+			r, err = getReader(ctx, client, rootLoc, packageLoc, pkgPath)
+			if err != nil {
+				logger.Error(err)
+				return
+			}
+			chksum := goolib.Checksum(r)
+
+			repoContents.add(pkgPath, chksum, spec)
 		}(pkgPath)
 	}
 	wg.Wait()
@@ -196,6 +204,9 @@ func main() {
 					logger.Fatal(err)
 				}
 			} else {
+				if err := oswrap.MkdirAll(filepath.Join(*root, *repoName), 0774); err != nil {
+					logger.Fatal(err)
+				}
 				err := ioutil.WriteFile(index, out, 0644)
 				if err != nil {
 					logger.Fatal(err)

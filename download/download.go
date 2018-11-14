@@ -153,6 +153,7 @@ func download(r io.Reader, dst, chksum string) (err error) {
 	}
 
 	if hex.EncodeToString(hash.Sum(nil)) != chksum {
+		fmt.Println(hex.EncodeToString(hash.Sum(nil)), chksum)
 		return errors.New("checksum of downloaded file does not match expected checksum")
 	}
 
