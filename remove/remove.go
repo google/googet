@@ -35,9 +35,13 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 		return fmt.Errorf("package not found in state file: %v", err)
 	}
 	// Fix for package install by older versions of GooGet.
-	if ps.LocalPath == "" {
+	if ps.LocalPath == "" && ps.UnpackDir != "" {
 		ps.LocalPath = ps.UnpackDir + ".goo"
 	}
+	if ps.LocalPath == "" {
+		return fmt.Errorf("no local path available for package %q", pi.Name)
+	}
+
 	if !dbOnly {
 		f, err := os.Open(ps.LocalPath)
 		if err != nil && !os.IsNotExist(err) {

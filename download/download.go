@@ -165,6 +165,9 @@ func download(r io.Reader, dst, chksum string) (err error) {
 // package name, it returns the path to the extraced directory.
 func ExtractPkg(src string) (dst string, err error) {
 	dst = strings.TrimSuffix(src, filepath.Ext(src))
+	if src == "" || dst == "" {
+		return "", fmt.Errorf("package extraction paths are invalid: src %s, dst %s", src, dst)
+	}
 	if err := oswrap.Mkdir(dst, 0755); err != nil && !os.IsExist(err) {
 		return "", err
 	}
