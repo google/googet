@@ -102,8 +102,29 @@ func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(name, flag, perm)
 }
 
+func isProtectedPath(path string) (bool, error) {
+	if path == "" {
+		return false, errors.New("cannot use empty path")
+	}
+	paths := []string{}
+	for _, v := range []string{"SystemDrive", "SystemRoot", "ProgramFiles", "ProgramFiles(x86)"} {
+		paths = append(paths, os.Getenv(v))
+	}
+	paths = append(paths, filepath.Join(os.Getenv("SystemRoot"), "system32"))
+
+	for _, p := range paths {
+		if strings.ToLower(filepath.Clean(p)) == strings.ToLower(filepath.Clean(path)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Remove calls os.Remove with name normalized
 func Remove(name string) error {
+	if bad, err := isProtectedPath(name); bad || err != nil {
+		return fmt.Errorf("path %s appears to be protected", name)
+	}
 	name, err := normPath(name)
 	if err != nil {
 		return nil
@@ -113,6 +134,9 @@ func Remove(name string) error {
 
 // RemoveAll calls os.RemoveAll with name normalized
 func RemoveAll(name string) error {
+	if bad, err := isProtectedPath(name); bad || err != nil {
+		return fmt.Errorf("path %s appears to be protected", name)
+	}
 	name, err := normPath(name)
 	if err != nil {
 		return nil
