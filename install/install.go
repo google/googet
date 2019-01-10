@@ -266,9 +266,14 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 	pi := goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch, Ver: ps.PackageSpec.Version}
 	logger.Infof("Starting reinstall of %s.%s, version %s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
+
 	// Fix for package install by older versions of GooGet.
-	if ps.LocalPath == "" {
+	if ps.LocalPath == "" && ps.UnpackDir != "" {
 		ps.LocalPath = ps.UnpackDir + ".goo"
+	}
+
+	if ps.LocalPath == "" {
+		return fmt.Errorf("Local path not referenced in state file for %s.%s.%s. Cannot redownload.", pi.Name, pi.Arch, pi.Ver)
 	}
 
 	f, err := os.Open(ps.LocalPath)
