@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.16.3 - Handle missing LocalPath state in the reinstall command",
     "2.16.2 - Mitigations for undefined LocalPath in package states",
     "2.16.1 - Enhance state file handling to minimize loss/corruption",
     "2.16.0 - GooGet release number is now parsed as an int64",
