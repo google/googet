@@ -34,15 +34,16 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 	if err != nil {
 		return fmt.Errorf("package not found in state file: %v", err)
 	}
-	// Fix for package install by older versions of GooGet.
-	if ps.LocalPath == "" && ps.UnpackDir != "" {
-		ps.LocalPath = ps.UnpackDir + ".goo"
-	}
-	if ps.LocalPath == "" {
-		return fmt.Errorf("no local path available for package %q", pi.Name)
-	}
 
 	if !dbOnly {
+		// Fix for package install by older versions of GooGet.
+		if ps.LocalPath == "" && ps.UnpackDir != "" {
+			ps.LocalPath = ps.UnpackDir + ".goo"
+		}
+		if ps.LocalPath == "" {
+			return fmt.Errorf("no local path available for package %q", pi.Name)
+		}
+
 		f, err := os.Open(ps.LocalPath)
 		if err != nil && !os.IsNotExist(err) {
 			return err
@@ -102,10 +103,9 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 				}
 			}
 		}
-	}
-
-	if err := oswrap.RemoveAll(ps.LocalPath); err != nil {
-		logger.Errorf("error removing package data from cache directory: %v", err)
+		if err := oswrap.RemoveAll(ps.LocalPath); err != nil {
+			logger.Errorf("error removing package data from cache directory: %v", err)
+		}
 	}
 	return state.Remove(pi)
 }
