@@ -7,7 +7,7 @@ package repository solution primarily designed for Windows.
 This is not an official Google product.
 
 ## Build
-Run build.cmd/build.sh to build GooGet for Windows. To package googet run 
+Run build.ps1/build.sh to build GooGet for Windows. To package googet run 
 
 ```
 go run goopack/goopack.go googet.goospec
