@@ -273,7 +273,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 	}
 
 	if ps.LocalPath == "" {
-		return fmt.Errorf("Local path not referenced in state file for %s.%s.%s. Cannot redownload.", pi.Name, pi.Arch, pi.Ver)
+		return fmt.Errorf("local path not referenced in state file for %s.%s.%s. Cannot redownload", pi.Name, pi.Arch, pi.Ver)
 	}
 
 	f, err := os.Open(ps.LocalPath)
