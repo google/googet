@@ -1,6 +1,6 @@
 {
   "name": "googet",
-  "version": "2.16.3@1",
+  "version": "2.16.4@1",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -12,6 +12,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.16.4 - Add flag to 'googet installed' to list directly-managed files.",
     "2.16.3 - Handle missing LocalPath state in the reinstall command",
     "2.16.2 - Mitigations for undefined LocalPath in package states",
     "2.16.1 - Enhance state file handling to minimize loss/corruption",
