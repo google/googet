@@ -32,7 +32,7 @@ import (
 )
 
 type installedCmd struct {
-	info bool
+	info  bool
 	files bool
 }
 
@@ -97,16 +97,19 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 			}
 			fmt.Println(" ", pi.Name+"."+pi.Arch+" "+pi.Ver)
 
-                        if cmd.files {
-                                ps, err := state.GetPackageState(pi)
-                                if err != nil {
-                                        logger.Errorf("Unable to get file list for package %q.", p)
-                                        continue
-                                }
-                                for file := range ps.InstalledFiles {
-                                        fmt.Println("  -", file)
-                                }
-                        }
+			if cmd.files {
+				ps, err := state.GetPackageState(pi)
+				if err != nil {
+					logger.Errorf("Unable to get file list for package %q.", p)
+					continue
+				}
+				if len(ps.InstalledFiles) == 0 {
+					fmt.Println("  - No files directly managed by GooGet.")
+				}
+				for file := range ps.InstalledFiles {
+					fmt.Println("  -", file)
+				}
+			}
 		}
 	}
 	if exitCode != subcommands.ExitSuccess {
