@@ -33,6 +33,7 @@ import (
 
 type installedCmd struct {
 	info bool
+	files bool
 }
 
 func (*installedCmd) Name() string     { return "installed" }
@@ -99,7 +100,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
                         if cmd.files {
                                 ps, err := state.GetPackageState(pi)
                                 if err != nil {
-                                        logger.Errorf("Unable to get file list for package %q.", arg)
+                                        logger.Errorf("Unable to get file list for package %q.", p)
                                         continue
                                 }
                                 for file := range ps.InstalledFiles {
