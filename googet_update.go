@@ -81,7 +81,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		}
 	}
 
-	exitCode := subcommands.ExitFailure
+	exitCode := subcommands.ExitSuccess
 	for _, pi := range ud {
 		r, err := client.WhatRepo(pi, rm)
 		if err != nil {
