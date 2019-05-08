@@ -156,16 +156,16 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 	return nil
 }
 
-type win32_OperatingSystem struct {
+type Win32_Processor struct {
 	AddressWidth uint16
 }
 
 func width() (int, error) {
-	var os []win32_OperatingSystem
-	if err := wmi.Query(wmi.CreateQuery(&os, ""), &os); err != nil {
+	var p []Win32_Processor
+	if err := wmi.Query(wmi.CreateQuery(&p, ""), &p); err != nil {
 		return 0, err
 	}
-	return int(os[0].AddressWidth), nil
+	return int(p[0].AddressWidth), nil
 }
 
 // InstallableArchs returns a slice of archs supported by this machine.
