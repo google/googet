@@ -16,6 +16,8 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"path"
 	"reflect"
@@ -160,5 +162,32 @@ func TestWriteFiles(t *testing.T) {
 	}
 	if hdr.Name != ef {
 		t.Errorf("zip contains unexpected file: expect %q got %q", ef, f.Name())
+	}
+}
+
+func TestAddFlags(t *testing.T) {
+	firstFlag := "var:first_var"
+	secondFlag := "var:second_var"
+	value := "value"
+
+	flag.Bool("var:test2", false, "")
+	flag.CommandLine.Parse([]string{"-var:test2"})
+
+	args := []string{"-var:test2", "-" + firstFlag, value, fmt.Sprintf("--%s=%s", secondFlag, value), "var:not_a_flag", "also_not_a_flag"}
+	before := flag.NFlag()
+	addFlags(args)
+	flag.CommandLine.Parse(args)
+	after := flag.NFlag()
+
+	want := before + 2
+	if after != want {
+		t.Errorf("number of flags after does not match expectation, want %d, got %d", want, after)
+	}
+
+	for _, fn := range []string{firstFlag, secondFlag} {
+		got := flag.Lookup(fn).Value.String()
+		if got != value {
+			t.Errorf("flag %q value %q!=%q", fn, got, value)
+		}
 	}
 }

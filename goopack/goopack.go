@@ -32,7 +32,9 @@ import (
 	"github.com/google/googet/oswrap"
 )
 
-var outputDir = flag.String("output_dir", "", "where to put the built package")
+var (
+	outputDir = flag.String("output_dir", "", "where to put the built package")
+)
 
 type fileMap map[string][]string
 
@@ -246,7 +248,7 @@ func writeFiles(tw *tar.Writer, fm fileMap) error {
 	return nil
 }
 
-func packageFiles(fm fileMap, gs goolib.GooSpec, dir string) (err error) {
+func packageFiles(fm fileMap, gs *goolib.GooSpec, dir string) (err error) {
 	pn := goolib.PackageInfo{Name: gs.PackageSpec.Name, Arch: gs.PackageSpec.Arch, Ver: gs.PackageSpec.Version}.PkgName()
 	f, err := oswrap.Create(filepath.Join(dir, pn))
 	if err != nil {
@@ -312,7 +314,7 @@ func splitPath(path string) []string {
 	return out
 }
 
-func verifyFiles(gs goolib.GooSpec, fm fileMap) error {
+func verifyFiles(gs *goolib.GooSpec, fm fileMap) error {
 	fs := make(map[string]bool)
 	for folder, fl := range fm {
 		parts := splitPath(folder)
@@ -337,7 +339,7 @@ func verifyFiles(gs goolib.GooSpec, fm fileMap) error {
 	return nil
 }
 
-func createPackage(gs goolib.GooSpec, baseDir, outDir string) error {
+func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
 	switch {
 	case gs.Build.Linux != "" && runtime.GOOS == "linux":
 		cmd := gs.Build.Linux
@@ -366,12 +368,44 @@ func createPackage(gs goolib.GooSpec, baseDir, outDir string) error {
 	return packageFiles(fm, gs, outDir)
 }
 
+const (
+	flgDefValue   = "flag generated for goospec variable"
+	varFlagPrefix = "var:"
+)
+
+func addFlags(args []string) {
+	for _, arg := range args {
+		if len(arg) <= 1 || arg[0] != '-' {
+			continue
+		}
+
+		name := arg[1:]
+		if name[0] == '-' {
+			name = name[1:]
+		}
+
+		if !strings.HasPrefix(name, varFlagPrefix) {
+			continue
+		}
+
+		name = strings.SplitN(name, "=", 2)[0]
+
+		if flag.Lookup(name) != nil {
+			continue
+		}
+
+		flag.String(name, "", flgDefValue)
+	}
+}
+
 func usage() {
 	fmt.Printf("Usage: %s <path/to/goospec>\n", filepath.Base(os.Args[0]))
 }
 
 func main() {
+	addFlags(os.Args[1:])
 	flag.Parse()
+
 	switch len(flag.Args()) {
 	case 0:
 		fmt.Println("Not enough args.")
@@ -396,7 +430,9 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	gs, err := goolib.ReadGooSpec(flag.Arg(0))
+
+	var varMap map[string]string
+	gs, err := goolib.ReadGooSpec(flag.Arg(0), varMap)
 	if err != nil {
 		log.Fatal(err)
 	}

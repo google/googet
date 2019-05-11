@@ -259,7 +259,7 @@ func TestUnmarshalGooSpec(t *testing.T) {
   } ]
 }`)
 
-	want := GooSpec{
+	want := &GooSpec{
 		Sources: []PkgSources{
 			{
 				Include: []string{"**"},
@@ -278,7 +278,7 @@ func TestUnmarshalGooSpec(t *testing.T) {
 		},
 	}
 
-	got, err := unmarshalGooSpec(c1)
+	got, err := unmarshalGooSpec(c1, nil)
 	if err != nil {
 		t.Fatalf("error running unmarshalGooSpec: %v", err)
 	}

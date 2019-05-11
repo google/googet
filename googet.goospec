@@ -1,6 +1,7 @@
+{{$version := "2.16.5@1" -}}
 {
   "name": "googet",
-  "version": "2.16.5@1",
+  "version": "{{$version}}",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -58,7 +59,9 @@
       ]
   }],
   "build": {
-    "windows": "./build.ps1",
-    "linux": "./build.sh"
+    "windows": "go",
+    "windowsArgs": ["build", "-ldflags='-X main.version={{$version}}'"],
+    "linux": "/bin/bash",
+    "linuxArgs": ["-c", "GOOS=windows go build -ldflags='-X main.version={{$version}}'"]
   }
 }

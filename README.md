@@ -1,13 +1,18 @@
-# GooGet 
+# GooGet
+
 [![Build Status](https://travis-ci.org/google/googet.svg?branch=master)](https://travis-ci.org/google/googet)
 
 GooGet (Googet's Obviously Only a Goofy Experimental Title) is a modular
-package repository solution primarily designed for Windows. 
+package repository solution primarily designed for Windows.
+
+GooGet is shipped with the official Google Cloud Platform Windows images and is
+used to maintain the guest environment.
 
 This is not an official Google product.
 
 ## Build
-Run build.ps1/build.sh to build GooGet for Windows. To package googet run 
+
+Run build.ps1/build.sh to build GooGet for Windows. To package googet run
 
 ```
 go run goopack/goopack.go googet.goospec
@@ -52,7 +57,7 @@ gsutil rsync -r %GOOREPO% gs://my-googet-server
 ./googet.exe addrepo gcs gs://my-googet-server
 
 rem This command should print 'gcs: gs://my-googet-server'
-./googet.exec listrepos 
+./googet.exec listrepos
 
 rem This command should list the googet package and any other packages in your repo
 ./googet.exe available -sources gs://my-googet-server/

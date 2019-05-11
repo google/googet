@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/blang/semver"
@@ -229,33 +230,75 @@ func SortVersions(versions []string) []string {
 	return vl
 }
 
-func unmarshalGooSpec(c []byte) (GooSpec, error) {
+func jsonError(data []byte, err error) error {
+	// If this is a syntax error return a useful error.
+	sErr, ok := err.(*json.SyntaxError)
+	if !ok {
+		return err
+	}
+
+	// Byte number where the error line starts.
+	start := bytes.LastIndex(data[:sErr.Offset], []byte("\n")) + 1
+
+	// Line number of error.
+	line := bytes.Count(data[:start], []byte("\n")) + 1
+	// Position of error in line (where to place the '^').
+	pos := int(sErr.Offset) - start
+	if pos != 0 {
+		pos = pos - 1
+	}
+
+	var buf bytes.Buffer
+	for i, l := range bytes.SplitAfter(data, []byte("\n")) {
+		if i >= line-3 && i <= line+2 {
+			buf.Write(l)
+		}
+		if i+1 == line {
+			buf.Write(bytes.Repeat([]byte(" "), pos))
+			buf.Write([]byte("^\n"))
+		}
+	}
+	return fmt.Errorf("JSON syntax error in line %d: %s:\n%s", line, err, buf.String())
+}
+
+func unmarshalGooSpec(c []byte, varMap map[string]string) (*GooSpec, error) {
+	goospecTemplate := template.New("goospecTemplate").Option("missingkey=zero")
+	tmpl, err := goospecTemplate.Parse(string(c))
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, varMap); err != nil {
+		return nil, err
+	}
+
 	var gs GooSpec
-	//var temp pkgSpec
-	if err := json.Unmarshal(c, &gs.PackageSpec); err != nil {
-		return gs, err
+	data := buf.Bytes()
+	if err := json.Unmarshal(data, &gs.PackageSpec); err != nil {
+		return nil, jsonError(data, err)
 	}
-	if err := json.Unmarshal(c, &gs); err != nil {
-		return gs, err
+	if err := json.Unmarshal(data, &gs); err != nil {
+		return nil, jsonError(data, err)
 	}
-	return gs, nil
+	return &gs, nil
 }
 
 // ReadGooSpec unmarshalls and verifies a goospec file into the GooSpec struct.
-func ReadGooSpec(cf string) (GooSpec, error) {
+func ReadGooSpec(cf string, varMap map[string]string) (*GooSpec, error) {
 	c, err := ioutil.ReadFile(cf)
 	if err != nil {
-		return GooSpec{}, err
+		return nil, err
 	}
-	gs, err := unmarshalGooSpec(c)
+	gs, err := unmarshalGooSpec(c, varMap)
 	if err != nil {
-		return gs, err
+		return nil, err
 	}
 	gs.normalize()
 	if err = gs.verify(); err != nil {
-		return gs, err
+		return nil, err
 	}
-	return gs, err
+	return gs, nil
 }
 
 // WritePackageSpec takes a PkgSpec and writes it as a JSON file using
@@ -309,23 +352,23 @@ func ReadPackageSpec(r io.Reader) (*PkgSpec, error) {
 	}
 }
 
-func (spec *PkgSpec) verify() error {
-	if spec.Name == "" {
+func (ps *PkgSpec) verify() error {
+	if ps.Name == "" {
 		return errors.New("no name defined in package spec")
 	}
-	if !ContainsString(spec.Arch, validArch) {
-		return fmt.Errorf("invalid architecture: %q", spec.Arch)
+	if !ContainsString(ps.Arch, validArch) {
+		return fmt.Errorf("invalid architecture: %q", ps.Arch)
 	}
-	if spec.Version == "" {
+	if ps.Version == "" {
 		return errors.New("version string empty")
 	}
-	if _, err := ParseVersion(spec.Version); err != nil {
-		return fmt.Errorf("can't parse %q: %v", spec.Version, err)
+	if _, err := ParseVersion(ps.Version); err != nil {
+		return fmt.Errorf("can't parse %q: %v", ps.Version, err)
 	}
-	if len(spec.Tags) > 10 {
+	if len(ps.Tags) > 10 {
 		return errors.New("too many tags")
 	}
-	for k, v := range spec.Tags {
+	for k, v := range ps.Tags {
 		if len(k) > maxTagKeyLen {
 			return errors.New("tag key too large")
 		}
@@ -333,27 +376,27 @@ func (spec *PkgSpec) verify() error {
 			return fmt.Errorf("tag %q too large", k)
 		}
 	}
-	for k, v := range spec.PkgDependencies {
+	for k, v := range ps.PkgDependencies {
 		if _, err := ParseVersion(v); err != nil {
 			return fmt.Errorf("can't parse version %q for dependancy %q: %v", v, k, err)
 		}
 	}
-	for src := range spec.Files {
+	for src := range ps.Files {
 		if filepath.IsAbs(src) {
 			return fmt.Errorf("%q is an absolute path, expected relative", src)
 		}
 	}
-	if filepath.IsAbs(spec.Install.Path) {
-		return fmt.Errorf("%q is an absolute path, expected relative", spec.Install.Path)
+	if filepath.IsAbs(ps.Install.Path) {
+		return fmt.Errorf("%q is an absolute path, expected relative", ps.Install.Path)
 	}
-	if filepath.IsAbs(spec.Uninstall.Path) {
-		return fmt.Errorf("%q is an absolute path, expected relative", spec.Uninstall.Path)
+	if filepath.IsAbs(ps.Uninstall.Path) {
+		return fmt.Errorf("%q is an absolute path, expected relative", ps.Uninstall.Path)
 	}
 	return nil
 }
 
-func (spec *PkgSpec) normalize() {
-	for _, str := range []*string{&spec.Install.Path, &spec.Uninstall.Path} {
+func (ps *PkgSpec) normalize() {
+	for _, str := range []*string{&ps.Install.Path, &ps.Uninstall.Path} {
 		if filepath.IsAbs(*str) {
 			continue
 		}
