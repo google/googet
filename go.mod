@@ -11,7 +11,6 @@ require (
 	github.com/go-yaml/yaml v2.1.0+incompatible
 	github.com/golang/protobuf v1.3.1 // indirect
 	github.com/google/go-cmp v0.3.0 // indirect
-	github.com/google/googet v2.13.0+incompatible // indirect
 	github.com/google/logger v1.0.1
 	github.com/google/subcommands v1.0.1
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
