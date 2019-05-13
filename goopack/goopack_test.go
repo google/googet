@@ -23,8 +23,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/oswrap"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 )
 
 func TestPathMatch(t *testing.T) {

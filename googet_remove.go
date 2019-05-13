@@ -23,8 +23,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/remove"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/remove"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )

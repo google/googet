@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/googet/client"
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/oswrap"
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 )
 
 func TestRepoList(t *testing.T) {

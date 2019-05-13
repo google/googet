@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/googet/oswrap"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )

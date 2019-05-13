@@ -29,9 +29,9 @@ import (
 	"time"
 
 	"github.com/go-yaml/yaml"
-	"github.com/google/googet/client"
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/system"
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"

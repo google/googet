@@ -17,8 +17,8 @@ package system
 import (
 	"path/filepath"
 
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/oswrap"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
 )
 

@@ -1,4 +1,4 @@
-module github.com/google/googet
+module github.com/google/googet/v2
 
 go 1.12
 

@@ -26,11 +26,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/googet/client"
-	"github.com/google/googet/download"
-	"github.com/google/googet/goolib"
-	"github.com/google/googet/oswrap"
-	"github.com/google/googet/system"
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/download"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 )
 
