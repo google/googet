@@ -165,6 +165,18 @@ func TestWriteFiles(t *testing.T) {
 	}
 }
 
+func TestPopulateVars(t *testing.T) {
+	flag.String("var:TestPopulateVars1", "", "")
+	flag.String("var:TestPopulateVars2", "", "")
+	flag.CommandLine.Parse([]string{"-var:TestPopulateVars1", "value", "-var:TestPopulateVars2=value"})
+	want := map[string]string{"TestPopulateVars1": "value", "TestPopulateVars2": "value"}
+
+	got := populateVars()
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("want: %q, got: %q", want, got)
+	}
+}
+
 func TestAddFlags(t *testing.T) {
 	firstFlag := "var:first_var"
 	secondFlag := "var:second_var"

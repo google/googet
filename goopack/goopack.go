@@ -398,6 +398,17 @@ func addFlags(args []string) {
 	}
 }
 
+func populateVars() map[string]string {
+	varMap := map[string]string{}
+	flag.Visit(func(flg *flag.Flag) {
+		if strings.HasPrefix(flg.Name, varFlagPrefix) {
+			varMap[strings.TrimPrefix(flg.Name, varFlagPrefix)] = flg.Value.String()
+		}
+	})
+
+	return varMap
+}
+
 func usage() {
 	fmt.Printf("Usage: %s <path/to/goospec>\n", filepath.Base(os.Args[0]))
 }
@@ -431,7 +442,7 @@ func main() {
 		}
 	}
 
-	var varMap map[string]string
+	varMap := populateVars()
 	gs, err := goolib.ReadGooSpec(flag.Arg(0), varMap)
 	if err != nil {
 		log.Fatal(err)
