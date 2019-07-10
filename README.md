@@ -12,13 +12,13 @@ This is not an official Google product.
 
 ## Build
 
-Run build.ps1/build.sh to build GooGet for Windows. To package googet run
+To build and package googet run
 
 ```
 go run goopack/goopack.go googet.goospec
 ```
 
-This will result in googet.x86_64.VERSION.goo which can be installed on a 
+This will result in googet.exe and googet.x86_64.VERSION.goo which can be installed on a 
 machine with the `googet install` command (assuming googet is already 
 installed).
 

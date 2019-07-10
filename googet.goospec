@@ -59,8 +59,8 @@
       ]
   }],
   "build": {
-    "windows": "go",
-    "windowsArgs": ["build", "-ldflags='-X main.version={{$version}}'"],
+    "windows":  "c:/Windows/System32/cmd.exe",
+    "windowsArgs": ["/c", "go build -ldflags=-X=main.version={{$version}} -o googet.exe"],
     "linux": "/bin/bash",
     "linuxArgs": ["-c", "GOOS=windows go build -ldflags='-X main.version={{$version}}'"]
   }
