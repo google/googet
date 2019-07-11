@@ -26,6 +26,9 @@ func rootDir(name string) string {
 	if filepath.IsAbs(name) {
 		i++
 	}
+	if os.IsPathSeparator(name[i]) {
+		i++
+	}
 	for i < len(name) && !os.IsPathSeparator(name[i]) {
 		i++
 	}

@@ -14,18 +14,26 @@ limitations under the License.
 package oswrap
 
 import (
+	"runtime"
 	"testing"
 )
 
 func TestRootDir(t *testing.T) {
 	var table = []struct {
-		path string
-		want string
+		path, want string
 	}{
-		{"/some/abs/path", "/some"},
-		{"some/rel/path", "some"},
+		{"/linux/abs/path", "/linux"},
+		{"linux/rel/path", "linux"},
 		{"/path", "/path"},
 	}
+
+	if runtime.GOOS == "windows" {
+		table = append(table, []struct{ path, want string }{
+			{`Z:\windows\abs\path`, `Z:\windows`},
+			{`\windows\rel\path`, `\windows`},
+		}...)
+	}
+
 	for _, tt := range table {
 		if got := rootDir(tt.path); got != tt.want {
 			t.Fatalf("rootDir did not return expected path, got: %q, want: %q ", got, tt.want)

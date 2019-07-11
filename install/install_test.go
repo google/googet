@@ -136,6 +136,7 @@ func TestInstallPkg(t *testing.T) {
 		"is/quite/a/large/number/but/somehow/there/were/real/goo/packages" +
 		"which/exceeded/this/limit/hence/this/absurdly/long/string/in/" +
 		"this/unit/test")
+	dst = filepath.FromSlash(dst)
 
 	defer oswrap.RemoveAll(dst)
 

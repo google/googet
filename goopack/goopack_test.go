@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/googet/v2/goolib"
@@ -87,7 +89,7 @@ func TestMapFiles(t *testing.T) {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
 	defer oswrap.RemoveAll(tempDir)
-	wf1 := path.Join(tempDir, "globme.file")
+	wf1 := filepath.FromSlash(path.Join(tempDir, "globme.file"))
 	f, err := oswrap.Create(wf1)
 	if err != nil {
 		t.Fatalf("error creating test file: %v", err)
@@ -102,7 +104,7 @@ func TestMapFiles(t *testing.T) {
 	if err := oswrap.Mkdir(wd, 0755); err != nil {
 		t.Fatalf("error creating test directory: %v", err)
 	}
-	wf2 := path.Join(wd, "globmetoo.file")
+	wf2 := filepath.FromSlash(path.Join(wd, "globmetoo.file"))
 	f, err = oswrap.Create(wf2)
 	if err != nil {
 		t.Fatalf("error creating test file: %v", err)
@@ -126,7 +128,7 @@ func TestMapFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error getting file map: %v", err)
 	}
-	em := fileMap{"foo": []string{wf1}, "foo/globdir": []string{wf2}}
+	em := fileMap{"foo": []string{wf1}, strings.Join([]string{"foo", "globdir"}, string(filepath.Separator)): []string{wf2}}
 	if !reflect.DeepEqual(fm, em) {
 		t.Errorf("did not get expected package map: got %v, want %v", fm, em)
 	}

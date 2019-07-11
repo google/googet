@@ -186,15 +186,15 @@ func glob(base string, includes, excludes []string) ([]string, error) {
 			out = append(out, filepath.Join(walk.parts[0]...))
 			continue
 		}
-		wd := filepath.Join(walk.parts[0][:walk.firstGlob]...)
+		wd := strings.Join(walk.parts[0][:walk.firstGlob], string(filepath.Separator))
 		files, err := walkDir(wd)
 		if err != nil {
 			return nil, fmt.Errorf("walking %s: %v", wd, err)
 		}
-
 		var walkincludes []string
 		for _, p := range walk.parts {
-			walkincludes = append(walkincludes, filepath.Join(p...))
+			path := filepath.Clean(strings.Join(p, string(filepath.Separator)))
+			walkincludes = append(walkincludes, path)
 		}
 		for _, file := range files {
 			keep, err := anyMatch(walkincludes, file)
