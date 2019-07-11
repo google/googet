@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -300,18 +301,34 @@ func TestNoPathTraversal(t *testing.T) {
   },
   "sources": []
 }`)
-	fail := []byte(`{
-  "name": "pkg",
-  "version": "1.2.3@4",
-  "arch": "noarch",
-  "releaseNotes": [],
-  "description": "blah blah",
-  "owners": "someone",
-  "install": {
-    "path": "/usr/bin/sudo"
-  },
-  "sources": []
-}`)
+	var fail []byte
+	if runtime.GOOS == "windows" {
+		fail = []byte(`{
+		"name": "pkg",
+		"version": "1.2.3@4",
+		"arch": "noarch",
+		"releaseNotes": [],
+		"description": "blah blah",
+		"owners": "someone",
+		"install": {
+			"path": "Z:\usr\bin\sudo"
+		},
+		"sources": []
+	}`)
+	} else {
+		fail = []byte(`{
+		"name": "pkg",
+		"version": "1.2.3@4",
+		"arch": "noarch",
+		"releaseNotes": [],
+		"description": "blah blah",
+		"owners": "someone",
+		"install": {
+			"path": "/usr/bin/sudo"
+		},
+		"sources": []
+	}`)
+	}
 	got, err := UnmarshalPackageSpec(c1)
 	if err != nil {
 		t.Fatalf("error running unmarshalGooSpec: %v", err)
