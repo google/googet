@@ -447,6 +447,7 @@ func resolveDst(dst string) string {
 func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[string]string, dbOnly bool) error {
 	st, err := state.GetPackageState(pi)
 	if err != nil {
+		logger.Errorf("GetPackageState: %v", err)
 		return nil
 	}
 	if !dbOnly {
