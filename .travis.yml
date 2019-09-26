@@ -4,11 +4,17 @@ matrix:
       dist: xenial
       sudo: false
     - os: windows
-    
 language: go
-go: stable 
+go: stable
+addons:
+  sonarcloud:
+    organization: "gitgerby"
+    token:
+      secure: "XhGYLRIBffc+cxr5xTBEbBD+vNYfgrYjClF2pDexnIywLRMc8Sa+pDXZEzJBv/sgz0XRiRdHthfqIyIalzQ9DZ6D8sk2j1PzRLl4zWcLBfK0uxl6rHrZ8aAVN3jHY5oWJyhfPRvu/jGD4IuKKhuUiUjv/29b9b+F4l5RepWdpocYGRf/XrBs8uIks67e7uYPe/RKqaDEuO1cVIyfEuAgOGjZFGGgJELKajtktATYR8hPn/I/nrVxvAbu76mJ25nRwg/3IqoMORqKLGqwRriJ1ft99joz9dVfR1KFuAx2GIMe5ykCQKpC8nMkpm0IH+uwUK30+SU2KyXc06UY3S6YCi1vyc3rey6FSKpAKwwidfymAikdy49YCQbDu5ZlyhxHdCewlgqWnAhEp5zwVjpHEs8vEqX8yBt57awe2BBDU/6sY5v6ZUiTBiXWBe6jTWRNUOR0E+UyLnm+nA9HpcUzO8yfa+GMgverkuzI0hWJQWlTjkTU5HPerrovePh7yCYItkbpyVgg6R+aQ9+ZDgO31tH+gcw6WQ72LeHHMkIzTM6C7pcq7UoTaz3CHsHukD5WMo8A82UTInfUypuTPlTDXwSKs3wc7BxAjnyNzYdyRa69uI+ihTyYIPmn7B5XXpJF9SWPnI1pUAwR7oci2zAw+bFuKXP3bHM1mrEGqFqgD4k="
+
 script:
   - go vet $(go list ./... | grep -v /vendor/)
   - if [ "$TRAVIS_OS_NAME" = "linux" ]; then ./.travis.gofmt.sh; fi # gofmt throws errors about line endings on windows; only run gofmt on *nix
   - go test -v -race $(go list ./... | grep -v /vendor/)
   - if [ "$TRAVIS_OS_NAME" = "windows" ]; then powershell -ExecutionPolicy Bypass -File ./.travis.win_integration_test.ps1; fi # windows integration tests
+  - sonar-scan
