@@ -14,7 +14,6 @@ addons:
 
 script:
   - go vet $(go list ./... | grep -v /vendor/)
-  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then ./.travis.gofmt.sh; fi # gofmt throws errors about line endings on windows; only run gofmt on *nix
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then ./.travis.gofmt.sh; sonar-scanner; fi # gofmt throws errors about line endings on windows; only run gofmt on *nix
   - go test -v -race $(go list ./... | grep -v /vendor/)
   - if [ "$TRAVIS_OS_NAME" = "windows" ]; then powershell -ExecutionPolicy Bypass -File ./.travis.win_integration_test.ps1; fi # windows integration tests
-  - sonar-scanner
