@@ -34,6 +34,10 @@ import (
 	"github.com/google/logger"
 )
 
+const (
+	httpOK = 200
+)
+
 func extractVerify(r io.Reader, verify, dir string) error {
 	zr, err := gzip.NewReader(r)
 	if err != nil {
@@ -142,6 +146,9 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 			return false, err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode != httpOK {
+			return false, fmt.Errorf("Invalid return code from server, got: %d, want: %d", resp.StatusCode, httpOK)
+		}
 		r = resp.Body
 	}
 	if err := extractVerify(r, ps.PackageSpec.Verify.Path, dir); err != nil {

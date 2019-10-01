@@ -38,6 +38,10 @@ import (
 	"github.com/google/logger"
 )
 
+const (
+	httpOK = 200
+)
+
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
 func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error {
@@ -69,6 +73,9 @@ func packageHTTP(pkgURL, dst, chksum string, proxyServer string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != httpOK {
+		return fmt.Errorf("Invalid return code from server, got: %d, want: %d", resp.StatusCode, httpOK)
+	}
 
 	logger.Infof("Downloading %q", pkgURL)
 	return download(resp.Body, dst, chksum)
