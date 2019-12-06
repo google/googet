@@ -162,9 +162,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	fmt.Printf("Installation of %s.%s.%s and all dependencies completed\n", pi.Name, pi.Arch, pi.Ver)
 	// Clean up old version, if applicable.
 	pi = goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}
-	if err := cleanOld(state, pi, insFiles, dbOnly); err != nil {
-		return err
-	}
+	cleanOld(state, pi, insFiles, dbOnly)
 
 	state.Add(client.PackageState{
 		SourceRepo:     repo,
@@ -249,9 +247,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 
 	// Clean up old version, if applicable.
 	pi := goolib.PackageInfo{Name: zs.Name, Arch: zs.Arch, Ver: ""}
-	if err := cleanOld(state, pi, insFiles, dbOnly); err != nil {
-		return err
-	}
+	cleanOld(state, pi, insFiles, dbOnly)
 
 	state.Add(client.PackageState{
 		LocalPath:      dst,
@@ -444,11 +440,10 @@ func resolveDst(dst string) string {
 	return dst
 }
 
-func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[string]string, dbOnly bool) error {
+func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[string]string, dbOnly bool) {
 	st, err := state.GetPackageState(pi)
 	if err != nil {
-		logger.Errorf("GetPackageState: %v", err)
-		return nil
+		return
 	}
 	if !dbOnly {
 		cleanOldFiles(st, insFiles)
@@ -459,7 +454,8 @@ func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[str
 	if st.UnpackDir != "" && oswrap.RemoveAll(st.UnpackDir) != nil {
 		logger.Error(err)
 	}
-	return state.Remove(pi)
+	state.Remove(pi)
+	return
 }
 
 func cleanOldFiles(oldState client.PackageState, insFiles map[string]string) {

@@ -41,7 +41,6 @@ const (
 	stateFile = "googet.state"
 	confFile  = "googet.conf"
 	logFile   = "googet.log"
-	lockFile  = "googet.lock"
 	cacheDir  = "cache"
 	repoDir   = "repos"
 	envVar    = "GooGetRoot"
@@ -357,26 +356,6 @@ func rotateLog(logPath string, ls int64) error {
 	return nil
 }
 
-func lock(lf string) (*os.File, error) {
-	// This locking process only works on Windows, on linux os.Remove will remove an open file.
-	// This is not currently an issue as running googet on linux is only done for testing.
-	// In the future using a semaphore for locking would be nice.
-	// 90% of all GooGet runs happen in < 60s, we wait 70s.
-	for i := 1; i < 15; i++ {
-		// Try to remove any old lock file that may exist, ignore errors as we don't care if
-		// we can't remove it or it does not exist.
-		os.Remove(lf)
-		if lk, err := os.OpenFile(lf, os.O_RDONLY|os.O_CREATE|os.O_EXCL, 0); err == nil {
-			return lk, nil
-		}
-		if i == 1 {
-			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
-		}
-		time.Sleep(5 * time.Second)
-	}
-	return nil, errors.New("timed out waiting for lock")
-}
-
 func readConf(cf string) {
 	gc, err := unmarshalConfFile(cf)
 	if err != nil {
@@ -410,7 +389,47 @@ func readConf(cf string) {
 	allowUnsafeURL = gc.AllowUnsafeURL
 }
 
-func run() int {
+var deferredFuncs []func()
+
+func runDeferredFuncs() {
+	for _, f := range deferredFuncs {
+		f()
+	}
+}
+
+func obtainLock() error {
+	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	f, err := os.OpenFile(lockFile, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	c := make(chan error)
+	go func() {
+		c <- lock(f)
+	}()
+
+	ticker := time.NewTicker(5 * time.Second)
+	// 90% of all GooGet runs happen in < 60s, we wait 70s.
+	for i := 1; i < 15; i++ {
+		select {
+		case err := <-c:
+			if err != nil {
+				return err
+			}
+			return nil
+		case <-ticker.C:
+			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
+		}
+	}
+	return errors.New("timed out waiting for lock")
+}
+
+func main() {
 	ggFlags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ContinueOnError)
 	ggFlags.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
 	ggFlags.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
@@ -449,7 +468,7 @@ func run() int {
 
 	nonLockingCommands := []string{"help", "commands", "flags"}
 	if ggFlags.NArg() == 0 || goolib.ContainsString(ggFlags.Args()[0], nonLockingCommands) {
-		return int(cmdr.Execute(context.Background()))
+		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
 	if rootDir == "" {
@@ -459,15 +478,10 @@ func run() int {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
 
-	readConf(filepath.Join(rootDir, confFile))
-
-	lkf := filepath.Join(rootDir, lockFile)
-	lk, err := lock(lkf)
-	if err != nil {
-		logger.Fatal(err)
+	if err := obtainLock(); err != nil {
+		logger.Fatalf("Cannot obtain GooGet lock, error: %v", err)
 	}
-	defer os.Remove(lkf)
-	defer lk.Close()
+	readConf(filepath.Join(rootDir, confFile))
 
 	logPath := filepath.Join(rootDir, logFile)
 	if err := rotateLog(logPath, logSize); err != nil {
@@ -475,22 +489,23 @@ func run() int {
 	}
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
 	if err != nil {
+		runDeferredFuncs()
 		logger.Fatalln("Failed to open log file:", err)
 	}
-	defer lf.Close()
+	deferredFuncs = append(deferredFuncs, func() { lf.Close() })
 
 	logger.Init("GooGet", verbose, systemLog, lf)
 
 	if err := os.MkdirAll(filepath.Join(rootDir, cacheDir), 0774); err != nil {
+		runDeferredFuncs()
 		logger.Fatalf("Error setting up cache directory: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(rootDir, repoDir), 0774); err != nil {
+		runDeferredFuncs()
 		logger.Fatalf("Error setting up repo directory: %v", err)
 	}
 
-	return int(cmdr.Execute(context.Background()))
-}
-
-func main() {
-	os.Exit(run())
+	es := cmdr.Execute(context.Background())
+	runDeferredFuncs()
+	os.Exit(int(es))
 }
