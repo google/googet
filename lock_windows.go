@@ -25,13 +25,12 @@ import (
 
 var (
 	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
+	lockFile         = os.Getenv("ProgramData") + "\\GooGet\\googet.lock"
 	procLockFileEx   = kernel32.NewProc("LockFileEx")
 	procUnlockFileEx = kernel32.NewProc("UnlockFileEx")
 )
 
 const (
-	lockFile = "C:/ProgramData/GooGet/googet.lock"
-
 	// https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-lockfileex
 	LOCKFILE_EXCLUSIVE_LOCK   = 2
 	LOCKFILE_FAIL_IMMEDIATELY = 1
