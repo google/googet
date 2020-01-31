@@ -13,6 +13,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.17.1 - Use an environment variable in the path to GooGet's lock file.",
     "2.17.0 - Update lock functionality.",
     "2.16.7 - Add a status code check for HTTP responses.",
     "2.16.6 - Additional error logging in cleanOld.",
