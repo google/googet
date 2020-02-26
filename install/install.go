@@ -448,6 +448,7 @@ func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[str
 			return
 		}
 		logger.Error(err)
+		return
 	}
 	if !dbOnly {
 		cleanOldFiles(st, insFiles)
