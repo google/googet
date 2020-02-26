@@ -25,7 +25,6 @@ import (
 
 var (
 	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
-	lockFile         = rootDir + "\\googet.lock"
 	procLockFileEx   = kernel32.NewProc("LockFileEx")
 	procUnlockFileEx = kernel32.NewProc("UnlockFileEx")
 )
