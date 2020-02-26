@@ -30,8 +30,6 @@ var (
 )
 
 const (
-	lockFile = "C:/ProgramData/GooGet/googet.lock"
-
 	// https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-lockfileex
 	LOCKFILE_EXCLUSIVE_LOCK   = 2
 	LOCKFILE_FAIL_IMMEDIATELY = 1
