@@ -479,7 +479,7 @@ func main() {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
 
-	lockFile := filepath.Join(rootDir, "googet.lock")
+	lockFile = filepath.Join(rootDir, "googet.lock")
 	if err := obtainLock(lockFile); err != nil {
 		logger.Fatalf("Cannot obtain GooGet lock, error: %v", err)
 	}
