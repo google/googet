@@ -58,6 +58,7 @@ var (
 	archs          []string
 	proxyServer    string
 	allowUnsafeURL bool
+	lockFile string
 )
 
 type packageMap map[string]string
