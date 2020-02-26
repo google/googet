@@ -19,8 +19,6 @@ import (
 	"syscall"
 )
 
-const lockFile = "/run/lock/googet.lock"
-
 func lock(f *os.File) error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return err
