@@ -466,14 +466,15 @@ func main() {
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
 
+	if rootDir == "" && ggFlags.Args()[0] != "help" && ggFlags.Args()[0] != "commands" {
+		logger.Fatalf("The environment variable %q not defined and no '-root' flag passed.", envVar)
+	}
+
 	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
 	if ggFlags.NArg() == 0 || goolib.ContainsString(ggFlags.Args()[0], nonLockingCommands) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
-	if rootDir == "" {
-		logger.Fatalf("The environment variable %q not defined and no '-root' flag passed.", envVar)
-	}
 	if err := os.MkdirAll(rootDir, 0774); err != nil {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
