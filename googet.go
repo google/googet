@@ -58,6 +58,7 @@ var (
 	archs          []string
 	proxyServer    string
 	allowUnsafeURL bool
+	lockFile       string
 )
 
 type packageMap map[string]string
@@ -397,7 +398,7 @@ func runDeferredFuncs() {
 	}
 }
 
-func obtainLock() error {
+func obtainLock(lockFile string) error {
 	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
 	if err != nil && !os.IsExist(err) {
 		return err
@@ -479,7 +480,8 @@ func main() {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
 
-	if err := obtainLock(); err != nil {
+	lockFile = filepath.Join(rootDir, "googet.lock")
+	if err := obtainLock(lockFile); err != nil {
 		logger.Fatalf("Cannot obtain GooGet lock, error: %v", err)
 	}
 	readConf(filepath.Join(rootDir, confFile))

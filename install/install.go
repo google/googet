@@ -443,6 +443,10 @@ func resolveDst(dst string) string {
 func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[string]string, dbOnly bool) {
 	st, err := state.GetPackageState(pi)
 	if err != nil {
+		// TODO: Use error wrapping here https://blog.golang.org/go1.13-errors
+		if !strings.Contains(err.Error(), "no match found for package") {
+			logger.Error(err)
+		}
 		return
 	}
 	if !dbOnly {
@@ -454,7 +458,9 @@ func cleanOld(state *client.GooGetState, pi goolib.PackageInfo, insFiles map[str
 	if st.UnpackDir != "" && oswrap.RemoveAll(st.UnpackDir) != nil {
 		logger.Error(err)
 	}
-	state.Remove(pi)
+	if err := state.Remove(pi); err != nil {
+		logger.Error(err)
+	}
 	return
 }
 
