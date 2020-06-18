@@ -79,6 +79,7 @@ type PkgSpec struct {
 	License         string            `json:",omitempty"`
 	Authors         string            `json:",omitempty"`
 	Owners          string            `json:",omitempty"`
+	Source          string            `json:",omitempty"`
 	Tags            map[string][]byte `json:",omitempty"`
 	PkgDependencies map[string]string `json:",omitempty"`
 	Replaces        []string

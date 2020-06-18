@@ -283,6 +283,7 @@ func info(ps *goolib.PkgSpec, r string) {
 		{"Repo", path.Base(r)},
 		{"Authors", ps.Authors},
 		{"Owners", ps.Owners},
+		{"Source", ps.Source},
 		{"Description", ps.Description},
 		{"Dependencies", ""},
 		{"ReleaseNotes", ""},

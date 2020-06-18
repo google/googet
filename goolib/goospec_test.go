@@ -359,6 +359,7 @@ func TestMarshal(t *testing.T) {
 			ReleaseNotes: []string{"1.2.3@4 - something new", "1.2.3@4 - something"},
 			Description:  "blah blah",
 			Owners:       "someone",
+			Source:       "github",
 			Replaces:     []string{"foo"},
 			Conflicts:    []string{"bar"},
 			Install: ExecFile{
@@ -379,6 +380,7 @@ func TestMarshal(t *testing.T) {
     ],
     "Description": "blah blah",
     "Owners": "someone",
+    "Source": "github",
     "Replaces": [
       "foo"
     ],
