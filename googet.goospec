@@ -1,4 +1,4 @@
-{{$version := "2.17.1@1" -}}
+{{$version := "2.17.2@1" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -13,6 +13,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.17.2 - Add Source field in GooGet Spec"
     "2.17.1 - Use the root directory to reference GooGet's lock file.",
     "2.17.0 - Update lock functionality.",
     "2.16.7 - Add a status code check for HTTP responses.",
