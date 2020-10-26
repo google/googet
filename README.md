@@ -18,8 +18,8 @@ To build and package googet run
 go run goopack/goopack.go googet.goospec
 ```
 
-This will result in googet.exe and googet.x86_64.VERSION.goo which can be installed on a 
-machine with the `googet install` command (assuming googet is already 
+This will result in googet.exe and googet.x86_64.VERSION.goo which can be installed on a
+machine with the `googet install` command (assuming googet is already
 installed).
 
 To install on a fresh machine copy both googet.exe and the googet package
@@ -32,7 +32,9 @@ googet -root 'c:/ProgramData/GooGet' install googet googet.x86_64.VERSION.goo
 ## Conf file
 
 GooGet has the ability to use a conf file to change a few of the default settings.
-Place a file named googet.conf in the googet root.
+Place a file named googet.conf in the googet root, which by default is
+`C:\ProgramData\GooGet` and configurable by the `-root` flag.
+
 
 ```
 proxyserver: http://address_to_proxy:port
