@@ -176,7 +176,6 @@ func InstallableArchs() ([]string, error) {
 		// Check if this is indeed a 32bit system.
 		aw, err := width()
 		if err != nil {
-			logger.Errorf("Error getting AddressWidth: %v", err)
 			return []string{"noarch", "x86_32"}, nil
 		}
 		if int(aw) == 32 {
