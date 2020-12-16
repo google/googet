@@ -61,7 +61,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	var foundRepo repoFile
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
-			if strings.ToLower(re.Name) == strings.ToLower(name) {
+			if strings.EqualFold(re.Name, name) {
 				foundRepo = rf
 				break
 			}
@@ -75,7 +75,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	var res []repoEntry
 	for _, re := range foundRepo.repoEntries {
-		if strings.ToLower(re.Name) != strings.ToLower(name) {
+		if strings.EqualFold(re.Name, name) {
 			res = append(res, re)
 		}
 	}
