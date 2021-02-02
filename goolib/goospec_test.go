@@ -288,6 +288,64 @@ func TestUnmarshalGooSpec(t *testing.T) {
 	}
 }
 
+func TestNormalize(t *testing.T) {
+	var input *PkgSpec
+	if runtime.GOOS == "windows" {
+		input = &PkgSpec{
+			Name:         "pkg",
+			Version:      "1.2.3@4",
+			Arch:         "noarch",
+			ReleaseNotes: []string{},
+			Description:  "blah blah",
+			Owners:       "someone",
+			Install: ExecFile{
+				Path: "./a/..//b/../install.ps1",
+			},
+			Files: map[string]string{
+				"foo\\bar\\baz": "<foo>/bar/baz",
+				"foo/bar/baa": "<foo>/bar/baa",
+			},
+		}
+	} else {
+		input = &PkgSpec{
+			Name:         "pkg",
+			Version:      "1.2.3@4",
+			Arch:         "noarch",
+			ReleaseNotes: []string{},
+			Description:  "blah blah",
+			Owners:       "someone",
+			Install: ExecFile{
+				Path: "./a/..//b/../install.ps1",
+			},
+			Files: map[string]string{
+				"foo/bar/baz": "<foo>/bar/baz",
+				"foo/bar/baa": "<foo>/bar/baa",
+			},
+		}
+	}
+
+	want := &PkgSpec{
+		Name:         "pkg",
+		Version:      "1.2.3@4",
+		Arch:         "noarch",
+		ReleaseNotes: []string{},
+		Description:  "blah blah",
+		Owners:       "someone",
+		Install: ExecFile{
+			Path: "install.ps1",
+		},
+		Files: map[string]string{
+			"foo/bar/baz": "<foo>/bar/baz",
+			"foo/bar/baa": "<foo>/bar/baa",
+		},
+	}
+
+	input.normalize()
+	if !reflect.DeepEqual(input, want) {
+		t.Errorf("did not get expected normalized PkgSpec, got: \n%+v\nwant: \n%+v", input, want)
+	}
+}
+
 func TestNoPathTraversal(t *testing.T) {
 	c1 := []byte(`{
   "name": "pkg",

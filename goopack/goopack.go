@@ -294,6 +294,9 @@ func mapFiles(sources []goolib.PkgSources) (fileMap, error) {
 			// Ensure leading '/' is trimmed for directories.
 			dir = strings.TrimPrefix(dir, string(filepath.Separator))
 			tgt := filepath.Join(s.Target, dir)
+			if runtime.GOOS == "windows" {
+				tgt = strings.ReplaceAll(tgt, "\\", "/")
+			}
 			fm[tgt] = append(fm[tgt], f)
 		}
 	}

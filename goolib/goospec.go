@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -402,6 +403,15 @@ func (ps *PkgSpec) normalize() {
 			continue
 		}
 		*str = filepath.Clean("/" + *str)[1:]
+	}
+	if runtime.GOOS == "windows" {
+		for src := range ps.Files {
+			newSrc := strings.ReplaceAll(src, "\\", "/")
+			if newSrc != src {
+				ps.Files[newSrc] = ps.Files[src]
+				delete(ps.Files, src)
+			}
+		}
 	}
 }
 
