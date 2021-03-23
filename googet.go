@@ -79,8 +79,9 @@ type repoFile struct {
 }
 
 type repoEntry struct {
-	Name string
-	URL  string
+	Name     string
+	URL      string
+	UseOAuth bool
 }
 
 // UnmarshalYAML provides custom unmarshalling for repoEntry objects.
@@ -95,6 +96,8 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.Name = v
 		case "url":
 			r.URL = v
+		case "oauth":
+			r.UseOAuth = strings.ToLower(v) == "true"
 		}
 	}
 	if r.URL == "" {
@@ -170,7 +173,11 @@ func repoList(dir string) ([]string, error) {
 		for _, re := range rf.repoEntries {
 			switch {
 			case re.URL != "":
-				rl = append(rl, re.URL)
+				if re.UseOAuth {
+					rl = append(rl, "oauth-"+re.URL)
+				} else {
+					rl = append(rl, re.URL)
+				}
 			}
 		}
 	}
@@ -178,8 +185,9 @@ func repoList(dir string) ([]string, error) {
 	if !allowUnsafeURL {
 		var srl []string
 		for _, r := range rl {
-			isGCSURL, _, _ := goolib.SplitGCSUrl(r)
-			parsed, err := url.Parse(r)
+			rTrimmed := strings.TrimPrefix(r, "oauth-")
+			isGCSURL, _, _ := goolib.SplitGCSUrl(rTrimmed)
+			parsed, err := url.Parse(rTrimmed)
 			if err != nil {
 				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
 				continue

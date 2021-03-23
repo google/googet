@@ -53,12 +53,13 @@ func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error
 		return packageGCS(ctx, bucket, object, dst, chksum, "")
 	}
 
-	return packageHTTP(pkgURL, dst, chksum, proxyServer)
+	return packageHTTP(ctx, pkgURL, dst, chksum, proxyServer)
 }
 
 // Downloads a package from an HTTP(s) server
-func packageHTTP(pkgURL, dst, chksum string, proxyServer string) error {
-	resp, err := client.Get(pkgURL, proxyServer)
+func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string) error {
+	useOauth := strings.HasPrefix(pkgURL, "oauth-")
+	resp, err := client.Get(ctx, pkgURL, proxyServer, useOauth)
 	if err != nil {
 		return err
 	}

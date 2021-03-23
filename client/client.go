@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +35,8 @@ import (
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
 	"google.golang.org/api/googleapi"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // PackageState describes the state of a package on a client.
@@ -158,11 +160,13 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
 func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
-	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(p))))
+	pName := strings.TrimPrefix(p, "oauth-")
+
+	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
-		logger.Infof("Using cached repo content for %s.", p)
+		logger.Infof("Using cached repo content for %s.", pName)
 		f, err := oswrap.Open(cf)
 		if err != nil {
 			return nil, err
@@ -179,18 +183,27 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
+	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
 
-	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
 	if isGCSURL {
-		return unmarshalRepoPackagesGCS(ctx, bucket, object, p, cf, proxyServer)
+		return unmarshalRepoPackagesGCS(ctx, bucket, object, pName, cf, proxyServer)
 	}
-	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
+	return unmarshalRepoPackagesHTTP(ctx, p, cf, proxyServer)
 }
 
 // Get gets a url using an optional proxy server, retrying once on any error.
-func Get(path, proxyServer string) (*http.Response, error) {
-	httpClient := http.DefaultClient
+func Get(ctx context.Context, path, proxyServer string, useOauth bool) (*http.Response, error) {
+	var httpClient *http.Client
+	if useOauth {
+		creds, err := google.FindDefaultCredentials(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to obtain creds: %v", err)
+		}
+		httpClient = oauth2.NewClient(ctx, creds.TokenSource)
+	} else {
+		httpClient = http.DefaultClient
+	}
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -220,11 +233,12 @@ func Get(path, proxyServer string) (*http.Response, error) {
 	return httpClient.Get(path)
 }
 
-func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	indexURL := repoURL + "/index.gz"
 	ct := "application/x-gzip"
 	logger.Infof("Fetching %q", indexURL)
-	res, err := Get(indexURL, proxyServer)
+	useOauth := strings.HasPrefix(repoURL, "oauth-")
+	res, err := Get(ctx, indexURL, proxyServer, useOauth)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +248,7 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 		indexURL = repoURL + "/index"
 		ct = "application/json"
 		logger.Infof("Fetching %q", indexURL)
-		res, err = Get(indexURL, proxyServer)
+		res, err = Get(ctx, indexURL, proxyServer, useOauth)
 		if err != nil {
 			return nil, err
 		}
