@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,8 +37,6 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
 // PackageState describes the state of a package on a client.
