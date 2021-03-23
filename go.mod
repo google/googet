@@ -15,6 +15,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.4
 	golang.org/x/mod v0.3.1-0.20200828183125-ce943fd02449 // indirect
 	golang.org/x/net v0.0.0-20201029221708-28c70e62bb1d // indirect
+	golang.org/x/oauth2 v0.0.0-20200902213428-5d25da1a8d43 // indirect
 	golang.org/x/sys v0.0.0-20201029080932-201ba4db2418
 	golang.org/x/text v0.3.4 // indirect
 	golang.org/x/tools v0.0.0-20201030204249-4fc0492b8eca // indirect
