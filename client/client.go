@@ -113,7 +113,7 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 
 	var dec *json.Decoder
 	switch ct {
-	case "application/x-gzip":
+	case "application/gzip":
 		gr, err := gzip.NewReader(index)
 		if err != nil {
 			return nil, err
@@ -222,7 +222,7 @@ func Get(path, proxyServer string) (*http.Response, error) {
 
 func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	indexURL := repoURL + "/index.gz"
-	ct := "application/x-gzip"
+	ct := "application/gzip"
 	logger.Infof("Fetching %q", indexURL)
 	res, err := Get(indexURL, proxyServer)
 	if err != nil {
@@ -267,7 +267,7 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf strin
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
 	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
-		return decode(r, "application/x-gzip", url, cf)
+		return decode(r, "application/gzip", url, cf)
 	}
 
 	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
