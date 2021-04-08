@@ -13,6 +13,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.18.0 - Add support for passing Oauth credentials with GooGet requests.",
     "2.17.5 - Use strings.EqualFold for string comparison",
     "2.17.4 - Removing x86 detection error message",
     "2.17.3 - Retry once on any Get failure",
