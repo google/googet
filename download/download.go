@@ -58,8 +58,7 @@ func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error
 
 // Downloads a package from an HTTP(s) server
 func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string) error {
-	useOauth := strings.HasPrefix(pkgURL, "oauth-")
-	resp, err := client.Get(ctx, pkgURL, proxyServer, useOauth)
+	resp, err := client.Get(ctx, pkgURL, proxyServer)
 	if err != nil {
 		return err
 	}

@@ -193,14 +193,15 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 }
 
 // Get gets a url using an optional proxy server, retrying once on any error.
-func Get(ctx context.Context, path, proxyServer string, useOauth bool) (*http.Response, error) {
+func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) {
 	var httpClient *http.Client
-	if useOauth {
+	if strings.HasPrefix(path, "oauth-") {
 		creds, err := google.FindDefaultCredentials(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to obtain creds: %v", err)
 		}
 		httpClient = oauth2.NewClient(ctx, creds.TokenSource)
+		path = strings.TrimPrefix(path, "oauth-")
 	} else {
 		httpClient = http.DefaultClient
 	}
@@ -237,8 +238,7 @@ func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, p
 	indexURL := repoURL + "/index.gz"
 	ct := "application/x-gzip"
 	logger.Infof("Fetching %q", indexURL)
-	useOauth := strings.HasPrefix(repoURL, "oauth-")
-	res, err := Get(ctx, indexURL, proxyServer, useOauth)
+	res, err := Get(ctx, indexURL, proxyServer)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, p
 		indexURL = repoURL + "/index"
 		ct = "application/json"
 		logger.Infof("Fetching %q", indexURL)
-		res, err = Get(ctx, indexURL, proxyServer, useOauth)
+		res, err = Get(ctx, indexURL, proxyServer)
 		if err != nil {
 			return nil, err
 		}
