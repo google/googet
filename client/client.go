@@ -194,16 +194,14 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 
 // Get gets a url using an optional proxy server, retrying once on any error.
 func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) {
-	var httpClient *http.Client
+	httpClient := http.DefaultClient
 	if strings.HasPrefix(path, "oauth-") {
 		creds, err := google.FindDefaultCredentials(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to obtain creds: %v", err)
+			return nil, fmt.Errorf("failed to obtain creds: %v", err)
 		}
 		httpClient = oauth2.NewClient(ctx, creds.TokenSource)
 		path = strings.TrimPrefix(path, "oauth-")
-	} else {
-		httpClient = http.DefaultClient
 	}
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
