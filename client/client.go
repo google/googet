@@ -34,7 +34,6 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 )
@@ -195,14 +194,6 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 // Get gets a url using an optional proxy server, retrying once on any error.
 func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) {
 	httpClient := http.DefaultClient
-	if strings.HasPrefix(path, "oauth-") {
-		creds, err := google.FindDefaultCredentials(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain creds: %v", err)
-		}
-		httpClient = oauth2.NewClient(ctx, creds.TokenSource)
-		path = strings.TrimPrefix(path, "oauth-")
-	}
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -223,19 +214,37 @@ func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) 
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	resp, err := httpClient.Get(path)
+	useOauth := strings.HasPrefix(path, "oauth-")
+	path = strings.TrimPrefix(path, "oauth-")
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if useOauth {
+		creds, err := google.FindDefaultCredentials(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain creds: %v", err)
+		}
+		token, err := creds.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain access token: %v", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+	}
+	resp, err := httpClient.Do(req)
 	// We retry on any error once as this mitigates some
 	// connection issues in certain situations.
 	if err == nil {
 		return resp, nil
 	}
-	return httpClient.Get(path)
+	return httpClient.Do(req)
 }
 
 func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	indexURL := repoURL + "/index.gz"
+	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
 	ct := "application/x-gzip"
-	logger.Infof("Fetching %q", indexURL)
+	logger.Infof("Fetching %q", trimmedIndexURL)
 	res, err := Get(ctx, indexURL, proxyServer)
 	if err != nil {
 		return nil, err
@@ -245,7 +254,7 @@ func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, p
 		//logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
 		indexURL = repoURL + "/index"
 		ct = "application/json"
-		logger.Infof("Fetching %q", indexURL)
+		logger.Infof("Fetching %q", trimmedIndexURL)
 		res, err = Get(ctx, indexURL, proxyServer)
 		if err != nil {
 			return nil, err

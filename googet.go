@@ -96,7 +96,7 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.Name = v
 		case "url":
 			r.URL = v
-		case "oauth":
+		case "useoauth":
 			r.UseOAuth = strings.ToLower(v) == "true"
 		}
 	}
