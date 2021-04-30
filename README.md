@@ -51,7 +51,7 @@ requests to the source URL.
 
 ```
 URL: https://foo.com/googet/bar
-  oauth: true
+  useoauth: true
 ```
 
 ## Google Cloud Storage as a back-end
