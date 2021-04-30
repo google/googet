@@ -1,4 +1,4 @@
-{{$version := "2.18.0@0" -}}
+{{$version := "2.18.1@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -7,7 +7,9 @@
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
   "description": "GooGet Package Manager",
   "files": {
-    "googet.exe": "<ProgramData>/GooGet/googet.exe"
+    "googet.exe": "<ProgramData>/GooGet/googet.exe",
+    "THIRD_PARTY_LICENSES": "<ProgramData>/GooGet/THIRD_PARTY_LICENSES/",
+    "LICENSE": "<ProgramData>/GooGet/LICENSE.txt"
   },
   "install": {
     "path": "install.ps1"
@@ -64,7 +66,9 @@
   "sources": [{
       "include": [
         "googet.exe",
-        "install.ps1"
+        "install.ps1",
+        "THIRD_PARTY_LICENSES/**",
+        "LICENSE"
       ]
   }],
   "build": {
