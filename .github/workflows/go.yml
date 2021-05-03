@@ -25,12 +25,12 @@ jobs:
 
     - name: Format
       run: |
-      out=$(gofmt -d $(go list -f {{.Dir}} ./...))
-      if [[ -n $out ]]; then
-        echo "Go code is not formatted:"
-        gofmt -d $(go list -f {{.Dir}} ./...)
-        exit 1
-      fi
+        out=$(gofmt -d $(go list -f {{.Dir}} ./...))
+        if [[ -n $out ]]; then
+          echo "Go code is not formatted:"
+          gofmt -d $(go list -f {{.Dir}} ./...)
+          exit 1
+        fi
 
     - name: Vet
       run: go vet ./...
