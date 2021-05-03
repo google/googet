@@ -1,4 +1,4 @@
-{{$version := "2.17.5@1" -}}
+{{$version := "2.18.2@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -7,12 +7,16 @@
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
   "description": "GooGet Package Manager",
   "files": {
-    "googet.exe": "<ProgramData>/GooGet/googet.exe"
+    "googet.exe": "<ProgramData>/GooGet/googet.exe",
+    "THIRD_PARTY_LICENSES": "<ProgramData>/GooGet/THIRD_PARTY_LICENSES/",
+    "LICENSE": "<ProgramData>/GooGet/LICENSE.txt"
   },
   "install": {
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.18.2 - Rename Oauth credential configuration and manually set Authorization header in requests.",
+    "2.18.0 - Add support for passing Oauth credentials with GooGet requests.",
     "2.17.5 - Use strings.EqualFold for string comparison",
     "2.17.4 - Removing x86 detection error message",
     "2.17.3 - Retry once on any Get failure",
@@ -63,7 +67,9 @@
   "sources": [{
       "include": [
         "googet.exe",
-        "install.ps1"
+        "install.ps1",
+        "THIRD_PARTY_LICENSES/**",
+        "LICENSE"
       ]
   }],
   "build": {

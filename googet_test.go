@@ -58,6 +58,10 @@ func TestRepoList(t *testing.T) {
 		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), []string{testRepo, testHTTPRepo}, true},
 		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), []string{testRepo, testRepo}, false},
 		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}, false},
+		// Should contain oauth- prefix
+		{[]byte("- url: " + testRepo + "\n  useoauth: true"), []string{"oauth-" + testRepo}, false},
+		// Should not contain oauth- prefix
+		{[]byte("- url: " + testRepo + "\n  useoauth: false"), []string{testRepo}, false},
 	}
 
 	for i, tt := range repoTests {

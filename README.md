@@ -42,6 +42,18 @@ archs: [noarch, x86_64]
 cachelife: 10m
 ```
 
+## Repo file
+
+GooGet has the ability to use a repo file to change some repo specific settings.
+The file is named your-repo-name.repo by default. It can be used to set the
+source URL and indicate that the client should pass authorization headers in 
+requests to the source URL.
+
+```
+URL: https://foo.com/googet/bar
+  useoauth: true
+```
+
 ## Google Cloud Storage as a back-end
 
 Googet supports using Google Cloud Storage as its server.

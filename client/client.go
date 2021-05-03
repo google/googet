@@ -34,6 +34,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 )
 
@@ -158,11 +159,13 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 // if mtime is less than cacheLife.
 // Sucessfully unmarshalled contents will be written to a cache.
 func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
-	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(p))))
+	pName := strings.TrimPrefix(p, "oauth-")
+
+	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
-		logger.Infof("Using cached repo content for %s.", p)
+		logger.Infof("Using cached repo content for %s.", pName)
 		f, err := oswrap.Open(cf)
 		if err != nil {
 			return nil, err
@@ -179,17 +182,17 @@ func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife ti
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", p, cacheLife)
+	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
 
-	isGCSURL, bucket, object := goolib.SplitGCSUrl(p)
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
 	if isGCSURL {
-		return unmarshalRepoPackagesGCS(ctx, bucket, object, p, cf, proxyServer)
+		return unmarshalRepoPackagesGCS(ctx, bucket, object, pName, cf, proxyServer)
 	}
-	return unmarshalRepoPackagesHTTP(p, cf, proxyServer)
+	return unmarshalRepoPackagesHTTP(ctx, p, cf, proxyServer)
 }
 
 // Get gets a url using an optional proxy server, retrying once on any error.
-func Get(path, proxyServer string) (*http.Response, error) {
+func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) {
 	httpClient := http.DefaultClient
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
@@ -211,20 +214,38 @@ func Get(path, proxyServer string) (*http.Response, error) {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	resp, err := httpClient.Get(path)
+	useOauth := strings.HasPrefix(path, "oauth-")
+	path = strings.TrimPrefix(path, "oauth-")
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if useOauth {
+		creds, err := google.FindDefaultCredentials(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain creds: %v", err)
+		}
+		token, err := creds.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain access token: %v", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+	}
+	resp, err := httpClient.Do(req)
 	// We retry on any error once as this mitigates some
 	// connection issues in certain situations.
 	if err == nil {
 		return resp, nil
 	}
-	return httpClient.Get(path)
+	return httpClient.Do(req)
 }
 
-func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
+func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
 	indexURL := repoURL + "/index.gz"
-	ct := "application/gzip"
-	logger.Infof("Fetching %q", indexURL)
-	res, err := Get(indexURL, proxyServer)
+	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
+	ct := "application/x-gzip"
+	logger.Infof("Fetching %q", trimmedIndexURL)
+	res, err := Get(ctx, indexURL, proxyServer)
 	if err != nil {
 		return nil, err
 	}
@@ -233,8 +254,8 @@ func unmarshalRepoPackagesHTTP(repoURL string, cf string, proxyServer string) ([
 		//logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
 		indexURL = repoURL + "/index"
 		ct = "application/json"
-		logger.Infof("Fetching %q", indexURL)
-		res, err = Get(indexURL, proxyServer)
+		logger.Infof("Fetching %q", trimmedIndexURL)
+		res, err = Get(ctx, indexURL, proxyServer)
 		if err != nil {
 			return nil, err
 		}
