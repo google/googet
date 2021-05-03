@@ -20,22 +20,22 @@ jobs:
       with:
         go-version: 1.15
 
-    - name: Build
-      run: go build -v ./...
-
-    - name: Test
-      run: go test -v -race $(go list ./... | grep -v /vendor/)
-
     - name: Format
       run: |
-        if [ -n "$(gofmt -l $(go list -f {{.Dir}} ./...| grep -v /vendor/))" ]; then
+        if [ -n "$(gofmt -l $(go list -f {{.Dir}} ./...)" ]; then
           echo "Go code is not formatted:"
-          gofmt -d $(go list -f {{.Dir}} ./...| grep -v /vendor/)
+          gofmt -d $(go list -f {{.Dir}} ./...)
           exit 1
         fi
 
     - name: Vet
-      run: go vet $(go list ./... | grep -v /vendor/)
+      run: go vet ./...
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      run: go test -v -race ./...
 
   windows:
     runs-on: windows-latest
@@ -47,11 +47,11 @@ jobs:
       with:
         go-version: 1.15
 
+    - name: Vet
+      run: go vet ./...
+
     - name: Build
       run: go build -v ./...
 
     - name: Test
-      run: go test -v -race $(go list ./... | grep -v /vendor/)
-
-    - name: Vet
-      run: go vet $(go list ./... | grep -v /vendor/)
+      run: go test -v ./...
