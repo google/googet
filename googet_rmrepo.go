@@ -32,7 +32,7 @@ func (*rmRepoCmd) Name() string     { return "rmrepo" }
 func (*rmRepoCmd) Synopsis() string { return "remove repository" }
 func (*rmRepoCmd) Usage() string {
 	return fmt.Sprintf(`%s rmrepo <name>:
-	Removes the named repository from GooGet's repository list. 
+	Removes the named repository from GooGet's repository list.
 `, filepath.Base(os.Args[0]))
 }
 
@@ -75,7 +75,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 
 	var res []repoEntry
 	for _, re := range foundRepo.repoEntries {
-		if strings.EqualFold(re.Name, name) {
+		if !strings.EqualFold(re.Name, name) {
 			res = append(res, re)
 		}
 	}
