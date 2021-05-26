@@ -126,36 +126,14 @@ func TestCreatePackage(t *testing.T) {
 			Arch:         "noarch",
 			ReleaseNotes: []string{"0.0.0@1 - initial release"},
 			Description:  "some test package",
-			Author:       "some author",
 			Owners:       "some owner",
 			Install: ExecFile{
 				Path: "someinstallfile.ps1",
 			},
-		}
+		},
 	}
-	/*gs := GooSpec{}
-	gs.Build.Windows = ("\"c:/Windows/System32/somecmd.exe\"")
-	gs.Build.WindowsArgs = []string{"\"/c\"]", "\"go build -ldflags=-X=main.version={{\"0.0.0\"}} -o some.exe\""}
-	gs.Build.Linux = ("\"/bin/bash\"")
-	gs.Build.LinuxArgs = []string{"\"-c\"","\"GOOS=windows go build -ldflags='-X main.version={{\"0.0.0\"}}'\""}
 
-	gs.Sources.
-		//[]PkgSources
-	gs.PackageSpec.Name = "somepkg"
-	gs.PackageSpec.Version = "0.0.0"
-	gs.PackageSpec.Arch = "x86_64"
-	gs.PackageSpec.ReleaseNotes = []string{"0.0.0", "initial realease"}
-	gs.PackageSpec.Description = "some test package"
-	gs.PackageSpec.License = "NA"
-	gs.PackageSpec.Authors = "njaiswal"
-	gs.PackageSpec.Owners = "njaiswal"*/
-
-	//("{\n\"windows\":  \"c:/Windows/System32/cmd.exe\",\n\"windowsArgs\":[\"/c\"], \"go build -ldflags=-X=main.version={{\"0.0.0\"}} -o googet.exe\"],
-//\n\"linux\": \"/bin/bash\", \n\"linuxArgs\": [\"-c\",\"GOOS=windows go build -ldflags='-X main.version={{\"0.0.0\"}}'\"]\n}") }
-	//gs.Sources =  ("[{\n\"include\": [\n\"somefile1.file\",\n\"somefile2.file\n\"]}\n]")
-	//gs.PackageSpec = ("{{\"$version := \"0.0.0\" -}}\n{\"name\":\"googet\",\n}\"version\":{{$version}}\",\n\"arch\": \"x86_64\",\n\"authors\":\"nanditajaiswal@google.com\",\n\"license\": \"N/A\",\n\"description\": \"Test Package Manager\",\n\"releaseNotes\": [\"2.17.2 - Add Source field in GooGet Spec\",],\n\"sources\": [{\"include\"[\"somefile1.file\",\"somefile2.file\"]}],")
-
-	if _, err := CreatePackage(&gs, tempDir, outDir); err != nil {
+	if _, err := CreatePackage(gs, tempDir, outDir); err != nil {
 		t.Fatal("error creating package", err)
 	}
 }
