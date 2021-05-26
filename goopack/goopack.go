@@ -21,8 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"google3/third_party/golang/googet/goolib/goolib"
 )
 
 var (
