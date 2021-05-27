@@ -25,7 +25,6 @@ import (
 	"runtime"
 	"strings"
 
-	"google3/third_party/golang/googet/oswrap/oswrap"
 )
 
 type fileMap map[string][]string
