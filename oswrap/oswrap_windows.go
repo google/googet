@@ -200,6 +200,15 @@ func Stat(name string) (os.FileInfo, error) {
 	return os.Stat(name)
 }
 
+// ReadDir calls os.ReadDir with name normalized
+func ReadDir(root string) ([]os.DirEntry, error) {
+	path, err := normPath(root)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadDir(path)
+}
+
 // Walk calls filepath.Walk with name normalized, and un-normalizes name before
 // calling walkFn
 func Walk(root string, walkFn filepath.WalkFunc) error {
