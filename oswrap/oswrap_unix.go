@@ -75,6 +75,11 @@ func Stat(name string) (os.FileInfo, error) {
 	return os.Stat(name)
 }
 
+// ReadDir calls os.ReadDir
+func ReadDir(root string) ([]os.DirEntry, error) {
+	return os.ReadDir(root)
+}
+
 // Walk calls filepath.Walk
 func Walk(root string, walkFn filepath.WalkFunc) error {
 	return filepath.Walk(root, walkFn)
