@@ -18,7 +18,6 @@ package oswrap
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -204,7 +203,7 @@ func Stat(name string) (os.FileInfo, error) {
 
 // ReadDir calls ioutil.ReadDir with name normalized
 // Upgrade to os.ReadDir in future. https://golang.org/pkg/io/ioutil/#ReadDir
-func ReadDir(root string) ([]fs.FileInfo, error) {
+func ReadDir(root string) ([]os.FileInfo, error) {
 	path, err := normPath(root)
 	if err != nil {
 		return nil, err
