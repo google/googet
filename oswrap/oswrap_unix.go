@@ -16,6 +16,8 @@ limitations under the License.
 package oswrap
 
 import (
+	"io/fs"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 )
@@ -75,9 +77,10 @@ func Stat(name string) (os.FileInfo, error) {
 	return os.Stat(name)
 }
 
-// ReadDir calls os.ReadDir
-func ReadDir(root string) ([]os.DirEntry, error) {
-	return os.ReadDir(root)
+// ReadDir calls ioutil.ReadDir
+// Upgrade to os.ReadDir in future. https://golang.org/pkg/io/ioutil/#ReadDir
+func ReadDir(root string) ([]fs.FileInfo, error) {
+	return ioutil.ReadDir(root)
 }
 
 // Walk calls filepath.Walk
