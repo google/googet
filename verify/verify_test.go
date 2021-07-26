@@ -50,6 +50,7 @@ func TestFiles(t *testing.T) {
 		{"no files found", client.PackageState{InstalledFiles: map[string]string{"foo": "bar"}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, false},
 		{"file checksum does not match", client.PackageState{InstalledFiles: map[string]string{testFile: "bar"}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, false},
 		{"file checksum matches", client.PackageState{InstalledFiles: map[string]string{testFile: chksm}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, true},
+		{"should skip folder", client.PackageState{InstalledFiles: map[string]string{tempDir: "",testFile: chksm}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, true},
 	}
 	for _, tt := range table {
 		verify, err := Files(tt.ps)
