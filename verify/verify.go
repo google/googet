@@ -91,8 +91,7 @@ func Files(ps client.PackageState) (bool, error) {
 		}
 		fstat, err := os.Stat(file)
 		if err != nil {
-			logger.Errorf("%q: Error accessing file info for %q: %w", pkg, file, err)
-			return false, nil
+			return false, err
 		}
 		// Only calculate/ check the checksum for file, not folder.
 		if fstat.IsDir() {
