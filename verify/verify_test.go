@@ -22,7 +22,14 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/logger"
 )
+
+func TestMain(m *testing.M) {
+	// Initialize the logger.
+	logger.Init("test", false, false, ioutil.Discard)
+	os.Exit(m.Run())
+}
 
 func TestFiles(t *testing.T) {
 	tempDir, err := ioutil.TempDir("", "")
@@ -50,7 +57,7 @@ func TestFiles(t *testing.T) {
 		{"no files found", client.PackageState{InstalledFiles: map[string]string{"foo": "bar"}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, false},
 		{"file checksum does not match", client.PackageState{InstalledFiles: map[string]string{testFile: "bar"}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, false},
 		{"file checksum matches", client.PackageState{InstalledFiles: map[string]string{testFile: chksm}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, true},
-		{"should skip folder", client.PackageState{InstalledFiles: map[string]string{tempDir: "",testFile: chksm}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, true},
+		{"should skip folder", client.PackageState{InstalledFiles: map[string]string{tempDir: "", testFile: chksm}, PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"}}, true},
 	}
 	for _, tt := range table {
 		verify, err := Files(tt.ps)
