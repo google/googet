@@ -303,7 +303,7 @@ func TestNormalize(t *testing.T) {
 			},
 			Files: map[string]string{
 				"foo\\bar\\baz": "<foo>/bar/baz",
-				"foo/bar/baa": "<foo>/bar/baa",
+				"foo/bar/baa":   "<foo>/bar/baa",
 			},
 		}
 	} else {
