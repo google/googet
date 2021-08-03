@@ -128,7 +128,7 @@ func TestMapFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error getting file map: %v", err)
 	}
-	em := fileMap{"foo": []string{wf1}, strings.Join([]string{"foo", "globdir"}, string(filepath.Separator)): []string{wf2}}
+	em := fileMap{"foo": []string{wf1}, strings.Join([]string{"foo", "globdir"}, "/"): []string{wf2}}
 	if !reflect.DeepEqual(fm, em) {
 		t.Errorf("did not get expected package map: got %v, want %v", fm, em)
 	}
