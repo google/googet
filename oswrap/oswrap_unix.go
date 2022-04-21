@@ -1,4 +1,5 @@
-//+build linux darwin
+//go:build linux || darwin
+// +build linux darwin
 
 /*
 Copyright 2016 Google Inc. All Rights Reserved.
