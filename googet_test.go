@@ -221,6 +221,76 @@ func TestWriteReadState(t *testing.T) {
 	}
 }
 
+func TestReadStateRecovery(t *testing.T) {
+	original := &client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test.org"}},
+	}
+
+	overwrite := &client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test.new"}},
+	}
+
+	tempDir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatalf("error creating temp directory: %v", err)
+	}
+	defer oswrap.RemoveAll(tempDir)
+
+	const (
+		deleteState int = iota
+		corruptState
+	)
+
+	table := []struct {
+		name       string
+		disruption int
+	}{
+		{"test-deleted.state", deleteState},
+		{"test-corrupted.state", corruptState},
+	}
+
+	for _, tt := range table {
+		sf := filepath.Join(tempDir, tt.name)
+
+		if err := writeState(original, sf); err != nil {
+			t.Errorf("error running writeState: %v", err)
+		}
+
+		if err := writeState(overwrite, sf); err != nil {
+			t.Errorf("error running writeState second time: %v", err)
+		}
+
+		got, err := readState(sf)
+		if err != nil {
+			t.Errorf("error running readState: %v", err)
+		}
+
+		if !reflect.DeepEqual(got, overwrite) {
+			t.Errorf("did not get expected state after overwrite, got: %+v, want %+v", got, overwrite)
+		}
+
+		switch tt.disruption {
+		case deleteState:
+			if err := oswrap.Remove(sf); err != nil {
+				t.Errorf("error deleting state: %v", err)
+			}
+		case corruptState:
+			if err := ioutil.WriteFile(sf, []byte{0, 0, 0, 0}, 0664); err != nil {
+				t.Errorf("error corrupting state: %v", err)
+			}
+		}
+
+		got, err = readState(sf)
+		if err != nil {
+			t.Errorf("error running readState after corruption of active state: %v", err)
+		}
+
+		if !reflect.DeepEqual(got, original) {
+			t.Errorf("did not get expected state after corruption, got: %+v, want %+v", got, original)
+		}
+	}
+}
+
 func TestCleanOld(t *testing.T) {
 	var err error
 	rootDir, err = ioutil.TempDir("", "")
