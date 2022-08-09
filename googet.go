@@ -500,7 +500,7 @@ func main() {
 
 	lockFile = filepath.Join(rootDir, "googet.lock")
 	if err := obtainLock(lockFile); err != nil {
-		logger.Fatalf("Cannot obtain GooGet lock, error: %v", err)
+		logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin right, error: %v", err)
 	}
 	readConf(filepath.Join(rootDir, confFile))
 
