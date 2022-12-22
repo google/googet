@@ -1,7 +1,6 @@
-{{$version := "2.18.7@0" -}}
 {
   "name": "googet",
-  "version": "{{$version}}",
+  "version": "{{.version}}@0",
   "arch": "x86_64",
   "authors": "ajackura@google.com",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
@@ -78,6 +77,6 @@
     "windows":  "c:/Windows/System32/cmd.exe",
     "windowsArgs": ["/c", "go build -ldflags=-X=main.version={{$version}} -o googet.exe"],
     "linux": "/bin/bash",
-    "linuxArgs": ["-c", "GOOS=windows go build -ldflags='-X main.version={{$version}}'"]
+    "linuxArgs": ["-c", "GOOS=windows /tmp/go/bin/go build -ldflags='-X main.version={{.version}}' -o googet.exe"]
   }
 }
