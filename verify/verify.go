@@ -110,7 +110,7 @@ func Files(ps client.PackageState) (bool, error) {
 // Command runs a packages verify command.
 // Will only return true if the verify command exits with 0 or an approved
 // return code.
-func Command(ctx context.Context, ps client.PackageState, proxyServer string) (bool, error) {
+func Command(ctx context.Context, ps client.PackageState, proxyServer string, insecure bool) (bool, error) {
 	if ps.PackageSpec.Verify.Path == "" {
 		return true, nil
 	}
@@ -170,7 +170,7 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 	}
 
 	if rd {
-		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer, insecure); err != nil {
 			return false, fmt.Errorf("error redownloading package: %v", err)
 		}
 	}

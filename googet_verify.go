@@ -80,7 +80,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			continue
 		}
 
-		v, err := verify.Command(ctx, ps, proxyServer)
+		v, err := verify.Command(ctx, ps, proxyServer, insecure)
 		if err != nil {
 			logger.Errorf("Error running verify command for %s: %v", pkg, err)
 			exitCode = subcommands.ExitFailure
@@ -99,7 +99,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
 			logger.Info(msg)
 			fmt.Println(msg)
-			if err := install.Reinstall(ctx, ps, *state, false, proxyServer); err != nil {
+			if err := install.Reinstall(ctx, ps, *state, false, proxyServer, insecure); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {

@@ -37,6 +37,7 @@ import (
 const (
 	cacheLife   = 1 * time.Minute
 	proxyServer = ""
+	insecure    = false
 )
 
 func init() {
@@ -203,7 +204,7 @@ func TestUnmarshalRepoPackagesJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer, insecure)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestUnmarshalRepoPackagesGzip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer, insecure)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -286,7 +287,7 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 
 	// No http server as this should use the cached content.
-	got, err := unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife, proxyServer)
+	got, err := unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife, proxyServer, insecure)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}

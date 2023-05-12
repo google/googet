@@ -116,7 +116,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 			if repos == nil {
 				logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 			}
-			rm = client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+			rm = client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer, insecure)
 		}
 		if pi.Ver == "" {
 			v, _, a, err := client.FindRepoLatest(pi, rm, archs)
@@ -161,7 +161,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 				continue
 			}
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer, insecure); err != nil {
 			logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -184,7 +184,7 @@ func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetSt
 			return nil
 		}
 	}
-	if err := install.Reinstall(ctx, ps, state, rd, proxyServer); err != nil {
+	if err := install.Reinstall(ctx, ps, state, rd, proxyServer, insecure); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil

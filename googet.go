@@ -59,6 +59,7 @@ var (
 	proxyServer    string
 	allowUnsafeURL bool
 	lockFile       string
+	insecure       bool
 )
 
 type packageMap map[string]string
@@ -454,6 +455,7 @@ func main() {
 	ggFlags.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
 	ggFlags.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
 	ggFlags.BoolVar(&verbose, "verbose", false, "print info level logs to stdout")
+	ggFlags.BoolVar(&insecure, "insecure", false, "skip TLS verification")
 	ggFlags.BoolVar(&systemLog, "system_log", true, "log to Linux Syslog or Windows Event Log")
 	ggFlags.BoolVar(&showVer, "version", false, "display GooGet version and exit")
 

@@ -74,7 +74,7 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 	}
 
 	m := make(map[string][]string)
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer, insecure)
 	for r, pl := range rm {
 		for _, p := range pl {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)

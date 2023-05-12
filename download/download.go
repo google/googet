@@ -43,7 +43,7 @@ const (
 
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error {
+func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string, insecure bool) error {
 	if err := oswrap.RemoveAll(dst); err != nil {
 		return err
 	}
@@ -53,12 +53,12 @@ func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error
 		return packageGCS(ctx, bucket, object, dst, chksum, "")
 	}
 
-	return packageHTTP(ctx, pkgURL, dst, chksum, proxyServer)
+	return packageHTTP(ctx, pkgURL, dst, chksum, proxyServer, insecure)
 }
 
 // Downloads a package from an HTTP(s) server
-func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string) error {
-	resp, err := client.Get(ctx, pkgURL, proxyServer)
+func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string, insecure bool) error {
+	resp, err := client.Get(ctx, pkgURL, proxyServer, insecure)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, 
 }
 
 // FromRepo downloads a package from a repo.
-func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxyServer string) (string, error) {
+func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxyServer string, insecure bool) (string, error) {
 	repoURL, err := url.Parse(repo)
 	if err != nil {
 		return "", err
@@ -114,11 +114,11 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxySe
 
 	pn := goolib.PackageInfo{Name: rs.PackageSpec.Name, Arch: rs.PackageSpec.Arch, Ver: rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
-	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, proxyServer)
+	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, proxyServer, insecure)
 }
 
 // Latest downloads the latest available version of a package.
-func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, proxyServer string) (string, error) {
+func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, proxyServer string, insecure bool) (string, error) {
 	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
 		return "", err
@@ -127,7 +127,7 @@ func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []st
 	if err != nil {
 		return "", err
 	}
-	return FromRepo(ctx, rs, repo, dir, proxyServer)
+	return FromRepo(ctx, rs, repo, dir, proxyServer, insecure)
 }
 
 func download(r io.Reader, dst, chksum string) (err error) {

@@ -83,7 +83,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			}
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, proxyServer); err != nil {
+		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, proxyServer, insecure); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue

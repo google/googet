@@ -67,7 +67,7 @@ func resolveConflicts(ps *goolib.PkgSpec, state *client.GooGetState) error {
 	return nil
 }
 
-func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, state *client.GooGetState, dbOnly bool, proxyServer string, insecure bool) error {
 	// Check for and remove any package this replaces.
 	// TODO(ajackura): Make sure no replacements are listed as
 	// dependencies or subdependancies.
@@ -82,14 +82,14 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, state *client.
 		}
 		deps, _ := remove.EnumerateDeps(pi, *state)
 		logger.Infof("%s replaces %s, removing", ps, pi)
-		if err := remove.All(ctx, pi, deps, state, dbOnly, proxyServer); err != nil {
+		if err := remove.All(ctx, pi, deps, state, dbOnly, proxyServer, insecure); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string, insecure bool) error {
 	logger.Infof("Resolving conflicts and dependencies for %s %s version %s", ps.Arch, ps.Name, ps.Version)
 	if err := resolveConflicts(ps, state); err != nil {
 		return err
@@ -116,7 +116,7 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 		}
 		if c > -1 {
 			logger.Infof("Dependency found: %s.%s %s is available", pi.Name, arch, v)
-			if err := FromRepo(ctx, goolib.PackageInfo{Name: pi.Name, Arch: arch, Ver: v}, repo, cache, rm, archs, state, dbOnly, proxyServer); err != nil {
+			if err := FromRepo(ctx, goolib.PackageInfo{Name: pi.Name, Arch: arch, Ver: v}, repo, cache, rm, archs, state, dbOnly, proxyServer, insecure); err != nil {
 				return err
 			}
 			ins = true
@@ -125,11 +125,11 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 			return fmt.Errorf("cannot resolve dependancy, %s.%s version %s or greater not installed and not available in any repo", pi.Name, arch, ver)
 		}
 	}
-	return resolveReplacements(ctx, ps, state, dbOnly, proxyServer)
+	return resolveReplacements(ctx, ps, state, dbOnly, proxyServer, insecure)
 }
 
 // FromRepo installs a package and all dependencies from a repository.
-func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string, insecure bool) error {
 	ni, err := NeedsInstallation(pi, *state)
 	if err != nil {
 		return err
@@ -144,11 +144,11 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	if err != nil {
 		return err
 	}
-	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, state, dbOnly, proxyServer); err != nil {
+	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, state, dbOnly, proxyServer, insecure); err != nil {
 		return err
 	}
 
-	dst, err := download.FromRepo(ctx, rs, repo, cache, proxyServer)
+	dst, err := download.FromRepo(ctx, rs, repo, cache, proxyServer, insecure)
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) err
 }
 
 // Reinstall reinstalls and optionally redownloads, a package.
-func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetState, rd bool, proxyServer string) error {
+func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetState, rd bool, proxyServer string, insecure bool) error {
 	pi := goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch, Ver: ps.PackageSpec.Version}
 	logger.Infof("Starting reinstall of %s.%s, version %s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
@@ -292,7 +292,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 		if ps.DownloadURL == "" {
 			return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
 		}
-		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer, insecure); err != nil {
 			return fmt.Errorf("error redownloading package: %v", err)
 		}
 	}
