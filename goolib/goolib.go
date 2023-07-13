@@ -30,7 +30,7 @@ import (
 )
 
 var interpreter = map[string]string{
-	".ps1": "powershell",
+	".ps1": "powershell.exe",
 	".cmd": "cmd",
 	".bat": "cmd",
 	".exe": "cmd",
@@ -59,7 +59,7 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 			return err
 		}
 		switch ipr {
-		case "powershell":
+		case "powershell.exe":
 			// We are using `-Command` here instead of `-File` as this catches syntax errors in the script.
 			args = append([]string{"-ExecutionPolicy", "Bypass", "-NonInteractive", "-NoProfile", "-Command", cs}, args...)
 			c = exec.Command(ipr, args...)
