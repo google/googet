@@ -15,7 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
-    "2.19.0 - Updated to Go 1.19.
+    "2.19.0 - Updated to Go 1.19.",
     "2.18.5 - Fixed 'googet verify' bug that caused failure where it should succeed.",
     "2.18.4 - Fixed rmrepo bug. All other repos from the repo file were removed.",
     "2.18.2 - Rename Oauth credential configuration and manually set Authorization header in requests.",
