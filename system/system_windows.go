@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/StackExchange/wmi"
 	"github.com/google/googet/v2/goolib"
@@ -52,6 +53,7 @@ func addUninstallEntry(dir string, ps *goolib.PkgSpec) error {
 		{"InstallLocation", dir},
 		{"DisplayVersion", ps.Version},
 		{"DisplayName", "GooGet - " + ps.Name},
+		{"InstallDate", time.Now().Format("20060102")},
 	}
 	for _, re := range table {
 		if err := k.SetStringValue(re.name, re.value); err != nil {
