@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -39,29 +41,30 @@ func TestRepoList(t *testing.T) {
 
 	repoTests := []struct {
 		content        []byte
-		want           []string
+		want           map[string]int
 		allowUnsafeURL bool
 	}{
 		{[]byte("\n"), nil, false},
 		{[]byte("# This is just a comment"), nil, false},
-		{[]byte("url: " + testRepo), []string{testRepo}, false},
-		{[]byte("\n # Comment\nurl: " + testRepo), []string{testRepo}, false},
-		{[]byte("- url: " + testRepo), []string{testRepo}, false},
+		{[]byte("url: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("\n # Comment\nurl: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testRepo), map[string]int{testRepo: 500}, false},
 		// The HTTP repo should be dropped.
 		{[]byte("- url: " + testHTTPRepo), nil, false},
 		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testHTTPRepo), []string{testHTTPRepo}, true},
-		{[]byte("- URL: " + testRepo), []string{testRepo}, false},
+		{[]byte("- url: " + testHTTPRepo), map[string]int{testHTTPRepo: 500}, true},
+		{[]byte("- URL: " + testRepo), map[string]int{testRepo: 500}, false},
 		// The HTTP repo should be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), []string{testRepo}, false},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]int{testRepo: 500}, false},
 		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), []string{testRepo, testHTTPRepo}, true},
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), []string{testRepo, testRepo}, false},
-		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), []string{testRepo, testRepo}, false},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]int{testRepo: 500, testHTTPRepo: 500}, true},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), map[string]int{testRepo: 500}, false},
 		// Should contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: true"), []string{"oauth-" + testRepo}, false},
+		{[]byte("- url: " + testRepo + "\n  useoauth: true"), map[string]int{"oauth-" + testRepo: 500}, false},
 		// Should not contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: false"), []string{testRepo}, false},
+		{[]byte("- url: " + testRepo + "\n  useoauth: false"), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: 1200"), map[string]int{testRepo: 1200}, false},
 	}
 
 	for i, tt := range repoTests {
@@ -73,8 +76,8 @@ func TestRepoList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("test case %d: returned repo does not match expected repo: got %q, want %q", i+1, got, tt.want)
+		if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("test case %d: repoList unexpected diff (-want +got): %v", i+1, diff)
 		}
 	}
 }

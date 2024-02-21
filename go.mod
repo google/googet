@@ -8,6 +8,7 @@ require (
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/dustin/go-humanize v1.0.0
 	github.com/go-yaml/yaml v2.1.0+incompatible
+	github.com/google/go-cmp v0.6.0
 	github.com/google/logger v1.1.1
 	github.com/google/subcommands v1.2.0
 	github.com/olekukonko/tablewriter v0.0.5

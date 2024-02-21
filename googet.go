@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,13 +39,14 @@ import (
 )
 
 const (
-	stateFile = "googet.state"
-	confFile  = "googet.conf"
-	logFile   = "googet.log"
-	cacheDir  = "cache"
-	repoDir   = "repos"
-	envVar    = "GooGetRoot"
-	logSize   = 10 * 1024 * 1024
+	stateFile       = "googet.state"
+	confFile        = "googet.conf"
+	logFile         = "googet.log"
+	cacheDir        = "cache"
+	repoDir         = "repos"
+	envVar          = "GooGetRoot"
+	logSize         = 10 * 1024 * 1024
+	defaultPriority = 500
 )
 
 var (
@@ -82,6 +84,7 @@ type repoEntry struct {
 	Name     string
 	URL      string
 	UseOAuth bool
+	Priority int
 }
 
 // UnmarshalYAML provides custom unmarshalling for repoEntry objects.
@@ -98,6 +101,12 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.URL = v
 		case "useoauth":
 			r.UseOAuth = strings.ToLower(v) == "true"
+		case "priority":
+			var err error
+			r.Priority, err = strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid priority: %v", v)
+			}
 		}
 	}
 	if r.URL == "" {
@@ -163,44 +172,54 @@ func unmarshalConfFile(p string) (*conf, error) {
 	return &cf, yaml.Unmarshal(b, &cf)
 }
 
-func repoList(dir string) ([]string, error) {
+// validateRepoURL uses the global allowUnsafeURL to determine if u should be checked for https or
+// GCS status.
+func validateRepoURL(u string) bool {
+	if allowUnsafeURL {
+		return true
+	}
+	gcs, _, _ := goolib.SplitGCSUrl(u)
+	parsed, err := url.Parse(u)
+	if err != nil {
+		logger.Errorf("Failed to parse URL '%s', skipping repo", u)
+		return false
+	}
+	if parsed.Scheme != "https" && !gcs {
+		logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", u)
+		return false
+	}
+	return true
+}
+
+// repoList returns a deduped set of all repos listed in the repo config files contained in dir.
+// The repos are mapped to priority values. If a repo config does not specify a priority, the repo
+// is assigned the default priority value. If the same repo appears multiple times with different
+// priority values, it is mapped to the highest seen priority value.
+func repoList(dir string) (map[string]int, error) {
 	rfs, err := repos(dir)
 	if err != nil {
 		return nil, err
 	}
-	var rl []string
+	result := make(map[string]int)
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
-			switch {
-			case re.URL != "":
-				if re.UseOAuth {
-					rl = append(rl, "oauth-"+re.URL)
-				} else {
-					rl = append(rl, re.URL)
-				}
+			u := re.URL
+			if u == "" || !validateRepoURL(u) {
+				continue
+			}
+			if re.UseOAuth {
+				u = "oauth-" + u
+			}
+			p := re.Priority
+			if p <= 0 {
+				p = defaultPriority
+			}
+			if q, ok := result[u]; !ok || p > q {
+				result[u] = p
 			}
 		}
 	}
-
-	if !allowUnsafeURL {
-		var srl []string
-		for _, r := range rl {
-			rTrimmed := strings.TrimPrefix(r, "oauth-")
-			isGCSURL, _, _ := goolib.SplitGCSUrl(rTrimmed)
-			parsed, err := url.Parse(rTrimmed)
-			if err != nil {
-				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
-				continue
-			}
-			if parsed.Scheme != "https" && !isGCSURL {
-				logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
-				continue
-			}
-			srl = append(srl, r)
-		}
-		return srl, nil
-	}
-	return rl, nil
+	return result, nil
 }
 
 func repos(dir string) ([]repoFile, error) {
@@ -273,12 +292,15 @@ func readStateFromPath(sf string) (*client.GooGetState, error) {
 	return client.UnmarshalState(b)
 }
 
-func buildSources(s string) ([]string, error) {
-	if s != "" {
-		srcs := strings.Split(s, ",")
-		return srcs, nil
+func buildSources(s string) (map[string]int, error) {
+	if s == "" {
+		return repoList(filepath.Join(rootDir, repoDir))
 	}
-	return repoList(filepath.Join(rootDir, repoDir))
+	m := make(map[string]int)
+	for _, src := range strings.Split(s, ",") {
+		m[src] = defaultPriority
+	}
+	return m, nil
 }
 
 func confirmation(msg string) bool {
