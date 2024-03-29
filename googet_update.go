@@ -112,7 +112,7 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.Compare(v, ver)
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, v, defaultPriority, ver)
 		if err != nil {
 			logger.Error(err)
 			continue

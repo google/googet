@@ -314,7 +314,7 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf strin
 	return decode(r, "application/json", url, cf)
 }
 
-// FindRepoSpec returns the element of pl whose PackageSpec matches pi.
+// FindRepoSpec returns the RepoSpec in repo whose PackageSpec matches pi.
 func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 	for _, p := range repo.Packages {
 		ps := p.PackageSpec
@@ -325,24 +325,21 @@ func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 	return goolib.RepoSpec{}, fmt.Errorf("no match found for package %s.%s.%s in repo", pi.Name, pi.Arch, pi.Ver)
 }
 
+// latest returns the version and repo having the greatest (priority, version) from the set of
+// package specs in psm.
 func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
 	var ver, repo string
 	var pri int
 	for r, pl := range psm {
 		for _, pkg := range pl {
 			q := rm[r].Priority
-			if ver == "" || q > pri {
-				repo = r
-				ver = pkg.Version
-				pri = q
-				continue
-			}
-			if q < pri {
-				continue
-			}
-			c, err := goolib.Compare(pkg.Version, ver)
-			if err != nil {
-				logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, ver, err)
+			c := 1
+			if ver != "" {
+				var err error
+				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, ver); err != nil {
+					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, ver, err)
+					continue
+				}
 			}
 			if c == 1 {
 				repo = r

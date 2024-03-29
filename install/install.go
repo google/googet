@@ -122,7 +122,7 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 			ins = true
 		}
 		if !ins {
-			return fmt.Errorf("cannot resolve dependancy, %s.%s version %s or greater not installed and not available in any repo", pi.Name, arch, ver)
+			return fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, arch, ver)
 		}
 	}
 	return resolveReplacements(ctx, ps, state, dbOnly, proxyServer)
@@ -130,14 +130,6 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 
 // FromRepo installs a package and all dependencies from a repository.
 func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, state *client.GooGetState, dbOnly bool, proxyServer string) error {
-	ni, err := NeedsInstallation(pi, *state)
-	if err != nil {
-		return err
-	}
-	if !ni {
-		return nil
-	}
-
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	rs, err := client.FindRepoSpec(pi, rm[repo])
@@ -332,10 +324,7 @@ func copyPkg(src, dst string) (retErr error) {
 // NeedsInstallation checks if a package version needs installation.
 func NeedsInstallation(pi goolib.PackageInfo, state client.GooGetState) (bool, error) {
 	for _, p := range state {
-		if p.PackageSpec.Name == pi.Name {
-			if p.PackageSpec.Arch != pi.Arch {
-				continue
-			}
+		if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch {
 			c, err := goolib.Compare(p.PackageSpec.Version, pi.Ver)
 			if err != nil {
 				return true, err

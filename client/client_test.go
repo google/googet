@@ -96,12 +96,14 @@ func TestGetPackageStateNoMatch(t *testing.T) {
 
 func TestWhatRepo(t *testing.T) {
 	rm := RepoMap{
-		"foo_repo": []goolib.RepoSpec{
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.2.3@4",
-					Arch:    "noarch",
+		"foo_repo": Repo{
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "foo_pkg",
+						Version: "1.2.3@4",
+						Arch:    "noarch",
+					},
 				},
 			},
 		},
@@ -119,26 +121,28 @@ func TestWhatRepo(t *testing.T) {
 func TestFindRepoLatest(t *testing.T) {
 	archs := []string{"noarch", "x86_64"}
 	rm := RepoMap{
-		"foo_repo": []goolib.RepoSpec{
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.2.3@4",
-					Arch:    "noarch",
+		"foo_repo": Repo{
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "foo_pkg",
+						Version: "1.2.3@4",
+						Arch:    "noarch",
+					},
 				},
-			},
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.0.0@1",
-					Arch:    "noarch",
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "foo_pkg",
+						Version: "1.0.0@1",
+						Arch:    "noarch",
+					},
 				},
-			},
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "bar_pkg",
-					Version: "1.0.0@1",
-					Arch:    "noarch",
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "bar_pkg",
+						Version: "1.0.0@1",
+						Arch:    "noarch",
+					},
 				},
 			},
 		},
@@ -298,12 +302,12 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 
 func TestFindRepoSpec(t *testing.T) {
 	want := goolib.RepoSpec{PackageSpec: &goolib.PkgSpec{Name: "test"}}
-	rs := []goolib.RepoSpec{
+	repo := Repo{Packages: []goolib.RepoSpec{
 		want,
 		{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
-	}
+	}}
 
-	got, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs)
+	got, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, repo)
 	if err != nil {
 		t.Errorf("error running FindRepoSpec: %v", err)
 	}
@@ -313,9 +317,9 @@ func TestFindRepoSpec(t *testing.T) {
 }
 
 func TestFindRepoSpecNoMatch(t *testing.T) {
-	rs := []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
+	repo := Repo{Packages: []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}}
 
-	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs); err == nil {
+	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, repo); err == nil {
 		t.Error("did not get expected error when running FindRepoSpec")
 	}
 }
