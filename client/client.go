@@ -352,6 +352,8 @@ func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
 }
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
+// The archs are searched in order; if a matching package is found for any arch, it is
+// returned immediately even if a later arch might have a later version.
 func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, string, string, error) {
 	psm := make(map[string][]*goolib.PkgSpec)
 	name := pi.Name

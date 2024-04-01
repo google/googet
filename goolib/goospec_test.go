@@ -16,6 +16,7 @@ package goolib
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -202,6 +203,38 @@ func TestCompare(t *testing.T) {
 func TestBadCompare(t *testing.T) {
 	if _, err := Compare("1.2a.3", "1.2.3"); err == nil {
 		t.Error("expected error, bad semver version")
+	}
+}
+
+func TestComparePriorityVersion(t *testing.T) {
+	for _, tc := range []struct {
+		p1   int
+		v1   string
+		p2   int
+		v2   string
+		want int
+	}{
+		{500, "1.2.3@1", 500, "1.2.3@2", -1},
+		{500, "1.2.3@1", 500, "1.2.4@2", -1},
+		{500, "1.2.4@1", 500, "1.2.3@2", 1},
+		{500, "1.2.3", 500, "1.2.3", 0},
+		{500, "1.2.3@1", 1000, "1.2.3@2", -1},
+		{500, "1.2.3@1", 1000, "1.2.4@2", -1},
+		{500, "1.2.4@1", 1000, "1.2.3@2", -1},
+		{500, "1.2.3", 1000, "1.2.3", -1},
+		{1000, "1.2.3@1", 500, "1.2.3@2", 1},
+		{1000, "1.2.3@1", 500, "1.2.4@2", 1},
+		{1000, "1.2.4@1", 500, "1.2.3@2", 1},
+		{1000, "1.2.3", 500, "1.2.3", 1},
+	} {
+		desc := fmt.Sprintf("ComparePriorityVersion(%v, %v, %v, %v)", tc.p1, tc.v1, tc.p2, tc.v2)
+		t.Run(desc, func(t *testing.T) {
+			if got, err := ComparePriorityVersion(tc.p1, tc.v1, tc.p2, tc.v2); err != nil {
+				t.Fatalf("%v: %v", desc, err)
+			} else if got != tc.want {
+				t.Fatalf("%v got: %v; want: %v", desc, got, tc.want)
+			}
+		})
 	}
 }
 
