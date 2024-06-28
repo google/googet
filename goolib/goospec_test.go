@@ -205,6 +205,38 @@ func TestBadCompare(t *testing.T) {
 	}
 }
 
+func TestComparePriorityVersion(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		p1   int
+		v1   string
+		p2   int
+		v2   string
+		want int
+	}{
+		{"same priority, same version, lesser release", 500, "1.2.3@1", 500, "1.2.3@2", -1},
+		{"same priority lesser version", 500, "1.2.3@1", 500, "1.2.4@2", -1},
+		{"same priority, greater version", 500, "1.2.4@1", 500, "1.2.3@2", 1},
+		{"same priority, same version", 500, "1.2.3", 500, "1.2.3", 0},
+		{"lesser priority, same version, lesser release", 500, "1.2.3@1", 1000, "1.2.3@2", -1},
+		{"lesser priority, lesser version", 500, "1.2.3@1", 1000, "1.2.4@2", -1},
+		{"lesser priority, greater version", 500, "1.2.4@1", 1000, "1.2.3@2", -1},
+		{"lesser priority, same version", 500, "1.2.3", 1000, "1.2.3", -1},
+		{"greater priority, same version, lesser release", 1000, "1.2.3@1", 500, "1.2.3@2", 1},
+		{"greater priority, lesser version", 1000, "1.2.3@1", 500, "1.2.4@2", 1},
+		{"greater priority, greater version", 1000, "1.2.4@1", 500, "1.2.3@2", 1},
+		{"greater priority, same version", 1000, "1.2.3", 500, "1.2.3", 1},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got, err := ComparePriorityVersion(tc.p1, tc.v1, tc.p2, tc.v2); err != nil {
+				t.Fatalf("ComparePriorityVersion(%v, %v, %v, %v): %v", tc.p1, tc.v1, tc.p2, tc.v2, err)
+			} else if got != tc.want {
+				t.Fatalf("ComparePriorityVersion(%v, %v, %v, %v) got: %v; want: %v", tc.p1, tc.v1, tc.p2, tc.v2, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWritePackageSpec(t *testing.T) {
 	es := &PkgSpec{
 		Name:    "test",

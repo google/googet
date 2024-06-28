@@ -92,19 +92,28 @@ func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 	return ps.PackageSpec.Name == pi.Name && (ps.PackageSpec.Arch == pi.Arch || pi.Arch == "") && (ps.PackageSpec.Version == pi.Ver || pi.Ver == "")
 }
 
+// Repo represents a single downloaded repo.
+type Repo struct {
+	Priority int
+	Packages []goolib.RepoSpec
+}
+
 // RepoMap describes each repo's packages as seen from a client.
-type RepoMap map[string][]goolib.RepoSpec
+type RepoMap map[string]Repo
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(ctx context.Context, srcs []string, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
+func AvailableVersions(ctx context.Context, srcs map[string]int, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
 	rm := make(RepoMap)
-	for _, r := range srcs {
+	for r, pri := range srcs {
 		rf, err := unmarshalRepoPackages(ctx, r, cacheDir, cacheLife, proxyServer)
 		if err != nil {
 			logger.Errorf("error reading repo %q: %v", r, err)
 			continue
 		}
-		rm[r] = rf
+		rm[r] = Repo{
+			Priority: pri,
+			Packages: rf,
+		}
 	}
 	return rm
 }
@@ -157,7 +166,7 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
-// Sucessfully unmarshalled contents will be written to a cache.
+// Successfully unmarshalled contents will be written to a cache.
 func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
 	pName := strings.TrimPrefix(p, "oauth-")
 
@@ -305,9 +314,9 @@ func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf strin
 	return decode(r, "application/json", url, cf)
 }
 
-// FindRepoSpec returns the element of pl whose PackageSpec matches pi.
-func FindRepoSpec(pi goolib.PackageInfo, pl []goolib.RepoSpec) (goolib.RepoSpec, error) {
-	for _, p := range pl {
+// FindRepoSpec returns the RepoSpec in repo whose PackageSpec matches pi.
+func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
+	for _, p := range repo.Packages {
 		ps := p.PackageSpec
 		if ps.Name == pi.Name && ps.Arch == pi.Arch && ps.Version == pi.Ver {
 			return p, nil
@@ -316,66 +325,63 @@ func FindRepoSpec(pi goolib.PackageInfo, pl []goolib.RepoSpec) (goolib.RepoSpec,
 	return goolib.RepoSpec{}, fmt.Errorf("no match found for package %s.%s.%s in repo", pi.Name, pi.Arch, pi.Ver)
 }
 
-func latest(psm map[string][]*goolib.PkgSpec) (ver, repo string) {
+// latest returns the version and repo having the greatest (priority, version) from the set of
+// package specs in psm.
+func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
+	var ver, repo string
+	var pri int
 	for r, pl := range psm {
-		for _, p := range pl {
-			if ver == "" {
-				repo = r
-				ver = p.Version
-				continue
-			}
-			c, err := goolib.Compare(p.Version, ver)
-			if err != nil {
-				logger.Errorf("compare of %s to %s failed with error: %v", p.Version, ver, err)
+		for _, pkg := range pl {
+			q := rm[r].Priority
+			c := 1
+			if ver != "" {
+				var err error
+				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, ver); err != nil {
+					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, ver, err)
+					continue
+				}
 			}
 			if c == 1 {
 				repo = r
-				ver = p.Version
+				ver = pkg.Version
+				pri = q
 			}
 		}
 	}
-	return
+	return ver, repo
 }
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
-func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (ver, repo, arch string, err error) {
+// The archs are searched in order; if a matching package is found for any arch, it is
+// returned immediately even if a later arch might have a later version.
+func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, string, string, error) {
 	psm := make(map[string][]*goolib.PkgSpec)
+	name := pi.Name
 	if pi.Arch != "" {
-		for r, pl := range rm {
-			for _, p := range pl {
-				if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch {
-					psm[r] = append(psm[r], p.PackageSpec)
-				}
-			}
-		}
-		if len(psm) != 0 {
-			v, r := latest(psm)
-			return v, r, pi.Arch, nil
-		}
-		return "", "", "", fmt.Errorf("no versions of package %s.%s found in any repo", pi.Name, pi.Arch)
+		archs = []string{pi.Arch}
+		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
 	}
-
 	for _, a := range archs {
-		for r, pl := range rm {
-			for _, p := range pl {
+		for r, repo := range rm {
+			for _, p := range repo.Packages {
 				if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == a {
 					psm[r] = append(psm[r], p.PackageSpec)
 				}
 			}
 		}
 		if len(psm) != 0 {
-			v, r := latest(psm)
+			v, r := latest(psm, rm)
 			return v, r, a, nil
 		}
 	}
-	return "", "", "", fmt.Errorf("no versions of package %s found in any repo", pi.Name)
+	return "", "", "", fmt.Errorf("no versions of package %s found in any repo", name)
 }
 
 // WhatRepo returns what repo a package is in.
 // Name, Arch, and Ver fields of PackageInfo must be provided.
 func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {
-	for r, pl := range rm {
-		for _, p := range pl {
+	for r, repo := range rm {
+		for _, p := range repo.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {
 				return r, nil
 			}

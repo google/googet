@@ -169,6 +169,17 @@ func fixVer(ver string) string {
 	return strings.Join(out, ".") + suffix
 }
 
+// ComparePriorityVersion compares (p1, v1) to (p2, v2) as priority-version tuples.
+func ComparePriorityVersion(p1 int, v1 string, p2 int, v2 string) (int, error) {
+	if p1 < p2 {
+		return -1, nil
+	}
+	if p1 > p2 {
+		return 1, nil
+	}
+	return Compare(v1, v2)
+}
+
 // ParseVersion parses the string version into goospec.Version. ParseVersion
 // attempts to fix non-compliant Semver strings by removing leading zeros from
 // components, and replacing any missing components with zero values after

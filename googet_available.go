@@ -75,8 +75,8 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 
 	m := make(map[string][]string)
 	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
-	for r, pl := range rm {
-		for _, p := range pl {
+	for r, repo := range rm {
+		for _, p := range repo.Packages {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)
 		}
 	}
@@ -111,8 +111,8 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 }
 
 func repo(pi goolib.PackageInfo, rm client.RepoMap) {
-	for r, pl := range rm {
-		for _, p := range pl {
+	for r, repo := range rm {
+		for _, p := range repo.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {
 				info(p.PackageSpec, r)
 				return
