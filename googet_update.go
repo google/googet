@@ -117,13 +117,28 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 			logger.Error(err)
 			continue
 		}
-		if c == 1 {
-			fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
-			logger.Infof("Update for package %s, %s installed and %s available from %s.", p, ver, v, r)
-			ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
+		if c < 1 {
+			logger.Infof("%s - highest priority version already installed", p)
 			continue
 		}
-		logger.Infof("%s - latest version installed", p)
+		// The versions might actually be the same even though the priorities are different,
+		// so do another check to skip reinstall of the same version.
+		c, err = goolib.Compare(v, ver)
+		if err != nil {
+			logger.Error(err)
+			continue
+		}
+		if c == 0 {
+			logger.Infof("%s - same version installed", p)
+			continue
+		}
+		op := "Upgrade"
+		if c == -1 {
+			op = "Downgrade"
+		}
+		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
+		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, v, r)
+		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
 	}
 	return ud
 }
