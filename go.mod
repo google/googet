@@ -13,7 +13,7 @@ require (
 	github.com/google/subcommands v1.2.0
 	github.com/olekukonko/tablewriter v0.0.5
 	golang.org/x/oauth2 v0.0.0-20210427180440-81ed05c6b58c
-	golang.org/x/sys v0.13.0
+	golang.org/x/sys v0.18.0
 	google.golang.org/api v0.46.0
 )
 
@@ -29,8 +29,8 @@ require (
 	go.opencensus.io v0.23.0 // indirect
 	golang.org/x/lint v0.0.0-20201208152925-83fdc39ff7b5 // indirect
 	golang.org/x/mod v0.8.0 // indirect
-	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/net v0.23.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.6.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20210506142907-4a47615972c2 // indirect
