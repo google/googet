@@ -25,13 +25,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-yaml/yaml"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -39,14 +39,13 @@ import (
 )
 
 const (
-	stateFile       = "googet.state"
-	confFile        = "googet.conf"
-	logFile         = "googet.log"
-	cacheDir        = "cache"
-	repoDir         = "repos"
-	envVar          = "GooGetRoot"
-	logSize         = 10 * 1024 * 1024
-	defaultPriority = 500
+	stateFile = "googet.state"
+	confFile  = "googet.conf"
+	logFile   = "googet.log"
+	cacheDir  = "cache"
+	repoDir   = "repos"
+	envVar    = "GooGetRoot"
+	logSize   = 10 * 1024 * 1024
 )
 
 var (
@@ -84,11 +83,11 @@ type repoEntry struct {
 	Name     string
 	URL      string
 	UseOAuth bool
-	Priority int
+	Priority priority.Value
 }
 
 // UnmarshalYAML provides custom unmarshalling for repoEntry objects.
-func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (r *repoEntry) UnmarshalYAML(unmarshal func(any) error) error {
 	var u map[string]string
 	if err := unmarshal(&u); err != nil {
 		return err
@@ -103,7 +102,7 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.UseOAuth = strings.ToLower(v) == "true"
 		case "priority":
 			var err error
-			r.Priority, err = strconv.Atoi(v)
+			r.Priority, err = priority.FromString(v)
 			if err != nil {
 				return fmt.Errorf("invalid priority: %v", v)
 			}
@@ -195,12 +194,12 @@ func validateRepoURL(u string) bool {
 // The repos are mapped to priority values. If a repo config does not specify a priority, the repo
 // is assigned the default priority value. If the same repo appears multiple times with different
 // priority values, it is mapped to the highest seen priority value.
-func repoList(dir string) (map[string]int, error) {
+func repoList(dir string) (map[string]priority.Value, error) {
 	rfs, err := repos(dir)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]int)
+	result := make(map[string]priority.Value)
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
 			u := re.URL
@@ -212,7 +211,7 @@ func repoList(dir string) (map[string]int, error) {
 			}
 			p := re.Priority
 			if p <= 0 {
-				p = defaultPriority
+				p = priority.Default
 			}
 			if q, ok := result[u]; !ok || p > q {
 				result[u] = p
@@ -292,13 +291,13 @@ func readStateFromPath(sf string) (*client.GooGetState, error) {
 	return client.UnmarshalState(b)
 }
 
-func buildSources(s string) (map[string]int, error) {
+func buildSources(s string) (map[string]priority.Value, error) {
 	if s == "" {
 		return repoList(filepath.Join(rootDir, repoDir))
 	}
-	m := make(map[string]int)
+	m := make(map[string]priority.Value)
 	for _, src := range strings.Split(s, ",") {
-		m[src] = defaultPriority
+		m[src] = priority.Default
 	}
 	return m, nil
 }

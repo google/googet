@@ -25,6 +25,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/priority"
 )
 
 func TestRepoList(t *testing.T) {
@@ -41,30 +42,34 @@ func TestRepoList(t *testing.T) {
 
 	repoTests := []struct {
 		content        []byte
-		want           map[string]int
+		want           map[string]priority.Value
 		allowUnsafeURL bool
 	}{
 		{[]byte("\n"), nil, false},
 		{[]byte("# This is just a comment"), nil, false},
-		{[]byte("url: " + testRepo), map[string]int{testRepo: 500}, false},
-		{[]byte("\n # Comment\nurl: " + testRepo), map[string]int{testRepo: 500}, false},
-		{[]byte("- url: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
+		{[]byte("\n # Comment\nurl: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
+		{[]byte("- url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
 		// The HTTP repo should be dropped.
 		{[]byte("- url: " + testHTTPRepo), nil, false},
 		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testHTTPRepo), map[string]int{testHTTPRepo: 500}, true},
-		{[]byte("- URL: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testHTTPRepo), map[string]priority.Value{testHTTPRepo: priority.Default}, true},
+		{[]byte("- URL: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
 		// The HTTP repo should be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]priority.Value{testRepo: priority.Default}, false},
 		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]int{testRepo: 500, testHTTPRepo: 500}, true},
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), map[string]int{testRepo: 500}, false},
-		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), map[string]int{testRepo: 500}, false},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]priority.Value{testRepo: priority.Default, testHTTPRepo: 500}, true},
+		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
+		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
 		// Should contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: true"), map[string]int{"oauth-" + testRepo: 500}, false},
+		{[]byte("- url: " + testRepo + "\n  useoauth: true"), map[string]priority.Value{"oauth-" + testRepo: priority.Default}, false},
 		// Should not contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: false"), map[string]int{testRepo: 500}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: 1200"), map[string]int{testRepo: 1200}, false},
+		{[]byte("- url: " + testRepo + "\n  useoauth: false"), map[string]priority.Value{testRepo: priority.Default}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: 1200"), map[string]priority.Value{testRepo: priority.Value(1200)}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: default"), map[string]priority.Value{testRepo: priority.Default}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: canary"), map[string]priority.Value{testRepo: priority.Canary}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: pin"), map[string]priority.Value{testRepo: priority.Pin}, false},
+		{[]byte("- url: " + testRepo + "\n  priority: rollback"), map[string]priority.Value{testRepo: priority.Rollback}, false},
 	}
 
 	for i, tt := range repoTests {

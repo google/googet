@@ -25,6 +25,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -112,7 +113,7 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.ComparePriorityVersion(rm[r].Priority, v, defaultPriority, ver)
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, v, priority.Default, ver)
 		if err != nil {
 			logger.Error(err)
 			continue

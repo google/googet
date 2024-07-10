@@ -33,6 +33,7 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
@@ -94,7 +95,7 @@ func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 
 // Repo represents a single downloaded repo.
 type Repo struct {
-	Priority int
+	Priority priority.Value
 	Packages []goolib.RepoSpec
 }
 
@@ -102,7 +103,7 @@ type Repo struct {
 type RepoMap map[string]Repo
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(ctx context.Context, srcs map[string]int, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
+func AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
 	rm := make(RepoMap)
 	for r, pri := range srcs {
 		rf, err := unmarshalRepoPackages(ctx, r, cacheDir, cacheLife, proxyServer)
@@ -329,7 +330,7 @@ func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 // package specs in psm.
 func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
 	var ver, repo string
-	var pri int
+	var pri priority.Value
 	for r, pl := range psm {
 		for _, pkg := range pl {
 			q := rm[r].Priority

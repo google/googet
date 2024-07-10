@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/blang/semver"
+	"github.com/google/googet/v2/priority"
 )
 
 func mkVer(sem string, rel int64) Version {
@@ -208,24 +209,24 @@ func TestBadCompare(t *testing.T) {
 func TestComparePriorityVersion(t *testing.T) {
 	for _, tc := range []struct {
 		desc string
-		p1   int
+		p1   priority.Value
 		v1   string
-		p2   int
+		p2   priority.Value
 		v2   string
 		want int
 	}{
-		{"same priority, same version, lesser release", 500, "1.2.3@1", 500, "1.2.3@2", -1},
-		{"same priority lesser version", 500, "1.2.3@1", 500, "1.2.4@2", -1},
-		{"same priority, greater version", 500, "1.2.4@1", 500, "1.2.3@2", 1},
-		{"same priority, same version", 500, "1.2.3", 500, "1.2.3", 0},
-		{"lesser priority, same version, lesser release", 500, "1.2.3@1", 1000, "1.2.3@2", -1},
-		{"lesser priority, lesser version", 500, "1.2.3@1", 1000, "1.2.4@2", -1},
-		{"lesser priority, greater version", 500, "1.2.4@1", 1000, "1.2.3@2", -1},
-		{"lesser priority, same version", 500, "1.2.3", 1000, "1.2.3", -1},
-		{"greater priority, same version, lesser release", 1000, "1.2.3@1", 500, "1.2.3@2", 1},
-		{"greater priority, lesser version", 1000, "1.2.3@1", 500, "1.2.4@2", 1},
-		{"greater priority, greater version", 1000, "1.2.4@1", 500, "1.2.3@2", 1},
-		{"greater priority, same version", 1000, "1.2.3", 500, "1.2.3", 1},
+		{"same priority, same version, lesser release", priority.Value(500), "1.2.3@1", priority.Value(500), "1.2.3@2", -1},
+		{"same priority lesser version", priority.Value(500), "1.2.3@1", priority.Value(500), "1.2.4@2", -1},
+		{"same priority, greater version", priority.Value(500), "1.2.4@1", priority.Value(500), "1.2.3@2", 1},
+		{"same priority, same version", priority.Value(500), "1.2.3", priority.Value(500), "1.2.3", 0},
+		{"lesser priority, same version, lesser release", priority.Value(500), "1.2.3@1", priority.Value(1000), "1.2.3@2", -1},
+		{"lesser priority, lesser version", priority.Value(500), "1.2.3@1", priority.Value(1000), "1.2.4@2", -1},
+		{"lesser priority, greater version", priority.Value(500), "1.2.4@1", priority.Value(1000), "1.2.3@2", -1},
+		{"lesser priority, same version", priority.Value(500), "1.2.3", priority.Value(1000), "1.2.3", -1},
+		{"greater priority, same version, lesser release", priority.Value(1000), "1.2.3@1", priority.Value(500), "1.2.3@2", 1},
+		{"greater priority, lesser version", priority.Value(1000), "1.2.3@1", priority.Value(500), "1.2.4@2", 1},
+		{"greater priority, greater version", priority.Value(1000), "1.2.4@1", priority.Value(500), "1.2.3@2", 1},
+		{"greater priority, same version", priority.Value(1000), "1.2.3", priority.Value(500), "1.2.3", 1},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			if got, err := ComparePriorityVersion(tc.p1, tc.v1, tc.p2, tc.v2); err != nil {

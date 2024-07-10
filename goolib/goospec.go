@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/google/googet/v2/priority"
 )
 
 type build struct {
@@ -170,7 +171,7 @@ func fixVer(ver string) string {
 }
 
 // ComparePriorityVersion compares (p1, v1) to (p2, v2) as priority-version tuples.
-func ComparePriorityVersion(p1 int, v1 string, p2 int, v2 string) (int, error) {
+func ComparePriorityVersion(p1 priority.Value, v1 string, p2 priority.Value, v2 string) (int, error) {
 	if p1 < p2 {
 		return -1, nil
 	}
