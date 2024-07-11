@@ -48,11 +48,10 @@ func (*addRepoCmd) Usage() string {
 
 func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.file, "file", "", "repo file to add this repository to")
-	f.StringVar(&cmd.priority, "priority", "", "priority level to assigned to repository")
+	f.StringVar(&cmd.priority, "priority", "", "priority level assigned to repository")
 }
 
 func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-
 	var newEntry repoEntry
 	switch f.NArg() {
 	case 0, 1:

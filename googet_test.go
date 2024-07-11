@@ -525,6 +525,9 @@ func TestWriteRepoFile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("os.CreateTemp: %v", err)
 			}
+			defer func() {
+				os.Remove(f.Name())
+			}()
 			if err := f.Close(); err != nil {
 				t.Fatalf("f.Close: %v", err)
 			}
