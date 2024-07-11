@@ -15,8 +15,10 @@ package main
 
 import (
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -471,6 +473,75 @@ func TestUpdates(t *testing.T) {
 			pi := updates(tc.pm, tc.rm)
 			if diff := cmp.Diff(tc.want, pi); diff != "" {
 				t.Errorf("update(%v, %v) got unexpected diff (-want +got):\n%v", tc.pm, tc.rm, diff)
+			}
+		})
+	}
+}
+
+func TestWriteRepoFile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []repoEntry
+		want    string
+	}{
+		{
+			name:    "with-no-priority-specified",
+			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar"}},
+			want: `- name: bar
+  url: https://foo.com/googet/bar
+  useoauth: false
+`,
+		},
+		{
+			name:    "with-default-priority",
+			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: priority.Default}},
+			want: `- name: bar
+  url: https://foo.com/googet/bar
+  useoauth: false
+  priority: default
+`,
+		},
+		{
+			name:    "with-rollback-priority",
+			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: priority.Rollback}},
+			want: `- name: bar
+  url: https://foo.com/googet/bar
+  useoauth: false
+  priority: rollback
+`,
+		},
+		{
+			name:    "with-non-standard-priority",
+			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: 42}},
+			want: `- name: bar
+  url: https://foo.com/googet/bar
+  useoauth: false
+  priority: 42
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := os.CreateTemp("", "test.repo")
+			if err != nil {
+				t.Fatalf("os.CreateTemp: %v", err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatalf("f.Close: %v", err)
+			}
+			rf := repoFile{fileName: f.Name(), repoEntries: tc.entries}
+			if err := writeRepoFile(rf); err != nil {
+				t.Fatalf("writeRepoFile(%v): %v", rf, err)
+			}
+			b, err := os.ReadFile(f.Name())
+			if err != nil {
+				t.Fatalf("os.ReadFile(%v): %v", f.Name(), err)
+			}
+			t.Logf("wrote repo file contents:\n%v", string(b))
+			// Make the diff easier to read by splitting into lines first.
+			got := strings.Split(string(b), "\n")
+			want := strings.Split(tc.want, "\n")
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("writeRepoFile got unexpected diff (-want +got):\n%v", diff)
 			}
 		})
 	}

@@ -27,6 +27,14 @@ var priorityNameToValue = map[string]Value{
 	"rollback": Rollback,
 }
 
+// priorityValueToName maps integer priorities to their semantic names.
+var priorityValueToName = map[Value]string{
+	Default:  "default",
+	Canary:   "canary",
+	Pin:      "pin",
+	Rollback: "rollback",
+}
+
 // FromString converts the string s into a priority Value, where s represents
 // either a semantic priority name or an integer.
 func FromString(s string) (Value, error) {
@@ -35,4 +43,13 @@ func FromString(s string) (Value, error) {
 	}
 	i, err := strconv.Atoi(s)
 	return Value(i), err
+}
+
+// MarshalYAML marshals a priority value as a semantic name if possible
+// otherwise as an integer.
+func (v Value) MarshalYAML() (any, error) {
+	if name, ok := priorityValueToName[v]; ok {
+		return name, nil
+	}
+	return int(v), nil
 }

@@ -83,7 +83,7 @@ type repoEntry struct {
 	Name     string
 	URL      string
 	UseOAuth bool
-	Priority priority.Value
+	Priority priority.Value `yaml:",omitempty"`
 }
 
 // UnmarshalYAML provides custom unmarshalling for repoEntry objects.
