@@ -77,9 +77,10 @@ func uninstallString(installSource, extension string) string {
 		return ""
 	}
 	reg, _ := k.ReadSubKeyNames(-1)
-	err = k.Close()
+	defer k.Close()
 	for _, v := range reg {
 		q, err := registry.OpenKey(registry.LOCAL_MACHINE, fmt.Sprintf("%s%s", productroot, v), registry.ALL_ACCESS)
+		defer q.Close()
 		if err != nil {
 			continue
 		}
@@ -99,12 +100,6 @@ func uninstallString(installSource, extension string) string {
 				return un
 			}
 		}
-
-		q.Close()
-	}
-
-	if err != nil {
-		fmt.Println(err)
 	}
 	return ""
 }
@@ -157,7 +152,7 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 
 // Uninstall performs a system specfic uninstall given a packages PackageState.
 func Uninstall(dir string, ps *goolib.PkgSpec) error {
-	var s string
+	var filePath string
 	un := ps.Uninstall
 	// Automatically determine uninstall script if none is specified in spec.
 	if un.Path == "" {
@@ -169,7 +164,7 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			un.Path = commands[0]
 			un.Args = commands[1:]
 			un.Args = append([]string{"/qn", "/norestart"}, un.Args...)
-			s = un.Path
+			filePath = un.Path
 		}
 		if un.Path == "" {
 			return nil
@@ -187,20 +182,20 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	if s == "" {
-		s = filepath.Join(dir, un.Path)
+	if filePath == "" {
+		filePath = filepath.Join(dir, un.Path)
 	}
 	ec := append(msiSuccessCodes, un.ExitCodes...)
-	switch filepath.Ext(s) {
+	switch filepath.Ext(filePath) {
 	case ".msi":
 		msiLog := filepath.Join(dir, "msi_uninstall.log")
-		args := append([]string{"/x", s, "/qn", "/norestart", "/log", msiLog}, un.Args...)
+		args := append([]string{"/x", filePath, "/qn", "/norestart", "/log", msiLog}, un.Args...)
 		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
 	case ".msu":
-		args := append([]string{s, "/uninstall", "/quiet", "/norestart"}, un.Args...)
+		args := append([]string{filePath, "/uninstall", "/quiet", "/norestart"}, un.Args...)
 		err = goolib.Run(exec.Command("wusa", args...), ec, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(s, un.Args...), ec, out)
+		err = goolib.Run(exec.Command(filePath, un.Args...), ec, out)
 	default:
 		err = goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
 	}
