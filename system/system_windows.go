@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"time"
 	"strings"
@@ -88,12 +89,27 @@ func uninstallString(installSource, extension string) (string) {
     			continue
     		}
     		if strings.Contains(a, installSource) {
-    		un, _, err := q.GetStringValue("UninstallString"); if err !=nil {
-    			// UninstallString not found, move on to next entry
-    			continue
+	    		un, _, err := q.GetStringValue("UninstallString"); if err !=nil {
+	    			// UninstallString not found, move on to next entry
+	    			continue
+	    		}
+	    		return un
     		}
+    	default:
+    		fmt.Printf("%s%s\n", v, installSource)
+    		if strings.ToLower(v) == strings.ToLower(installSource) {
+    			// Check if the value exists, move on if it doesn't
+    			un, _, err := q.GetStringValue("QuietUninstallString"); if err !=nil {
+    				continue
+    			}
+    			if un == "" {
+    				un, _, err = q.GetStringValue("UninstallString"); if err !=nil {
+    					// UninstallString not found, move on to next entry
+    					continue
+    				}
+    			}
     		return un
-    	}
+    		}
     	}
 
     	q.Close()
@@ -112,9 +128,13 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	if in.Path == "" {
 		return nil
 	}
-
 	logger.Infof("Running install command: %q", in.Path)
-	out, err := oswrap.Create(filepath.Join(dir, in.Path+".log"))
+	inPath := fmt.Sprintf("%s.log", in.Path)
+	// If the path doesn't exist, set to googet working dir.
+	if _, err := os.Stat(in.Path); err != nil {
+		inPath = filepath.Join(dir, inPath)
+	}
+	out, err := oswrap.Create(inPath)
 	if err != nil {
 		return err
 	}
@@ -166,6 +186,14 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			un.Path = commands[0]
 			un.Args = commands[1:]
 			un.Args = append([]string{"/qn", "/norestart"}, un.Args...)
+			s = un.Path
+	    default:
+	    	r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
+	    	u := uninstallString(ps.Name, "")
+	    	commands := r.FindAllString(u, -1)
+	    	// Remove the quotes from the install string since we handle that below
+			un.Path = strings.Replace(commands[0], "\"", "", -1)
+			un.Args = commands[1:]
 			s = un.Path
 	    }
 	    if un.Path == "" {
