@@ -21,10 +21,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -71,55 +70,38 @@ func removeUninstallEntry(name string) error {
 	return registry.DeleteKey(registry.LOCAL_MACHINE, reg)
 }
 
-func uninstallString(installSource, extension string) (string) {
+func uninstallString(installSource, extension string) string {
 	productroot := `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\`
-    k, err := registry.OpenKey(registry.LOCAL_MACHINE, productroot, registry.ENUMERATE_SUB_KEYS); if err != nil {
-        return ""
-    }
-    reg, _:= k.ReadSubKeyNames(-1)
-    err = k.Close()
-    for _, v := range reg {
-    	q, err := registry.OpenKey(registry.LOCAL_MACHINE, fmt.Sprintf("%s%s", productroot, v), registry.ALL_ACCESS); if err != nil {
-        	continue
-    	}
-    	switch (extension) {
-    	case "msi":
-    		a, _, err:= q.GetStringValue("InstallSource"); if err !=nil {
-    			// InstallSource not found, move on to next entry
-    			continue
-    		}
-    		if strings.Contains(a, installSource) {
-	    		un, _, err := q.GetStringValue("UninstallString"); if err !=nil {
-	    			// UninstallString not found, move on to next entry
-	    			continue
-	    		}
-	    		return un
-    		}
-    	default:
-    		fmt.Printf("%s%s\n", v, installSource)
-    		if strings.ToLower(v) == strings.ToLower(installSource) {
-    			// Check if the value exists, move on if it doesn't
-    			un, _, err := q.GetStringValue("QuietUninstallString"); if err !=nil {
-    				continue
-    			}
-    			if un == "" {
-    				un, _, err = q.GetStringValue("UninstallString"); if err !=nil {
-    					// UninstallString not found, move on to next entry
-    					continue
-    				}
-    			}
-    		return un
-    		}
-    	}
-
-    	q.Close()
-    }
-    
-    
-    if err != nil {
-        fmt.Println(err)
-    }
-    return ""
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, productroot, registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return ""
+	}
+	reg, _ := k.ReadSubKeyNames(-1)
+	defer k.Close()
+	for _, v := range reg {
+		q, err := registry.OpenKey(registry.LOCAL_MACHINE, fmt.Sprintf("%s%s", productroot, v), registry.ALL_ACCESS)
+		defer q.Close()
+		if err != nil {
+			continue
+		}
+		switch extension {
+		case "msi":
+			a, _, err := q.GetStringValue("InstallSource")
+			if err != nil {
+				// InstallSource not found, move on to next entry
+				continue
+			}
+			if strings.Contains(a, installSource) {
+				un, _, err := q.GetStringValue("UninstallString")
+				if err != nil {
+					// UninstallString not found, move on to next entry
+					continue
+				}
+				return un
+			}
+		}
+	}
+	return ""
 }
 
 // Install performs a system specfic install given a package extraction directory and a PkgSpec struct.
@@ -128,13 +110,9 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	if in.Path == "" {
 		return nil
 	}
+
 	logger.Infof("Running install command: %q", in.Path)
-	inPath := fmt.Sprintf("%s.log", in.Path)
-	// If the path doesn't exist, set to googet working dir.
-	if _, err := os.Stat(in.Path); err != nil {
-		inPath = filepath.Join(dir, inPath)
-	}
-	out, err := oswrap.Create(inPath)
+	out, err := oswrap.Create(filepath.Join(dir, in.Path+".log"))
 	if err != nil {
 		return err
 	}
@@ -174,11 +152,11 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 
 // Uninstall performs a system specfic uninstall given a packages PackageState.
 func Uninstall(dir string, ps *goolib.PkgSpec) error {
-	var s string
+	var filePath string
 	un := ps.Uninstall
 	// Automatically determine uninstall script if none is specified in spec.
 	if un.Path == "" {
-	    switch filepath.Ext(ps.Install.Path) {
+		switch filepath.Ext(ps.Install.Path) {
 		case ".msi":
 			u := uninstallString(dir, "msi")
 			u = strings.ReplaceAll(u, `/I`, `/X`)
@@ -186,19 +164,11 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			un.Path = commands[0]
 			un.Args = commands[1:]
 			un.Args = append([]string{"/qn", "/norestart"}, un.Args...)
-			s = un.Path
-	    default:
-	    	r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
-	    	u := uninstallString(ps.Name, "")
-	    	commands := r.FindAllString(u, -1)
-	    	// Remove the quotes from the install string since we handle that below
-			un.Path = strings.Replace(commands[0], "\"", "", -1)
-			un.Args = commands[1:]
-			s = un.Path
-	    }
-	    if un.Path == "" {
-	    	return nil
-	    }
+			filePath = un.Path
+		}
+		if un.Path == "" {
+			return nil
+		}
 	}
 
 	logger.Infof("Running uninstall command: %q", un.Path)
@@ -212,20 +182,20 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	if s == "" {
-		s = filepath.Join(dir, un.Path)
+	if filePath == "" {
+		filePath = filepath.Join(dir, un.Path)
 	}
 	ec := append(msiSuccessCodes, un.ExitCodes...)
-	switch filepath.Ext(s) {
+	switch filepath.Ext(filePath) {
 	case ".msi":
 		msiLog := filepath.Join(dir, "msi_uninstall.log")
-		args := append([]string{"/x", s, "/qn", "/norestart", "/log", msiLog}, un.Args...)
+		args := append([]string{"/x", filePath, "/qn", "/norestart", "/log", msiLog}, un.Args...)
 		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
 	case ".msu":
-		args := append([]string{s, "/uninstall", "/quiet", "/norestart"}, un.Args...)
+		args := append([]string{filePath, "/uninstall", "/quiet", "/norestart"}, un.Args...)
 		err = goolib.Run(exec.Command("wusa", args...), ec, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(s, un.Args...), ec, out)
+		err = goolib.Run(exec.Command(filePath, un.Args...), ec, out)
 	default:
 		err = goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
 	}
