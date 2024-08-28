@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -99,6 +100,23 @@ func uninstallString(installSource, extension string) string {
 				}
 				return un
 			}
+		default:
+			fmt.Printf("%s%s\n", v, installSource)
+			if strings.ToLower(v) == strings.ToLower(installSource) {
+				// Check if the value exists, move on if it doesn't
+				un, _, err := q.GetStringValue("QuietUninstallString")
+				if err != nil {
+					continue
+				}
+				if un == "" {
+					un, _, err = q.GetStringValue("UninstallString")
+					if err != nil {
+						// UninstallString not found, move on to next entry
+						continue
+					}
+				}
+				return un
+			}
 		}
 	}
 	return ""
@@ -164,6 +182,14 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			un.Path = commands[0]
 			un.Args = commands[1:]
 			un.Args = append([]string{"/qn", "/norestart"}, un.Args...)
+			filePath = un.Path
+		default:
+			r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
+			u := uninstallString(ps.Name, "")
+			commands := r.FindAllString(u, -1)
+			// Remove the quotes from the install string since we handle that below
+			un.Path = strings.Replace(commands[0], "\"", "", -1)
+			un.Args = commands[1:]
 			filePath = un.Path
 		}
 		if un.Path == "" {
