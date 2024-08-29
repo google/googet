@@ -187,10 +187,12 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 			r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
 			u := uninstallString(ps.Name, "")
 			commands := r.FindAllString(u, -1)
-			// Remove the quotes from the install string since we handle that below
-			un.Path = strings.Replace(commands[0], "\"", "", -1)
-			un.Args = commands[1:]
-			filePath = un.Path
+			if len(commands) > 0 {
+				// Remove the quotes from the install string since we handle that below
+				un.Path = strings.Replace(commands[0], "\"", "", -1)
+				un.Args = commands[1:]
+				filePath = un.Path
+			}
 		}
 		if un.Path == "" {
 			return nil
