@@ -17,11 +17,11 @@ limitations under the License.
 package system
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"errors"
 	"regexp"
 	"runtime"
 	"strings"
@@ -202,7 +202,7 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 	// Only append the directory if the folder structure doesn't exist
 	logPath := fmt.Sprintf("%s.log", un.Path)
 	if _, err := os.Stat(un.Path); errors.Is(err, os.ErrNotExist) {
-  		logPath = filepath.Join(dir, logPath)
+		logPath = filepath.Join(dir, logPath)
 	}
 	out, err := oswrap.Create(logPath)
 	if err != nil {
