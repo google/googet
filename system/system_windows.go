@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"errors"
 	"regexp"
 	"runtime"
 	"strings"
@@ -101,7 +102,6 @@ func uninstallString(installSource, extension string) string {
 				return un
 			}
 		default:
-			fmt.Printf("%s%s\n", v, installSource)
 			if strings.ToLower(v) == strings.ToLower(installSource) {
 				// Check if the value exists, move on if it doesn't
 				un, _, err := q.GetStringValue("QuietUninstallString")
@@ -199,7 +199,12 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 
 	logger.Infof("Running uninstall command: %q", un.Path)
 	// logging is only useful for failed uninstall
-	out, err := oswrap.Create(filepath.Join(dir, un.Path+".log"))
+	// Only append the directory if the folder structure doesn't exist
+	logPath := fmt.Sprintf("%s.log", un.Path)
+	if _, err := os.Stat(un.Path); errors.Is(err, os.ErrNotExist) {
+  		logPath = filepath.Join(dir, logPath)
+	}
+	out, err := oswrap.Create(logPath)
 	if err != nil {
 		return err
 	}
