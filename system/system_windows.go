@@ -102,13 +102,15 @@ func uninstallString(installSource, extension string) string {
 				return un
 			}
 		default:
-			if strings.ToLower(v) == strings.ToLower(installSource) {
+			displayName, _, err := q.GetStringValue("DisplayName")
+			if err != nil {
+				continue
+			}
+			// Remove display name whitespace to conform to package name
+			if strings.ToLower(strings.ReplaceAll(displayName, " ", "")) == strings.ToLower(installSource) {
 				// Check if the value exists, move on if it doesn't
 				un, _, err := q.GetStringValue("QuietUninstallString")
 				if err != nil {
-					continue
-				}
-				if un == "" {
 					un, _, err = q.GetStringValue("UninstallString")
 					if err != nil {
 						// UninstallString not found, move on to next entry
