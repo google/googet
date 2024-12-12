@@ -128,7 +128,7 @@ func TestReadConf(t *testing.T) {
 		t.Fatalf("error creating conf file: %v", err)
 	}
 
-	content := []byte("archs: [noarch, x86_64]\ncachelife: 10m\nallowunsafeurl: true")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nallowunsafeurl: true")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestReadConf(t *testing.T) {
 
 	readConf(confPath)
 
-	ea := []string{"noarch", "x86_64"}
+	ea := []string{"noarch", "x86_64", "arm64"}
 	if !reflect.DeepEqual(archs, ea) {
 		t.Errorf("readConf did not create expected arch list, want: %s, got: %s", ea, archs)
 	}

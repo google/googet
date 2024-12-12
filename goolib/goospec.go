@@ -69,7 +69,7 @@ const (
 	maxTagValueSize = 1024 * 10 // 10k
 )
 
-var validArch = []string{"noarch", "x86_64", "x86_32", "arm"}
+var validArch = []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}
 
 // PkgSpec is an individual package specification.
 type PkgSpec struct {

@@ -301,6 +301,8 @@ func InstallableArchs() ([]string, error) {
 		return []string{"noarch", "x86_32", "x86_64"}, nil
 	case runtime.GOARCH == "arm":
 		return []string{"noarch", "arm"}, nil
+	case runtime.GOARCH == "arm64":
+		return []string{"noarch", "x86_32", "x86_64", "arm64"}, nil
 	default:
 		return nil, fmt.Errorf("runtime %s not supported", runtime.GOARCH)
 	}

@@ -132,12 +132,13 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "name and arch",
 			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
-			archs: []string{"noarch", "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
 			rm: RepoMap{
 				"foo_repo": Repo{Packages: []goolib.RepoSpec{
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "arm64"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
 				}},
 			},
@@ -148,12 +149,13 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "name only",
 			pi:    goolib.PackageInfo{Name: "foo_pkg"},
-			archs: []string{"noarch", "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
 			rm: RepoMap{
 				"foo_repo": Repo{Packages: []goolib.RepoSpec{
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "arm64"}},
 					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
 				}},
 			},
@@ -164,7 +166,7 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "specified arch not present",
 			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "x86_64"},
-			archs: []string{"noarch", "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
 			rm: RepoMap{
 				"foo_repo": Repo{Packages: []goolib.RepoSpec{
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
@@ -177,7 +179,7 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "multiple repos with same priority",
 			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
-			archs: []string{"noarch", "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
 			rm: RepoMap{
 				"foo_repo": Repo{
 					Priority: 500,
@@ -199,7 +201,7 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "multiple repos with different priority",
 			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
-			archs: []string{"noarch", "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
 			rm: RepoMap{
 				"high_priority_repo": Repo{
 					Priority: 1500,

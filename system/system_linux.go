@@ -72,5 +72,5 @@ func Uninstall(dir string, ps *goolib.PkgSpec) error {
 // InstallableArchs returns a slice of archs supported by this machine.
 func InstallableArchs() ([]string, error) {
 	// Just return all archs as Linux builds are currently just used for testing.
-	return []string{"noarch", "x86_64", "x86_32", "arm"}, nil
+	return []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}, nil
 }

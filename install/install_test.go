@@ -59,6 +59,7 @@ func TestMinInstalled(t *testing.T) {
 		{"foo_pkg", "noarch", true},
 		{"foo_pkg", "", true},
 		{"foo_pkg", "x86_64", false},
+		{"foo_pkg", "arm64", false},
 		{"bar_pkg", "noarch", false},
 		{"baz_pkg", "noarch", false},
 	}
