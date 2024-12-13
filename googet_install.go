@@ -80,6 +80,11 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 		logger.Fatal(err)
 	}
 
+	downloader, err := client.NewDownloader(proxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	var rm client.RepoMap
 	for _, arg := range args {
 		if ext := filepath.Ext(arg); ext == ".goo" {
@@ -102,7 +107,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 
 		pi := goolib.PkgNameSplit(arg)
 		if cmd.reinstall {
-			if err := reinstall(ctx, pi, *state, cmd.redownload); err != nil {
+			if err := reinstall(ctx, pi, *state, cmd.redownload, downloader); err != nil {
 				logger.Errorf("Error reinstalling %s: %v", pi.Name, err)
 				exitCode = subcommands.ExitFailure
 				continue
@@ -116,7 +121,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 			if repos == nil {
 				logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 			}
-			rm = client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+			rm = downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
 		}
 		if pi.Ver == "" {
 			v, _, a, err := client.FindRepoLatest(pi, rm, archs)
@@ -161,7 +166,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 				continue
 			}
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -173,7 +178,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 	return exitCode
 }
 
-func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetState, rd bool) error {
+func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetState, rd bool, downloader *client.Downloader) error {
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
 		return fmt.Errorf("cannot reinstall something that is not already installed")
@@ -184,7 +189,7 @@ func reinstall(ctx context.Context, pi goolib.PackageInfo, state client.GooGetSt
 			return nil
 		}
 	}
-	if err := install.Reinstall(ctx, ps, state, rd, proxyServer); err != nil {
+	if err := install.Reinstall(ctx, ps, state, rd, downloader); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil

@@ -55,7 +55,12 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	downloader, err := client.NewDownloader(proxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	rm := downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
 	v, _, a, err := client.FindRepoLatest(pi, rm, archs)
 	if err != nil {
 		logger.Fatal(err)

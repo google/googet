@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/remove"
 	"github.com/google/logger"
@@ -50,6 +51,11 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	state, err := readState(sf)
 	if err != nil {
 		logger.Error(err)
+	}
+
+	downloader, err := client.NewDownloader(proxyServer)
+	if err != nil {
+		logger.Fatal(err)
 	}
 
 	for _, arg := range flags.Args() {
@@ -83,7 +89,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			}
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, proxyServer); err != nil {
+		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue

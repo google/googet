@@ -73,8 +73,13 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
+	downloader, err := client.NewDownloader(proxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	m := make(map[string][]string)
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
+	rm := downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
 	for r, repo := range rm {
 		for _, p := range repo.Packages {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)
