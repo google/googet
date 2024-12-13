@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/verify"
@@ -58,6 +59,11 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Error(err)
 	}
 
+	downloader, err := client.NewDownloader(proxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
 		ps, err := state.GetPackageState(pi)
@@ -80,7 +86,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			continue
 		}
 
-		v, err := verify.Command(ctx, ps, proxyServer)
+		v, err := verify.Command(ctx, ps, downloader)
 		if err != nil {
 			logger.Errorf("Error running verify command for %s: %v", pkg, err)
 			exitCode = subcommands.ExitFailure
@@ -99,7 +105,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
 			logger.Info(msg)
 			fmt.Println(msg)
-			if err := install.Reinstall(ctx, ps, *state, false, proxyServer); err != nil {
+			if err := install.Reinstall(ctx, ps, *state, false, downloader); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {

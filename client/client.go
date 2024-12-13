@@ -102,11 +102,43 @@ type Repo struct {
 // RepoMap describes each repo's packages as seen from a client.
 type RepoMap map[string]Repo
 
+// Downloader is a wrapper around http.Client
+type Downloader struct {
+	HTTPClient       *http.Client
+	UsingProxyServer bool
+}
+
+// NewDownloader returns a Downloader optionally using a specified proxyServer.
+func NewDownloader(proxyServer string) (*Downloader, error) {
+	httpClient := http.DefaultClient
+	proxy := http.ProxyFromEnvironment
+	if proxyServer != "" {
+		proxyURL, err := url.Parse(proxyServer)
+		if err != nil {
+			return nil, err
+		}
+		proxy = http.ProxyURL(proxyURL)
+	}
+	httpClient.Transport = &http.Transport{
+		Proxy: proxy,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &Downloader{HTTPClient: httpClient, UsingProxyServer: proxyServer != ""}, nil
+}
+
 // AvailableVersions builds a RepoMap from a list of sources.
-func AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cacheDir string, cacheLife time.Duration, proxyServer string) RepoMap {
+func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cacheDir string, cacheLife time.Duration) RepoMap {
 	rm := make(RepoMap)
 	for r, pri := range srcs {
-		rf, err := unmarshalRepoPackages(ctx, r, cacheDir, cacheLife, proxyServer)
+		rf, err := d.unmarshalRepoPackages(ctx, r, cacheDir, cacheLife)
 		if err != nil {
 			logger.Errorf("error reading repo %q: %v", r, err)
 			continue
@@ -117,6 +149,132 @@ func AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cach
 		}
 	}
 	return rm
+}
+
+// unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
+// if mtime is less than cacheLife.
+// Successfully unmarshalled contents will be written to a cache.
+func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
+	pName := strings.TrimPrefix(p, "oauth-")
+
+	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
+
+	fi, err := oswrap.Stat(cf)
+	if err == nil && time.Since(fi.ModTime()) < cacheLife {
+		logger.Infof("Using cached repo content for %s.", pName)
+		f, err := oswrap.Open(cf)
+		if err != nil {
+			return nil, err
+		}
+		var m []goolib.RepoSpec
+		dec := json.NewDecoder(f)
+		for dec.More() {
+			if err := dec.Decode(&m); err != nil {
+				return nil, err
+			}
+		}
+		return m, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
+
+	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
+	if isGCSURL {
+		return d.unmarshalRepoPackagesGCS(ctx, bucket, object, pName, cf)
+	}
+	return d.unmarshalRepoPackagesHTTP(ctx, p, cf)
+}
+
+// Get gets a url using an optional proxy server, retrying once on any error.
+func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, error) {
+	useOauth := strings.HasPrefix(path, "oauth-")
+	path = strings.TrimPrefix(path, "oauth-")
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if useOauth {
+		creds, err := google.FindDefaultCredentials(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain creds: %v", err)
+		}
+		token, err := creds.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain access token: %v", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+	}
+	resp, err := d.HTTPClient.Do(req)
+	// We retry on any error once as this mitigates some
+	// connection issues in certain situations.
+	if err == nil {
+		return resp, nil
+	}
+	return d.HTTPClient.Do(req)
+}
+
+func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+	indexURL := repoURL + "/index.gz"
+	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
+	ct := "application/x-gzip"
+	logger.Infof("Fetching %q", trimmedIndexURL)
+	res, err := d.Get(ctx, indexURL)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		indexURL = repoURL + "/index"
+		trimmedIndexURL = strings.TrimPrefix(indexURL, "oauth-")
+		ct = "application/json"
+		logger.Infof("Fetching %q", trimmedIndexURL)
+		res, err = d.Get(ctx, indexURL)
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
+		}
+	}
+	return decode(res.Body, ct, repoURL, cf)
+}
+
+func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
+	if d.UsingProxyServer {
+		logger.Errorf("Proxy server not supported with gs:// URLs, skipping repo 'gs://%s/%s'", bucket, object)
+		var empty []goolib.RepoSpec
+		return empty, nil
+	}
+
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bkt := client.Bucket(bucket)
+	if len(object) != 0 {
+		object += "/"
+	}
+
+	indexPath := object + "index.gz"
+	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
+	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
+		return decode(r, "application/x-gzip", url, cf)
+	}
+
+	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
+		return nil, err
+	}
+
+	logger.Info("Failed to read gzipped index, trying plain JSON.")
+	indexPath = object + "index"
+	r, err := bkt.Object(indexPath).NewReader(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return decode(r, "application/json", url, cf)
 }
 
 func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {
@@ -163,156 +321,6 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 	}
 
 	return m, f.Close()
-}
-
-// unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
-// if mtime is less than cacheLife.
-// Successfully unmarshalled contents will be written to a cache.
-func unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration, proxyServer string) ([]goolib.RepoSpec, error) {
-	pName := strings.TrimPrefix(p, "oauth-")
-
-	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
-
-	fi, err := oswrap.Stat(cf)
-	if err == nil && time.Since(fi.ModTime()) < cacheLife {
-		logger.Infof("Using cached repo content for %s.", pName)
-		f, err := oswrap.Open(cf)
-		if err != nil {
-			return nil, err
-		}
-		var m []goolib.RepoSpec
-		dec := json.NewDecoder(f)
-		for dec.More() {
-			if err := dec.Decode(&m); err != nil {
-				return nil, err
-			}
-		}
-		return m, nil
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
-
-	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
-	if isGCSURL {
-		return unmarshalRepoPackagesGCS(ctx, bucket, object, pName, cf, proxyServer)
-	}
-	return unmarshalRepoPackagesHTTP(ctx, p, cf, proxyServer)
-}
-
-// Get gets a url using an optional proxy server, retrying once on any error.
-func Get(ctx context.Context, path, proxyServer string) (*http.Response, error) {
-	httpClient := http.DefaultClient
-	proxy := http.ProxyFromEnvironment
-	if proxyServer != "" {
-		proxyURL, err := url.Parse(proxyServer)
-		if err != nil {
-			return nil, err
-		}
-		proxy = http.ProxyURL(proxyURL)
-	}
-	httpClient.Transport = &http.Transport{
-		Proxy: proxy,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-	useOauth := strings.HasPrefix(path, "oauth-")
-	path = strings.TrimPrefix(path, "oauth-")
-	req, err := http.NewRequest(http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if useOauth {
-		creds, err := google.FindDefaultCredentials(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain creds: %v", err)
-		}
-		token, err := creds.TokenSource.Token()
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain access token: %v", err)
-		}
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
-	}
-	resp, err := httpClient.Do(req)
-	// We retry on any error once as this mitigates some
-	// connection issues in certain situations.
-	if err == nil {
-		return resp, nil
-	}
-	return httpClient.Do(req)
-}
-
-func unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
-	indexURL := repoURL + "/index.gz"
-	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
-	ct := "application/x-gzip"
-	logger.Infof("Fetching %q", trimmedIndexURL)
-	res, err := Get(ctx, indexURL, proxyServer)
-	if err != nil {
-		return nil, err
-	}
-
-	if err != nil || res.StatusCode != 200 {
-		//logger.Infof("Gzipped index returned status: %q, trying plain JSON.", res.Status)
-		indexURL = repoURL + "/index"
-		ct = "application/json"
-		logger.Infof("Fetching %q", trimmedIndexURL)
-		res, err = Get(ctx, indexURL, proxyServer)
-		if err != nil {
-			return nil, err
-		}
-
-		if res.StatusCode != 200 {
-			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
-		}
-	}
-
-	return decode(res.Body, ct, repoURL, cf)
-}
-
-func unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string, proxyServer string) ([]goolib.RepoSpec, error) {
-	if proxyServer != "" {
-		logger.Errorf("Proxy server not supported with gs:// URLs, skiping repo 'gs://%s/%s'", bucket, object)
-		var empty []goolib.RepoSpec
-		return empty, nil
-	}
-
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	bkt := client.Bucket(bucket)
-	if len(object) != 0 {
-		object += "/"
-	}
-
-	indexPath := object + "index.gz"
-	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
-	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
-		return decode(r, "application/x-gzip", url, cf)
-	}
-
-	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
-		return nil, err
-	}
-
-	logger.Info("Failed to read gzipped index, trying plain JSON.")
-	indexPath = object + "index"
-	r, err := bkt.Object(indexPath).NewReader(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return decode(r, "application/json", url, cf)
 }
 
 // FindRepoSpec returns the RepoSpec in repo whose PackageSpec matches pi.
