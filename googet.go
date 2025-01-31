@@ -60,6 +60,9 @@ var (
 	proxyServer    string
 	allowUnsafeURL bool
 	lockFile       string
+
+	// Optional function to handle flag parsing. If unset, we use flag.Parse.
+	flagParse func()
 )
 
 type packageMap map[string]string
@@ -471,15 +474,16 @@ func obtainLock(lockFile string) error {
 }
 
 func main() {
-	ggFlags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ContinueOnError)
-	ggFlags.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
-	ggFlags.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
-	ggFlags.BoolVar(&verbose, "verbose", false, "print info level logs to stdout")
-	ggFlags.BoolVar(&systemLog, "system_log", true, "log to Linux Syslog or Windows Event Log")
-	ggFlags.BoolVar(&showVer, "version", false, "display GooGet version and exit")
+	flag.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
+	flag.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
+	flag.BoolVar(&verbose, "verbose", false, "print info level logs to stdout")
+	flag.BoolVar(&systemLog, "system_log", true, "log to Linux Syslog or Windows Event Log")
+	flag.BoolVar(&showVer, "version", false, "display GooGet version and exit")
 
-	if err := ggFlags.Parse(os.Args[1:]); err != nil && err != flag.ErrHelp {
-		logger.Fatal(err)
+	if flagParse != nil {
+		flagParse()
+	} else {
+		flag.Parse()
 	}
 
 	if showVer {
@@ -487,7 +491,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	cmdr := subcommands.NewCommander(ggFlags, "googet")
+	cmdr := subcommands.NewCommander(flag.CommandLine, "googet")
 	cmdr.Register(cmdr.FlagsCommand(), "")
 	cmdr.Register(cmdr.CommandsCommand(), "")
 	cmdr.Register(cmdr.HelpCommand(), "")
@@ -508,7 +512,7 @@ func main() {
 	cmdr.ImportantFlag("noconfirm")
 
 	nonLockingCommands := []string{"help", "commands", "flags"}
-	if ggFlags.NArg() == 0 || goolib.ContainsString(ggFlags.Args()[0], nonLockingCommands) {
+	if flag.NArg() == 0 || goolib.ContainsString(flag.Args()[0], nonLockingCommands) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
