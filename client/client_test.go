@@ -268,7 +268,11 @@ func TestUnmarshalRepoPackagesJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -313,7 +317,11 @@ func TestUnmarshalRepoPackagesGzip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -351,7 +359,11 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 
 	// No http server as this should use the cached content.
-	got, err := unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}

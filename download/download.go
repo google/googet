@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -37,34 +38,30 @@ import (
 	"github.com/google/logger"
 )
 
-const (
-	httpOK = 200
-)
-
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error {
+func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
 	if err := oswrap.RemoveAll(dst); err != nil {
 		return err
 	}
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
 	if isGCSURL {
-		return packageGCS(ctx, bucket, object, dst, chksum, "")
+		return packageGCS(ctx, bucket, object, dst, chksum)
 	}
 
-	return packageHTTP(ctx, pkgURL, dst, chksum, proxyServer)
+	return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
 }
 
 // Downloads a package from an HTTP(s) server
-func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string) error {
-	resp, err := client.Get(ctx, pkgURL, proxyServer)
+func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
+	resp, err := downloader.Get(ctx, pkgURL)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != httpOK {
-		return fmt.Errorf("Invalid return code from server, got: %d, want: %d", resp.StatusCode, httpOK)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("invalid return code from server, got: %d, want: %d", resp.StatusCode, http.StatusOK)
 	}
 
 	logger.Infof("Downloading %q", pkgURL)
@@ -72,11 +69,7 @@ func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer st
 }
 
 // Downloads a package from Google Cloud Storage
-func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, proxyServer string) error {
-	if proxyServer != "" {
-		return fmt.Errorf("Proxy server not supported with GCS URLs")
-	}
-
+func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) error {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
@@ -94,7 +87,7 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, 
 }
 
 // FromRepo downloads a package from a repo.
-func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxyServer string) (string, error) {
+func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloader *client.Downloader) (string, error) {
 	repoURL, err := url.Parse(repo)
 	if err != nil {
 		return "", err
@@ -114,11 +107,11 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxySe
 
 	pn := goolib.PackageInfo{Name: rs.PackageSpec.Name, Arch: rs.PackageSpec.Arch, Ver: rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
-	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, proxyServer)
+	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, downloader)
 }
 
 // Latest downloads the latest available version of a package.
-func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, proxyServer string) (string, error) {
+func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, error) {
 	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
 		return "", err
@@ -127,7 +120,7 @@ func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []st
 	if err != nil {
 		return "", err
 	}
-	return FromRepo(ctx, rs, repo, dir, proxyServer)
+	return FromRepo(ctx, rs, repo, dir, downloader)
 }
 
 func download(r io.Reader, dst, chksum string) (err error) {
@@ -159,7 +152,7 @@ func download(r io.Reader, dst, chksum string) (err error) {
 }
 
 // ExtractPkg takes a path to a package and extracts it to a directory based on the
-// package name, it returns the path to the extraced directory.
+// package name, it returns the path to the extracted directory.
 func ExtractPkg(src string) (dst string, err error) {
 	dst = strings.TrimSuffix(src, filepath.Ext(src))
 	if src == "" || dst == "" {

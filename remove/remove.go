@@ -28,7 +28,7 @@ import (
 	"github.com/google/logger"
 )
 
-func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, downloader *client.Downloader) error {
 	logger.Infof("Executing removal of package %q", pi.Name)
 	ps, err := state.GetPackageState(pi)
 	if err != nil {
@@ -65,7 +65,7 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 			if ps.DownloadURL == "" {
 				return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
 			}
-			if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+			if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
 				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it form the database: %v", pi.Name, pi.Arch, pi.Ver, err)
 			}
 		}
@@ -161,19 +161,19 @@ func EnumerateDeps(pi goolib.PackageInfo, state client.GooGetState) (DepMap, []s
 	return dm, dl
 }
 
-// All removes a package and all dependant packages. Packages with no dependant packages
+// All removes a package and all dependent packages. Packages with no dependent packages
 // will be removed first.
-func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, proxyServer string) error {
+func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, downloader *client.Downloader) error {
 	for len(deps) > 1 {
 		for dep := range deps {
 			if len(deps[dep]) == 0 {
 				di := goolib.PkgNameSplit(dep)
-				if err := uninstallPkg(ctx, di, state, dbOnly, proxyServer); err != nil {
+				if err := uninstallPkg(ctx, di, state, dbOnly, downloader); err != nil {
 					return err
 				}
 				deps.remove(dep)
 			}
 		}
 	}
-	return uninstallPkg(ctx, pi, state, dbOnly, proxyServer)
+	return uninstallPkg(ctx, pi, state, dbOnly, downloader)
 }
