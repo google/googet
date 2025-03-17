@@ -41,31 +41,83 @@ import (
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
-	if err := oswrap.RemoveAll(dst); err != nil {
-		return err
-	}
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
 	if isGCSURL {
+		if err := oswrap.RemoveAll(dst); err != nil {
+			return err
+		}
 		return packageGCS(ctx, bucket, object, dst, chksum)
 	}
 
 	return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
 }
 
-// Downloads a package from an HTTP(s) server
-func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
-	resp, err := downloader.Get(ctx, pkgURL)
+// packageHTTP downloads a package from an HTTP(S) server.
+func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) error {
+	// Try to open any already existing file, otherwise create new file.
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Hash the contents of the existing file.
+	hash := sha256.New()
+	size, err := io.Copy(hash, f)
+	if err != nil {
+		return err
+	}
+	// If the file checksum matches what we expect, then the file is already
+	// downloaded and we can quit early.
+	if sum := hex.EncodeToString(hash.Sum(nil)); sum == chksum {
+		logger.Infof("using existing file: %s (sum = %s)", dst, sum)
+		return nil
+	}
+	// Otherwise we have either an empty or partial download.
+	// Check that the server supports ranged requests and that the
+	// existing file is smaller than what we want to download.
+	logger.Infof("existing file size: %d", size)
+	ok, length, err := downloader.CanResume(url)
+	if err != nil {
+		logger.Errorf("CanResume: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	if ok && size < length {
+		logger.Infof("resuming download of %s (%d bytes remaining)", url, length-size)
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-", size))
+	} else {
+		// Get rid of the old file and download from start, resetting hash.
+		if err := f.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			return err
+		}
+		hash.Reset()
+	}
+	resp, err := downloader.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("invalid return code from server, got: %d, want: %d", resp.StatusCode, http.StatusOK)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("downloading %s: %v", url, err)
 	}
-
-	logger.Infof("Downloading %q", pkgURL)
-	return download(resp.Body, dst, chksum)
+	// Continue hashing the file as we download it.
+	n, err := io.Copy(io.MultiWriter(hash, f), resp.Body)
+	if err != nil {
+		return fmt.Errorf("downloading %s: %v", url, err)
+	}
+	// Verify the checksum of the fully downloaded file.
+	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
+		os.RemoveAll(dst) // delete the bad file
+		return fmt.Errorf("checksum doesn't match: got %s, want %s", sum, chksum)
+	}
+	logger.Infof("Successfully downloaded %s bytes", humanize.IBytes(uint64(n)))
+	return nil
 }
 
 // Downloads a package from Google Cloud Storage

@@ -187,6 +187,22 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 	return d.unmarshalRepoPackagesHTTP(ctx, p, cf)
 }
 
+// CanResume returns true if we can resume downloading the specified url.
+func (d *Downloader) CanResume(url string) (bool, int64, error) {
+	resp, err := d.HTTPClient.Head(url)
+	if err != nil {
+		return false, 0, err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, 0, err
+	}
+	if resp.Header.Get("Accept-Ranges") == "bytes" && resp.ContentLength >= 0 {
+		return true, resp.ContentLength, nil
+	}
+	return false, 0, nil
+}
+
 // Get gets a url using an optional proxy server, retrying once on any error.
 func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, error) {
 	useOauth := strings.HasPrefix(path, "oauth-")
