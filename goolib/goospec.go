@@ -159,13 +159,12 @@ func fixVer(ver string) string {
 	}
 	out := []string{"0", "0", "0"}
 	nums := strings.SplitN(ver, ".", 3)
-	offset := len(out) - len(nums)
 	for i, str := range nums {
 		trimmed := strings.TrimLeft(str, "0")
 		if trimmed == "" {
 			trimmed = "0"
 		}
-		out[i+offset] = trimmed
+		out[i] = trimmed
 	}
 	return strings.Join(out, ".") + suffix
 }
@@ -189,8 +188,7 @@ func ComparePriorityVersion(p1 priority.Value, v1 string, p2 priority.Value, v2 
 func ParseVersion(ver string) (Version, error) {
 	v := strings.SplitN(ver, "@", 2)
 	v[0] = fixVer(v[0])
-
-	sv, err := semver.Parse(v[0])
+	sv, err := semver.ParseTolerant(v[0])
 	if err != nil {
 		return Version{}, err
 	}

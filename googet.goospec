@@ -1,4 +1,4 @@
-{{$version := "2.21.0@0" -}}
+{{$version := "2.21.1@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "2.21.1 - Remove offsets for semver to better support upgrading versions from X.X.X to Y.Y"
     "2.21.0 - Add arm64 arch support.",
     "2.20.0 - Add installdate metadata to registry key for consumption by external tools.",
     "2.19.0 - Updated to Go 1.19.",
