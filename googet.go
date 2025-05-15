@@ -566,7 +566,6 @@ func main() {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up repo directory: %v", err)
 	}
-	fmt.Printf("%v", cmdr.Name())
 	es := cmdr.Execute(context.Background())
 	runDeferredFuncs()
 	os.Exit(int(es))
