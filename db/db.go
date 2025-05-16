@@ -18,10 +18,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"path/filepath"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -34,7 +34,6 @@ import (
 const (
 	stateQuery = `INSERT or REPLACE INTO InstalledPackages (PkgName, PkgVer, PkgArch, PkgJson) VALUES (
 		?, ?, ?, ?)`
-
 )
 
 type gooDB struct {
@@ -98,11 +97,10 @@ func (g *gooDB) WriteStateToDB(gooState *client.GooGetState) error {
 	return nil
 }
 
-func (g *gooDB) addPkg(pkgState client.PackageState) error{
+func (g *gooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec.Authors, pkgState.LocalPath, spec.Name, filepath.Ext(spec.Install.Path))
-	
-	
+
 	tx, err := g.db.Begin()
 	if err != nil {
 		return err
