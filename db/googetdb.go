@@ -12,7 +12,7 @@ limitations under the License.
 */
 
 // Package db manages the googet state sqlite database.
-package db
+package googetdb
 
 import (
 	"context"

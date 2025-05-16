@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/db"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/priority"

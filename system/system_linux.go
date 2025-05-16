@@ -76,5 +76,5 @@ func InstallableArchs() ([]string, error) {
 }
 
 func AppAssociation(publisher, installSource, programName, extension string) (string, string) {
-	return "",""
+	return "", ""
 }

@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package db
+package googetdb
 
 import (
 	"bytes"
@@ -30,10 +30,18 @@ func TestConvertStatetoDB(t *testing.T) {
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
-	goodb.WriteStateToDB(s)
-	// Marshal to json to avoid differences in null fields in nested structs.
-	got, _ := json.Marshal(goodb.FetchPkgs())
-	want, _ := json.Marshal(s)
+	pkgs, err := goodb.FetchPkgs()
+	if err != nil {
+		t.Errorf("Unable to fetch packages: %v", err)
+	}
+	got, err := json.Marshal(pkgs)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+	want, err := json.Marshal(r)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", got, want)
 	}
@@ -54,8 +62,18 @@ func TestRemovePackage(t *testing.T) {
 	}
 	goodb.RemovePkg("test2")
 	// Marshal to json to avoid legacy issues in null fields in nested structs.
-	got, _ := json.Marshal(goodb.FetchPkgs())
-	want, _ := json.Marshal(r)
+	pkgs, err := goodb.FetchPkgs()
+	if err != nil {
+		t.Errorf("Unable to fetch packages: %v", err)
+	}
+	got, err := json.Marshal(pkgs)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
+	want, err := json.Marshal(r)
+	if err != nil {
+		t.Errorf("%v", err)
+	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", got, want)
 	}

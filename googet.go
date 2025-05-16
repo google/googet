@@ -20,7 +20,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/google/googet/v2/db"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -31,6 +30,7 @@ import (
 
 	"github.com/go-yaml/yaml"
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/system"
@@ -527,7 +527,7 @@ func main() {
 	dbPath := filepath.Join(rootDir, dbFile)
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		fmt.Println("Creating Googet DB and converting State file...")
-		goodb, err := db.NewDB(dbPath)
+		goodb, err := googetdb.NewDB(dbPath)
 		if err != nil {
 			logger.Fatalf("Unable to create initial db file. If db is not created, run again as admin: %v", err)
 		}
