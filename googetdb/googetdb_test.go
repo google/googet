@@ -60,7 +60,7 @@ func TestRemovePackage(t *testing.T) {
 	r := &client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
 	}
-	goodb.RemovePkg("test2")
+	goodb.RemovePkg("test2", "")
 	// Marshal to json to avoid legacy issues in null fields in nested structs.
 	pkgs, err := goodb.FetchPkgs()
 	if err != nil {

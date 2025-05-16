@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
 )
