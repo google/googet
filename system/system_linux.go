@@ -74,3 +74,7 @@ func InstallableArchs() ([]string, error) {
 	// Just return all archs as Linux builds are currently just used for testing.
 	return []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}, nil
 }
+
+func AppAssociation(publisher, installSource, programName, extension string) (string, string) {
+	return "",""
+}

@@ -39,11 +39,18 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
+type InstalledApplication struct {
+	Name string
+	Reg  string
+}
+
 // PackageState describes the state of a package on a client.
 type PackageState struct {
 	SourceRepo, DownloadURL, Checksum, LocalPath, UnpackDir string
 	PackageSpec                                             *goolib.PkgSpec
 	InstalledFiles                                          map[string]string
+	InstallDate                                             int
+	InstalledApp                                            InstalledApplication
 }
 
 // GooGetState describes the overall package state on a client.

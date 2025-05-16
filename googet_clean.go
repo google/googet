@@ -61,12 +61,15 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 
 func cleanPackages(pl []string) {
 	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
-	state := goodb.FetchPkgs()
+	if err != nil {
+		logger.Fatal(err)
+	}
+	state, err := goodb.FetchPkgs()
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	for _, pkg := range *state {
+	for _, pkg := range state {
 		if goolib.ContainsString(pkg.PackageSpec.Name, pl) {
 			if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
 				logger.Error(err)

@@ -74,7 +74,7 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 		if err != nil {
 			return err
 		}
-		if err := system.Uninstall(eDir, ps.PackageSpec); err != nil {
+		if err := system.Uninstall(eDir, &ps); err != nil {
 			return err
 		}
 

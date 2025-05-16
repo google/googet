@@ -95,7 +95,10 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 					continue
 				}
 			}
-			state = *goodb.FetchPkgs()
+			state, err = goodb.FetchPkgs()
+			if err != nil {
+				logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+			}
 			insPkg, err := install.FromDisk(arg, cache, &state, cmd.dbOnly, cmd.reinstall)
 			if err != nil {
 				logger.Errorf("Error installing %s: %v", arg, err)
@@ -109,7 +112,11 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 		}
 
 		pi := goolib.PkgNameSplit(arg)
-		state = append(state, *goodb.FetchPkg(pi.Name))
+		pkgState, err := goodb.FetchPkg(pi.Name)
+		if err != nil {
+			logger.Fatalf("Unable to fetch %v: %v", pi.Name, err)
+		}
+		state = append(state, pkgState)
 		if cmd.reinstall {
 			if err := reinstall(ctx, pi, state, cmd.redownload, downloader); err != nil {
 				logger.Errorf("Error reinstalling %s: %v", pi.Name, err)

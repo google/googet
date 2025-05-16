@@ -53,9 +53,12 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		logger.Fatal(err)
 	}
 	cache := filepath.Join(rootDir, cacheDir)
-	state := goodb.FetchPkgs()
+	state, err := goodb.FetchPkgs()
+	if err != nil {
+		logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+	}
 
-	pm := installedPackages(*state)
+	pm := installedPackages(state)
 	if len(pm) == 0 {
 		fmt.Println("No packages installed.")
 		return subcommands.ExitSuccess
@@ -94,7 +97,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, downloader); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, &state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue

@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -32,8 +33,9 @@ import (
 )
 
 type installedCmd struct {
-	info  bool
-	files bool
+	info   bool
+	files  bool
+	format string
 }
 
 func (*installedCmd) Name() string     { return "installed" }
@@ -48,10 +50,12 @@ func (*installedCmd) Usage() string {
 func (cmd *installedCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.info, "info", false, "display package info")
 	f.BoolVar(&cmd.files, "files", false, "display package file list")
+	f.StringVar(&cmd.format, "format", "simple", "Formatting of the output. Supported outputs: simple, json")
 }
 
 func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	var state client.GooGetState
+	var exitCode subcommands.ExitStatus
 	var displayText string
 	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
@@ -59,23 +63,44 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	}
 	switch f.NArg() {
 	case 0:
-		state = *goodb.FetchPkgs()
-		displayText = "Installed packages:"
+		state, err = goodb.FetchPkgs()
+		if err != nil {
+			logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+		}
+		displayText = "Installed packages:\n"
 	case 1:
-		state = append(state, *goodb.FetchPkg(f.Arg(0)))
+		pkg, err := goodb.FetchPkg(f.Arg(0))
+		if err != nil {
+			logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+		}
+		if pkg.PackageSpec != nil {
+			state = append(state, pkg)
+		}
 		displayText = fmt.Sprintf("Installed packages matching %q:\n", f.Arg(0))
+		if len(state) == 0 {
+			displayText = fmt.Sprintf("No package matching filter %q installed.\n", f.Arg(0))
+		}
 	default:
 		fmt.Fprintln(os.Stderr, "Excessive arguments")
 		f.Usage()
 		return subcommands.ExitUsageError
 	}
 
-	pm := installedPackages(state)
-	if len(pm) == 0 {
-		fmt.Println("No packages installed.")
-		return subcommands.ExitSuccess
+	switch cmd.format {
+	case "simple":
+		exitCode = cmd.formatSimple(state, displayText)
+	case "json":
+		exitCode = cmd.formatJson(&state)
+	default:
+		fmt.Fprintln(os.Stderr, "Invalid format")
+		f.Usage()
+		return subcommands.ExitUsageError
 	}
+	return exitCode
+}
 
+func (cmd *installedCmd) formatSimple(state client.GooGetState, displayText string) subcommands.ExitStatus {
+	pm := installedPackages(state)
 	var pl []string
 	for p, v := range pm {
 		pl = append(pl, p+"."+v)
@@ -108,12 +133,19 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 				fmt.Println("  -", file)
 			}
 		}
-
-	}
-	if exitCode != subcommands.ExitSuccess {
-		fmt.Fprintf(os.Stderr, "No package matching filter %q installed.\n", f.Arg(0))
 	}
 	return exitCode
+}
+
+func (cmd *installedCmd) formatJson(state *client.GooGetState) subcommands.ExitStatus {
+	marshaled, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		logger.Fatalf("marshaling error: %s", err)
+	}
+	if string(marshaled) != "null" {
+		fmt.Println(string(marshaled))
+	}
+	return subcommands.ExitSuccess
 }
 
 func local(pi goolib.PackageInfo, state client.GooGetState) {
