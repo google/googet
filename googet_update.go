@@ -48,7 +48,7 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
+	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}

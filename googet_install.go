@@ -52,7 +52,7 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
+	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}

@@ -26,7 +26,7 @@ import (
 	"sort"
 
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/db"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -57,7 +57,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	var state client.GooGetState
 	var exitCode subcommands.ExitStatus
 	var displayText string
-	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
+	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}
