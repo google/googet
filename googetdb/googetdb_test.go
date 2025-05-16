@@ -38,7 +38,7 @@ func TestConvertStatetoDB(t *testing.T) {
 	if err != nil {
 		t.Errorf("%v", err)
 	}
-	want, err := json.Marshal(r)
+	want, err := json.Marshal(s)
 	if err != nil {
 		t.Errorf("%v", err)
 	}
