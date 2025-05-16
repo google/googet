@@ -23,7 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/db"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
@@ -239,7 +239,7 @@ func TestCleanPackages(t *testing.T) {
 		},
 	}
 
-	goodb, err := db.NewDB(filepath.Join(rootDir, dbFile))
+	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		t.Fatal(err)
 	}
