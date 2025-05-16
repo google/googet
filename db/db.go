@@ -46,7 +46,10 @@ func NewDB(dbFile string) (*gooDB, error) {
 	var gdb gooDB
 	var err error
 	if _, err := os.Stat(dbFile); errors.Is(err, os.ErrNotExist) {
-		gdb.db, _ = createDB(dbFile)
+		gdb.db, err = createDB(dbFile)
+		if err != nil {
+			return nil, err
+		}
 		return &gdb, nil
 	}
 	gdb.db, err = sql.Open("sqlite", dbFile)
@@ -133,7 +136,7 @@ func (g *gooDB) RemovePkg(packageName, arch string) error {
 	return nil
 }
 
-// FetchPkg exports a sinfle package from the googet database
+// FetchPkg exports a single package from the googet database
 func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 	var pkgState client.PackageState
 
