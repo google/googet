@@ -85,7 +85,6 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 			return "", ""
 		}
 		reg, _ := k.ReadSubKeyNames(-1)
-
 		defer k.Close()
 		for _, v := range reg {
 			productReg := fmt.Sprintf("%s%s", productroot, v)
@@ -98,7 +97,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 			if err != nil {
 				continue
 			}
-
+				
 			switch extension {
 			case ".msi":
 				a, _, err := q.GetStringValue("InstallSource")
@@ -131,6 +130,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 				// Check if Package name is in display name removing spaces
 				if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, " ", "")), strings.ToLower(programName)) {
 					// Check if the value exists, move on if it doesn't
+
 					return displayName, productReg
 				}
 				// Check if Package name is in display name removing dashes
@@ -148,11 +148,12 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 					continue
 				}
 				iS := strings.Split(installSource, "@")
-				if strings.Contains(a, iS[0]) {
-
+				if strings.Contains(a, iS[0]) && installSource != ""{
+					fmt.Println(installSource)
 					return displayName, productReg
 				}
 			}
+
 		}
 
 	}

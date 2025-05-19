@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -100,7 +101,7 @@ func (g *gooDB) WriteStateToDB(gooState *client.GooGetState) error {
 func (g *gooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec.Authors, pkgState.LocalPath, spec.Name, filepath.Ext(spec.Install.Path))
-
+	pkgState.InstallDate = int(time.Now().Unix())
 	tx, err := g.db.Begin()
 	if err != nil {
 		return err

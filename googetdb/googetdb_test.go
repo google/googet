@@ -14,11 +14,14 @@ limitations under the License.
 package googetdb
 
 import (
+	"encoding/json"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"os"
-	"reflect"
 	"testing"
+	"fmt"
 )
 
 func TestConvertStatetoDB(t *testing.T) {
@@ -27,7 +30,7 @@ func TestConvertStatetoDB(t *testing.T) {
 		t.Errorf("Unable to create database: %+v", err)
 	}
 	s := &client.GooGetState{
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
 	err = goodb.WriteStateToDB(s)
@@ -38,7 +41,7 @@ func TestConvertStatetoDB(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	if !reflect.DeepEqual(s, pkgs) {
+	if !cmp.Equal(s, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")) {
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
 	os.Remove("state.db")
@@ -50,22 +53,37 @@ func TestRemovePackage(t *testing.T) {
 		t.Errorf("Unable to create database: %+v", err)
 	}
 	s := &client.GooGetState{
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
 	goodb.WriteStateToDB(s)
 	r := &client.GooGetState{
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 	}
 	goodb.RemovePkg("test2", "")
 	// Marshal to json to avoid legacy issues in null fields in nested structs.
 	pkgs, err := goodb.FetchPkgs()
+	jsonData, err := json.MarshalIndent(pkgs, "", "\t")
+	if err != nil {
+		//log.Fatal(err)
+	}
+
+	fmt.Println(string(jsonData)) 
+	jsonDat2, err := json.MarshalIndent(r, "", "\t")
+	if err != nil {
+		//log.Fatal(err)
+	}
+
+	fmt.Println(string(jsonDat2)) 
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	if !reflect.DeepEqual(r, pkgs) {
-		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, r)
+	if !cmp.Equal(r, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")) {
+		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
 	os.Remove("state.db")
+}
+
+func compareState(got, want client.GooGetState) {
 
 }
