@@ -14,15 +14,15 @@ limitations under the License.
 package googetdb
 
 import (
-	"bytes"
-	"encoding/json"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"os"
+	"reflect"
 	"testing"
 )
 
 func TestConvertStatetoDB(t *testing.T) {
-	goodb, err := NewDB("c:\\state.db")
+	goodb, err := NewDB("state.db")
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
@@ -30,25 +30,22 @@ func TestConvertStatetoDB(t *testing.T) {
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
+	err = goodb.WriteStateToDB(s)
+	if err != nil {
+		t.Errorf("Unable to write packages to db: %v", err)
+	}
 	pkgs, err := goodb.FetchPkgs()
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	got, err := json.Marshal(pkgs)
-	if err != nil {
-		t.Errorf("%v", err)
+	if !reflect.DeepEqual(s, pkgs) {
+		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
-	want, err := json.Marshal(s)
-	if err != nil {
-		t.Errorf("%v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", got, want)
-	}
+	os.Remove("state.db")
 }
 
 func TestRemovePackage(t *testing.T) {
-	goodb, err := NewDB("c:\\state.db")
+	goodb, err := NewDB("state.db")
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
@@ -66,15 +63,9 @@ func TestRemovePackage(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	got, err := json.Marshal(pkgs)
-	if err != nil {
-		t.Errorf("%v", err)
+	if !reflect.DeepEqual(r, pkgs) {
+		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, r)
 	}
-	want, err := json.Marshal(r)
-	if err != nil {
-		t.Errorf("%v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", got, want)
-	}
+	os.Remove("state.db")
+
 }
