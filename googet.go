@@ -524,28 +524,34 @@ func main() {
 	if err := os.MkdirAll(rootDir, 0774); err != nil {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
+	lockFile = filepath.Join(rootDir, "googet.lock")
 	dbPath := filepath.Join(rootDir, dbFile)
+	// TODO: Remove this conversion code when state code is cleaned up.
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		fmt.Println("Creating Googet DB and converting State file...")
-		goodb, err := googetdb.NewDB(dbPath)
+		db, err := googetdb.NewDB(dbPath)
 		if err != nil {
 			logger.Fatalf("Unable to create initial db file. If db is not created, run again as admin: %v", err)
 		}
-		//check to see if state file still exists, then convert and remove old state.
+		//check to see if state file still exists, then convert and remove old state. Request lock.
 		sf := filepath.Join(rootDir, stateFile)
+		if err := obtainLock(lockFile); err != nil {
+			logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
+		}
 		state, err := readState(sf)
 		if err != nil {
 			logger.Fatal(err)
 		}
-		goodb.WriteStateToDB(state)
-	}
-	// Allow installed to run through sql db creation
-	if flag.Args()[0] == "installed" {
-		os.Exit(int(cmdr.Execute(context.Background())))
-	}
-	lockFile = filepath.Join(rootDir, "googet.lock")
-	if err := obtainLock(lockFile); err != nil {
-		logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
+		db.WriteStateToDB(state)
+	} else {
+		// Allow installed to run through sql db creation
+		if flag.Args()[0] == "installed" {
+			os.Exit(int(cmdr.Execute(context.Background())))
+		}
+		// If we converted the db, we don't want to request the lock twice.
+		if err := obtainLock(lockFile); err != nil {
+			logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
+		}
 	}
 	readConf(filepath.Join(rootDir, confFile))
 

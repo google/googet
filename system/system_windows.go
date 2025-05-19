@@ -97,7 +97,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 			if err != nil {
 				continue
 			}
-				
+
 			switch extension {
 			case ".msi":
 				a, _, err := q.GetStringValue("InstallSource")
@@ -148,7 +148,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 					continue
 				}
 				iS := strings.Split(installSource, "@")
-				if strings.Contains(a, iS[0]) && installSource != ""{
+				if strings.Contains(a, iS[0]) && installSource != "" {
 					fmt.Println(installSource)
 					return displayName, productReg
 				}

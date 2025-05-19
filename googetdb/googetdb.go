@@ -20,11 +20,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+	"time"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/system"
@@ -33,7 +31,7 @@ import (
 )
 
 const (
-	stateQuery = `INSERT or REPLACE INTO InstalledPackages (PkgName, PkgVer, PkgArch, PkgJson) VALUES (
+	stateQuery = `INSERT or REPLACE INTO InstalledPackages (pkg_name, pkg_ver, pkg_arch, pkg_json) VALUES (
 		?, ?, ?, ?)`
 )
 
@@ -69,11 +67,11 @@ func createDB(dbFile string) (*sql.DB, error) {
 	createDBQuery := `BEGIN;
 	CREATE TABLE IF NOT EXISTS InstalledPackages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			PkgName TEXT NOT NULL,
-			PkgArch TEXT NOT NULL,
-			PkgVer TEXT NOT NULL,
-			PkgJson BLOB NOT NULL,
-			UNIQUE(PkgName, PkgArch) ON CONFLICT REPLACE
+			pkg_name TEXT NOT NULL,
+			pkg_arch TEXT NOT NULL,
+			pkg_ver TEXT NOT NULL,
+			pkg_json BLOB NOT NULL,
+			UNIQUE(pkg_name, pkg_arch) ON CONFLICT REPLACE
 		) STRICT;
 	COMMIT;
 		`
@@ -101,7 +99,7 @@ func (g *gooDB) WriteStateToDB(gooState *client.GooGetState) error {
 func (g *gooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec.Authors, pkgState.LocalPath, spec.Name, filepath.Ext(spec.Install.Path))
-	pkgState.InstallDate = int(time.Now().Unix())
+	pkgState.InstallDate = time.Now().Unix()
 	tx, err := g.db.Begin()
 	if err != nil {
 		return err
@@ -125,7 +123,7 @@ func (g *gooDB) addPkg(pkgState client.PackageState) error {
 // RemovePkg removes a single package from the googet database
 func (g *gooDB) RemovePkg(packageName, arch string) error {
 	removeQuery := fmt.Sprintf(`BEGIN;
-	DELETE FROM InstalledPackages where PkgName = '%v' and PkgArch = '%v';
+	DELETE FROM InstalledPackages where pkg_name = '%v' and pkg_arch = '%v';
 	COMMIT;`, packageName, arch)
 
 	_, err := g.db.ExecContext(context.Background(), removeQuery)
@@ -141,16 +139,16 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 
 	selectSpecQuery :=
 		`SELECT 
-			PkgJson
+			pkg_json
 		FROM
 			InstalledPackages
-		WHERE PkgName = ?
-		ORDER BY PkgName
+		WHERE pkg_name = ?
+		ORDER BY pkg_name
 		`
 	spec, err := g.db.Query(selectSpecQuery, pkgName)
 	defer spec.Close()
 	if err != nil {
-		fmt.Printf("%v", err)
+		return client.PackageState{}, nil
 	}
 	for spec.Next() {
 		var jsonState string
@@ -166,9 +164,9 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 func (g *gooDB) FetchPkgs() (client.GooGetState, error) {
 	var state client.GooGetState
 
-	pkgs, err := g.db.Query(`Select PkgName from InstalledPackages`)
+	pkgs, err := g.db.Query(`Select pkg_name from InstalledPackages`)
 	if err != nil {
-		fmt.Printf("%v", err)
+		return nil, err
 	}
 	for pkgs.Next() {
 		var pkgName string
@@ -184,17 +182,4 @@ func (g *gooDB) FetchPkgs() (client.GooGetState, error) {
 	}
 
 	return state, nil
-}
-
-func processExitCodes(eCodes string) []int {
-	e := strings.Split(eCodes, ",")
-	var err error
-	codes := make([]int, len(e))
-	for i, v := range e {
-		codes[i], err = strconv.Atoi(v)
-		if err != nil {
-
-		}
-	}
-	return codes
 }

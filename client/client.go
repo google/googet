@@ -40,7 +40,9 @@ import (
 )
 
 type InstalledApplication struct {
+	// Display Name of the installed application found in the registry
 	Name string
+	// Registry key of the installed application in uninstall
 	Reg  string
 }
 
@@ -49,7 +51,7 @@ type PackageState struct {
 	SourceRepo, DownloadURL, Checksum, LocalPath, UnpackDir string
 	PackageSpec                                             *goolib.PkgSpec
 	InstalledFiles                                          map[string]string
-	InstallDate                                             int
+	InstallDate                                             int64
 	InstalledApp                                            InstalledApplication
 }
 

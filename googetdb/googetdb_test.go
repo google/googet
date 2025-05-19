@@ -14,14 +14,14 @@ limitations under the License.
 package googetdb
 
 import (
-	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
-	"os"
-	"testing"
-	"fmt"
 )
 
 func TestConvertStatetoDB(t *testing.T) {
@@ -63,22 +63,8 @@ func TestRemovePackage(t *testing.T) {
 	goodb.RemovePkg("test2", "")
 	// Marshal to json to avoid legacy issues in null fields in nested structs.
 	pkgs, err := goodb.FetchPkgs()
-	jsonData, err := json.MarshalIndent(pkgs, "", "\t")
-	if err != nil {
-		//log.Fatal(err)
-	}
-
-	fmt.Println(string(jsonData)) 
-	jsonDat2, err := json.MarshalIndent(r, "", "\t")
-	if err != nil {
-		//log.Fatal(err)
-	}
-
-	fmt.Println(string(jsonDat2)) 
-	if err != nil {
-		t.Errorf("Unable to fetch packages: %v", err)
-	}
-	if !cmp.Equal(r, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")) {
+	if diff := cmp.Diff(r, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")); diff != "" {
+		fmt.Println(diff)
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
 	os.Remove("state.db")

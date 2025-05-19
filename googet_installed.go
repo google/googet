@@ -144,7 +144,9 @@ func (cmd *installedCmd) formatJson(state *client.GooGetState) subcommands.ExitS
 	}
 	if string(marshaled) != "null" {
 		fmt.Println(string(marshaled))
+		return subcommands.ExitSuccess
 	}
+	fmt.Println("{}")
 	return subcommands.ExitSuccess
 }
 
