@@ -51,7 +51,7 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 
 // Uninstall performs a system specfic uninstall given a package extraction directory and a PkgSpec struct.
 func Uninstall(dir string, ps *client.PackageState) error {
-	un := ps.Uninstall
+	un := ps.PackageSpec.Uninstall
 	if un.Path == "" {
 		return nil
 	}
