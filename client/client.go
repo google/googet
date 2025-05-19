@@ -43,7 +43,7 @@ type InstalledApplication struct {
 	// Display Name of the installed application found in the registry
 	Name string
 	// Registry key of the installed application in uninstall
-	Reg  string
+	Reg string
 }
 
 // PackageState describes the state of a package on a client.
