@@ -200,7 +200,7 @@ func reinstall(ctx context.Context, pi goolib.PackageInfo, ps client.PackageStat
 			return nil
 		}
 	}
-	if err := install.Reinstall(ctx, ps,  rd, downloader); err != nil {
+	if err := install.Reinstall(ctx, ps, rd, downloader); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil
