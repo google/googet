@@ -75,7 +75,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 		// Check for multiples.
 		var ins []string
-		for _, p := range *state {
+		for _, p := range state {
 			if p.Match(pi) {
 				ins = append(ins, p.PackageSpec.Name+"."+p.PackageSpec.Arch)
 			}
@@ -105,7 +105,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
 			logger.Info(msg)
 			fmt.Println(msg)
-			if err := install.Reinstall(ctx, ps, *state, false, downloader); err != nil {
+			if err := install.Reinstall(ctx, ps, false, downloader); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {

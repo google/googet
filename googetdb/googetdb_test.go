@@ -29,7 +29,7 @@ func TestConvertStatetoDB(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
-	s := &client.GooGetState{
+	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
@@ -41,7 +41,7 @@ func TestConvertStatetoDB(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	if !cmp.Equal(s, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")) {
+	if !cmp.Equal(s, pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")) {
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
 	os.Remove("state.db")
@@ -52,18 +52,18 @@ func TestRemovePackage(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
-	s := &client.GooGetState{
+	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
 	goodb.WriteStateToDB(s)
-	r := &client.GooGetState{
+	r := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 	}
 	goodb.RemovePkg("test2", "")
 	// Marshal to json to avoid legacy issues in null fields in nested structs.
 	pkgs, err := goodb.FetchPkgs()
-	if diff := cmp.Diff(r, &pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")); diff != "" {
+	if diff := cmp.Diff(r, pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")); diff != "" {
 		fmt.Println(diff)
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}

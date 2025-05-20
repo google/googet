@@ -224,7 +224,7 @@ func TestCleanPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state := &client.GooGetState{
+	state := client.GooGetState{
 		{
 			LocalPath: wantFile,
 			PackageSpec: &goolib.PkgSpec{

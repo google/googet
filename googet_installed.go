@@ -57,21 +57,21 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	var state client.GooGetState
 	var exitCode subcommands.ExitStatus
 	var displayText string
-	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}
 	switch f.NArg() {
 	case 0:
-		state, err = goodb.FetchPkgs()
+		state, err = db.FetchPkgs()
 		if err != nil {
-			logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+			logger.Fatalf("Unable to fetch installed packges: %v", err)
 		}
 		displayText = "Installed packages:\n"
 	case 1:
-		pkg, err := goodb.FetchPkg(f.Arg(0))
+		pkg, err := db.FetchPkg(f.Arg(0))
 		if err != nil {
-			logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+			logger.Fatalf("Unable to fetch installed packges: %v", err)
 		}
 		if pkg.PackageSpec != nil {
 			state = append(state, pkg)
@@ -90,7 +90,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	case "simple":
 		exitCode = cmd.formatSimple(state, displayText)
 	case "json":
-		exitCode = cmd.formatJson(&state)
+		exitCode = cmd.formatJson(state)
 	default:
 		fmt.Fprintln(os.Stderr, "Invalid format")
 		f.Usage()
@@ -137,7 +137,7 @@ func (cmd *installedCmd) formatSimple(state client.GooGetState, displayText stri
 	return exitCode
 }
 
-func (cmd *installedCmd) formatJson(state *client.GooGetState) subcommands.ExitStatus {
+func (cmd *installedCmd) formatJson(state client.GooGetState) subcommands.ExitStatus {
 	marshaled, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		logger.Fatalf("marshaling error: %s", err)

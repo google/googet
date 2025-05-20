@@ -243,10 +243,10 @@ func FromDisk(arg, cache string, state *client.GooGetState, dbOnly, ri bool) (cl
 }
 
 // Reinstall reinstalls and optionally redownloads, a package.
-func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetState, rd bool, downloader *client.Downloader) error {
-	pi := goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch, Ver: ps.PackageSpec.Version}
-	logger.Infof("Starting reinstall of %s.%s, version %s", pi.Name, pi.Arch, pi.Ver)
-	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
+func Reinstall(ctx context.Context, ps client.PackageState, rd bool, downloader *client.Downloader) error {
+	spec := ps.PackageSpec
+	logger.Infof("Starting reinstall of %s.%s, version %s", spec.Name, spec.Arch, spec.Version)
+	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", spec.Name, spec.Arch, spec.Version)
 
 	// Fix for package install by older versions of GooGet.
 	if ps.LocalPath == "" && ps.UnpackDir != "" {
@@ -254,7 +254,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 	}
 
 	if ps.LocalPath == "" {
-		return fmt.Errorf("local path not referenced in state file for %s.%s.%s. Cannot redownload", pi.Name, pi.Arch, pi.Ver)
+		return fmt.Errorf("local path not referenced in state file for %s.%s.%s. Cannot redownload", spec.Name, spec.Arch, spec.Version)
 	}
 
 	f, err := os.Open(ps.LocalPath)
@@ -262,7 +262,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 		return err
 	}
 	if os.IsNotExist(err) {
-		logger.Infof("Local package does not exist for %s.%s.%s, redownloading...", pi.Name, pi.Arch, pi.Ver)
+		logger.Infof("Local package does not exist for %s.%s.%s, redownloading...", spec.Name, spec.Arch, spec.Version)
 		rd = true
 	}
 	// Force redownload if checksum does not match.
@@ -275,7 +275,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 
 	if rd {
 		if ps.DownloadURL == "" {
-			return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
+			return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", spec.Name, spec.Arch, spec.Version)
 		}
 		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
 			return fmt.Errorf("error redownloading package: %v", err)
@@ -286,8 +286,8 @@ func Reinstall(ctx context.Context, ps client.PackageState, state client.GooGetS
 		return fmt.Errorf("error reinstalling package: %v", err)
 	}
 
-	logger.Infof("Reinstallation of %s.%s, version %s completed", pi.Name, pi.Arch, pi.Ver)
-	fmt.Printf("Reinstallation of %s.%s %s completed\n", pi.Name, pi.Arch, pi.Ver)
+	logger.Infof("Reinstallation of %s.%s, version %s completed", spec.Name, spec.Arch, spec.Version)
+	fmt.Printf("Reinstallation of %s.%s %s completed\n", spec.Name, spec.Arch, spec.Version)
 	return nil
 }
 

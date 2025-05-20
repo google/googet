@@ -76,7 +76,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	pi.Arch = a
 	var ver string
-	for _, p := range *state {
+	for _, p := range state {
 		if p.Match(pi) {
 			ver = p.PackageSpec.Version
 			break

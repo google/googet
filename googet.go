@@ -274,18 +274,18 @@ func writeState(s *client.GooGetState, sf string) error {
 	return os.Rename(newStateFile, sf)
 }
 
-func readState(sf string) (*client.GooGetState, error) {
+func readState(sf string) (client.GooGetState, error) {
 	state, err := readStateFromPath(sf)
 	if err != nil {
 		sfNotExist := os.IsNotExist(err)
 		state, err = readStateFromPath(sf + ".bak")
 		if sfNotExist && os.IsNotExist(err) {
 			logger.Info("No state file found, assuming no packages installed.")
-			return &client.GooGetState{}, nil
+			return client.GooGetState{}, nil
 		}
 	}
 
-	return state, err
+	return *state, err
 }
 
 func readStateFromPath(sf string) (*client.GooGetState, error) {

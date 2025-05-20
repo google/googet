@@ -60,11 +60,11 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 }
 
 func cleanPackages(pl []string) {
-	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}
-	state, err := goodb.FetchPkgs()
+	state, err := db.FetchPkgs()
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func cleanOld() {
 	}
 
 	var il []string
-	for _, pkg := range *state {
+	for _, pkg := range state {
 		il = append(il, pkg.LocalPath)
 	}
 	clean(il)
