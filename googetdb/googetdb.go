@@ -78,7 +78,6 @@ func createDB(dbFile string) (*sql.DB, error) {
 
 	_, err = db.ExecContext(context.Background(), createDBQuery)
 	if err != nil {
-		fmt.Printf("%v", err)
 		return nil, err
 	}
 

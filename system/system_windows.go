@@ -196,7 +196,6 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 				}
 				iS := strings.Split(installSource, "@")
 				if strings.Contains(a, iS[0]) && installSource != "" {
-					fmt.Println(installSource)
 					return displayName, productReg
 				}
 			}
