@@ -239,11 +239,11 @@ func TestCleanPackages(t *testing.T) {
 		},
 	}
 
-	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	goodb.WriteStateToDB(state)
+	db.WriteStateToDB(state)
 
 	cleanPackages([]string{"notWant"})
 

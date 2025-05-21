@@ -48,23 +48,23 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitSuccess
 
-	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Error(err)
 	}
-
+	defer db.db.Close()
 	downloader, err := client.NewDownloader(proxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	state, err := goodb.FetchPkgs()
+	state, err := db.FetchPkgs()
 	if err != nil {
 		logger.Fatalf("Unable to fetch installed pacakges: %v", err)
 	}
-	var pDeps map[string]string
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
 		var ins []string
+		var pDeps map[string]string
 		for _, ps := range state {
 			if ps.Match(pi) {
 				ins = append(ins, ps.PackageSpec.Name+"."+ps.PackageSpec.Arch)
@@ -101,10 +101,11 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		}
 		logger.Infof("Removal of %q and dependant packages completed", pi.Name)
 		fmt.Printf("Removal of %s completed\n", pi.Name)
-		goodb.RemovePkg(pi.Name, pi.Arch)
+		// TODO: Make sure we aren't removing packages that other packages depend on.
+		db.RemovePkg(pi.Name, pi.Arch)
 		for d := range pDeps {
 			di := goolib.PkgNameSplit(d)
-			goodb.RemovePkg(di.Name, di.Arch)
+			db.RemovePkg(di.Name, di.Arch)
 		}
 
 	}

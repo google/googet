@@ -533,6 +533,7 @@ func main() {
 		if err != nil {
 			logger.Fatalf("Unable to create initial db file. If db is not created, run again as admin: %v", err)
 		}
+		defer db.db.Close()
 		//check to see if state file still exists, then convert and remove old state. Request lock.
 		sf := filepath.Join(rootDir, stateFile)
 		if err := obtainLock(lockFile); err != nil {

@@ -16,6 +16,7 @@ package googetdb
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -25,19 +26,21 @@ import (
 )
 
 func TestConvertStatetoDB(t *testing.T) {
-	goodb, err := NewDB("state.db")
+	statePath := filepath.Join(t.TempDir(), "state.db")
+	db, err := NewDB(statePath)
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
+	defer db.db.Close()
 	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
-	err = goodb.WriteStateToDB(s)
+	err = db.WriteStateToDB(s)
 	if err != nil {
 		t.Errorf("Unable to write packages to db: %v", err)
 	}
-	pkgs, err := goodb.FetchPkgs()
+	pkgs, err := db.FetchPkgs()
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
@@ -48,28 +51,28 @@ func TestConvertStatetoDB(t *testing.T) {
 }
 
 func TestRemovePackage(t *testing.T) {
-	goodb, err := NewDB("state.db")
+	statePath := filepath.Join(t.TempDir(), "state.db")
+	db, err := NewDB(statePath)
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
+	defer db.db.Close()
 	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
 	}
-	goodb.WriteStateToDB(s)
+	db.WriteStateToDB(s)
 	r := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 	}
-	goodb.RemovePkg("test2", "")
-	// Marshal to json to avoid legacy issues in null fields in nested structs.
-	pkgs, err := goodb.FetchPkgs()
+	db.RemovePkg("test2", "")
+	pkgs, err := db.FetchPkgs()
+	if err != nil {
+		t.Errorf("Unable to fetch packages: %v", err)
+	}
 	if diff := cmp.Diff(r, pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")); diff != "" {
 		fmt.Println(diff)
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
 	}
 	os.Remove("state.db")
-}
-
-func compareState(got, want client.GooGetState) {
-
 }

@@ -48,14 +48,15 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	goodb, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer db.db.Close()
 	cache := filepath.Join(rootDir, cacheDir)
-	state, err := goodb.FetchPkgs()
+	state, err := db.FetchPkgs()
 	if err != nil {
-		logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+		logger.Fatalf("Unable to fetch installed packges: %v", err)
 	}
 
 	pm := installedPackages(state)
@@ -104,9 +105,9 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		}
 	}
 
-	/*if err := writeState(state, sf); err != nil {
-		logger.Fatalf("Error writing state file: %v", err)
-	}*/
+	if err := db.writeStateToDB(state); err != nil {
+		logger.Fatalf("Error writing state db: %v", err)
+	}
 
 	return exitCode
 }

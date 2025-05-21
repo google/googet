@@ -53,12 +53,12 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	exitCode := subcommands.ExitSuccess
 
-	sf := filepath.Join(rootDir, stateFile)
-	state, err := readState(sf)
+	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
 	if err != nil {
-		logger.Error(err)
+		logger.Fatal(err)
 	}
-
+	defer db.db.Close()
+	state, err := db.FetchPkgs()
 	downloader, err := client.NewDownloader(proxyServer)
 	if err != nil {
 		logger.Fatal(err)

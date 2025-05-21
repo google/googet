@@ -22,50 +22,6 @@ import (
 	"github.com/google/logger"
 )
 
-// Regex taken from Winget uninstaller
-// https://github.com/microsoft/winget-cli/blob/6ea13623e5e4b870b81efeea9142d15a98dd4208/src/AppInstallerCommonCore/NameNormalization.cpp#L262
-var (
-	programNameReg = []string{
-		"PrefixParens",
-		"EmptyParens",
-		"Version",
-		"TrailingSymbols",
-		"LeadingSymbols",
-		"FilePathParens",
-		"FilePathQuotes",
-		"FilePath",
-		"VersionLetter",
-		"VersionLetterDelimited",
-		"En",
-		"NonNestedBracket",
-		"BracketEnclosed",
-		"URIProtocol",
-	}
-	publisherNameReg = []string{
-		"VersionDelimited",
-		"Version",
-		"NonNestedBracket",
-		"BracketEnclosed",
-		"URIProtocol",
-	}
-	regex = map[string]string{
-		"PrefixParens":           `(^\(.*?\))`,
-		"EmptyParens":            `((\(\s*\)|\[\s*\]|"\s*"))`,
-		"Version":                `(?:^)|(?:P|V|R|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)(?:\P{L}|\P{L}\p{L})?(\p{Nd}|\.\p{Nd})+(?:RC|B|A|R|V|SP)?\p{Nd}?`,
-		"TrailingSymbols":        `([^\p{L}\p{Nd}]+$)`,
-		"LeadingSymbols":         `(^[^\p{L}\p{Nd}]+)`,
-		"FilePathParens":         `(\([CDEF]:\\(.+?\\)*[^\s]*\\?\))`,
-		"FilePathQuotes":         `("[CDEF]:\\(.+?\\)*[^\s]*\\?")`,
-		"FilePath":               `(((INSTALLED\sAT|IN)\s)?[CDEF]:\\(.+?\\)*[^\s]*\\?)`,
-		"VersionLetter":          `((?:^\p{L})(?:(?:V|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)\P{L})?\p{Lu}\p{Nd}+(?:[\p{Po}\p{Pd}\p{Pc}]\p{Nd}+)+)`,
-		"VersionLetterDelimited": `((?:^\p{L})(?:(?:V|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)\P{L})?\p{Lu}\p{Nd}+(?:[\p{Po}\p{Pd}\p{Pc}]\p{Nd}+)+)`,
-		"En":                     `(\sEN\s*$)`,
-		"NonNestedBracket":       `(\([^\(\)]*\)|\[[^\[\]]*\])`,
-		"BracketEnclosed":        `((?:\p{Ps}.*\p{Pe}|".*"))`,
-		"URIProtocol":            `((?:^\p{L})(?:http[s]?|ftp):\/\/)`,
-	}
-)
-
 // Verify runs a verify command given a package extraction directory and a PkgSpec struct.
 func Verify(dir string, ps *goolib.PkgSpec) error {
 	v := ps.Verify

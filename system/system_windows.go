@@ -37,7 +37,50 @@ import (
 
 const uninstallBase = `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\`
 
-var msiSuccessCodes = []int{1641, 3010}
+// Regex taken from Winget uninstaller
+// https://github.com/microsoft/winget-cli/blob/6ea13623e5e4b870b81efeea9142d15a98dd4208/src/AppInstallerCommonCore/NameNormalization.cpp#L262
+var (
+	programNameReg = []string{
+		"PrefixParens",
+		"EmptyParens",
+		"Version",
+		"TrailingSymbols",
+		"LeadingSymbols",
+		"FilePathParens",
+		"FilePathQuotes",
+		"FilePath",
+		"VersionLetter",
+		"VersionLetterDelimited",
+		"En",
+		"NonNestedBracket",
+		"BracketEnclosed",
+		"URIProtocol",
+	}
+	publisherNameReg = []string{
+		"VersionDelimited",
+		"Version",
+		"NonNestedBracket",
+		"BracketEnclosed",
+		"URIProtocol",
+	}
+	regex = map[string]string{
+		"PrefixParens":           `(^\(.*?\))`,
+		"EmptyParens":            `((\(\s*\)|\[\s*\]|"\s*"))`,
+		"Version":                `(?:^)|(?:P|V|R|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)(?:\P{L}|\P{L}\p{L})?(\p{Nd}|\.\p{Nd})+(?:RC|B|A|R|V|SP)?\p{Nd}?`,
+		"TrailingSymbols":        `([^\p{L}\p{Nd}]+$)`,
+		"LeadingSymbols":         `(^[^\p{L}\p{Nd}]+)`,
+		"FilePathParens":         `(\([CDEF]:\\(.+?\\)*[^\s]*\\?\))`,
+		"FilePathQuotes":         `("[CDEF]:\\(.+?\\)*[^\s]*\\?")`,
+		"FilePath":               `(((INSTALLED\sAT|IN)\s)?[CDEF]:\\(.+?\\)*[^\s]*\\?)`,
+		"VersionLetter":          `((?:^\p{L})(?:(?:V|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)\P{L})?\p{Lu}\p{Nd}+(?:[\p{Po}\p{Pd}\p{Pc}]\p{Nd}+)+)`,
+		"VersionLetterDelimited": `((?:^\p{L})(?:(?:V|VER|VERSI(?:O|Ó)N|VERSÃO|VERSIE|WERSJA|BUILD|RELEASE|RC|SP)\P{L})?\p{Lu}\p{Nd}+(?:[\p{Po}\p{Pd}\p{Pc}]\p{Nd}+)+)`,
+		"En":                     `(\sEN\s*$)`,
+		"NonNestedBracket":       `(\([^\(\)]*\)|\[[^\[\]]*\])`,
+		"BracketEnclosed":        `((?:\p{Ps}.*\p{Pe}|".*"))`,
+		"URIProtocol":            `((?:^\p{L})(?:http[s]?|ftp):\/\/)`,
+	}
+	msiSuccessCodes = []int{1641, 3010}
+)
 
 func addUninstallEntry(dir string, ps *goolib.PkgSpec) error {
 	reg := uninstallBase + "GooGet - " + ps.Name
@@ -84,15 +127,18 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 		if err != nil {
 			return "", ""
 		}
-		reg, _ := k.ReadSubKeyNames(-1)
 		defer k.Close()
+		reg, err := k.ReadSubKeyNames(-1)
+		if err != nil {
+			return "", ""
+		}
 		for _, v := range reg {
 			productReg := fmt.Sprintf("%s%s", productroot, v)
 			q, err := registry.OpenKey(registry.LOCAL_MACHINE, productReg, registry.ALL_ACCESS)
-			defer q.Close()
 			if err != nil {
 				continue
 			}
+			defer q.Close()
 			displayName, _, err := q.GetStringValue("DisplayName")
 			if err != nil {
 				continue
@@ -115,6 +161,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 					return name, productReg
 				}
 			default:
+				// TODO: Look into precompiling regex
 				for _, v := range publisherNameReg {
 					re := regexp.MustCompile("(?i)" + regex[v])
 					publisher = re.ReplaceAllString(publisher, "")
@@ -153,25 +200,23 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 					return displayName, productReg
 				}
 			}
-
 		}
-
 	}
 	return "", ""
 }
 
 func uninstallString(regkey, extension string) string {
 	q, err := registry.OpenKey(registry.LOCAL_MACHINE, regkey, registry.ALL_ACCESS)
-	defer q.Close()
 	if err != nil {
-		fmt.Printf("%v", err)
+		logger.Error(err)
 		return ""
 	}
+	defer q.Close()
 	switch extension {
 	case "msi":
 		un, _, err := q.GetStringValue("UninstallString")
 		if err != nil {
-			fmt.Printf("%v", err)
+			logger.Error(err)
 			// UninstallString not found, move on
 			return ""
 		}

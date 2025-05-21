@@ -56,6 +56,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer db.db.Close()
 	var state client.GooGetState
 	if len(flags.Args()) == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
@@ -191,6 +192,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 }
 
 func reinstall(ctx context.Context, pi goolib.PackageInfo, ps client.PackageState, rd bool, downloader *client.Downloader) error {
+	// TODO: Cleanup reinstall logic to remove pi
 	if pi.Name == "" {
 		return fmt.Errorf("cannot reinstall something that is not already installed")
 	}
