@@ -61,6 +61,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer db.DB.Close()
 	switch f.NArg() {
 	case 0:
 		state, err = db.FetchPkgs()
