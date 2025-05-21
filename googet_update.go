@@ -52,7 +52,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer db.db.Close()
+	defer db.DB.Close()
 	cache := filepath.Join(rootDir, cacheDir)
 	state, err := db.FetchPkgs()
 	if err != nil {
@@ -105,7 +105,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		}
 	}
 
-	if err := db.writeStateToDB(state); err != nil {
+	if err := db.WriteStateToDB(state); err != nil {
 		logger.Fatalf("Error writing state db: %v", err)
 	}
 

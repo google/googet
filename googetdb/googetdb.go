@@ -36,7 +36,7 @@ const (
 )
 
 type gooDB struct {
-	db *sql.DB
+	DB *sql.DB
 }
 
 // NewDB returns the googet DB object
@@ -44,13 +44,13 @@ func NewDB(dbFile string) (*gooDB, error) {
 	var gdb gooDB
 	var err error
 	if _, err := os.Stat(dbFile); errors.Is(err, os.ErrNotExist) {
-		gdb.db, err = createDB(dbFile)
+		gdb.DB, err = createDB(dbFile)
 		if err != nil {
 			return nil, err
 		}
 		return &gdb, nil
 	}
-	gdb.db, err = sql.Open("sqlite", dbFile)
+	gdb.DB, err = sql.Open("sqlite", dbFile)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (g *gooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec.Authors, pkgState.LocalPath, spec.Name, filepath.Ext(spec.Install.Path))
 	pkgState.InstallDate = time.Now().Unix()
-	tx, err := g.db.Begin()
+	tx, err := g.DB.Begin()
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (g *gooDB) RemovePkg(packageName, arch string) error {
 	DELETE FROM InstalledPackages where pkg_name = '%v' and pkg_arch = '%v';
 	COMMIT;`, packageName, arch)
 
-	_, err := g.db.ExecContext(context.Background(), removeQuery)
+	_, err := g.DB.ExecContext(context.Background(), removeQuery)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 		WHERE pkg_name = ?
 		ORDER BY pkg_name
 		`
-	spec, err := g.db.Query(selectSpecQuery, pkgName)
+	spec, err := g.DB.Query(selectSpecQuery, pkgName)
 	defer spec.Close()
 	if err != nil {
 		return client.PackageState{}, nil
@@ -164,7 +164,7 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 func (g *gooDB) FetchPkgs() (client.GooGetState, error) {
 	var state client.GooGetState
 
-	pkgs, err := g.db.Query(`Select pkg_name from InstalledPackages`)
+	pkgs, err := g.DB.Query(`Select pkg_name from InstalledPackages`)
 	if err != nil {
 		return nil, err
 	}

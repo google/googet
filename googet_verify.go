@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/verify"
@@ -57,7 +58,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer db.db.Close()
+	defer db.DB.Close()
 	state, err := db.FetchPkgs()
 	downloader, err := client.NewDownloader(proxyServer)
 	if err != nil {

@@ -31,7 +31,7 @@ func TestConvertStatetoDB(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
-	defer db.db.Close()
+	defer db.DB.Close()
 	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
@@ -56,7 +56,7 @@ func TestRemovePackage(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to create database: %+v", err)
 	}
-	defer db.db.Close()
+	defer db.DB.Close()
 	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
