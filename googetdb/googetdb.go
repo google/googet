@@ -58,8 +58,8 @@ func NewDB(dbFile string) (*gooDB, error) {
 }
 
 // Close will close the db connection
-func (g *gooDB) Close() error { 
-	return g.db.Close() 
+func (g *gooDB) Close() error {
+	return g.db.Close()
 }
 
 // Create db creates the initial googet database
