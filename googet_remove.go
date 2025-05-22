@@ -52,7 +52,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Error(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	downloader, err := client.NewDownloader(proxyServer)
 	if err != nil {
 		logger.Fatal(err)

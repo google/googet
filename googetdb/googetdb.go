@@ -36,7 +36,7 @@ const (
 )
 
 type gooDB struct {
-	DB *sql.DB
+	db *sql.DB
 }
 
 // NewDB returns the googet DB object
@@ -44,17 +44,22 @@ func NewDB(dbFile string) (*gooDB, error) {
 	var gdb gooDB
 	var err error
 	if _, err := os.Stat(dbFile); errors.Is(err, os.ErrNotExist) {
-		gdb.DB, err = createDB(dbFile)
+		gdb.db, err = createDB(dbFile)
 		if err != nil {
 			return nil, err
 		}
 		return &gdb, nil
 	}
-	gdb.DB, err = sql.Open("sqlite", dbFile)
+	gdb.db, err = sql.Open("sqlite", dbFile)
 	if err != nil {
 		return nil, err
 	}
 	return &gdb, nil
+}
+
+// Close will close the db connection
+func (g *gooDB) Close() error { 
+	return g.db.Close() 
 }
 
 // Create db creates the initial googet database
@@ -99,7 +104,7 @@ func (g *gooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec.Authors, pkgState.LocalPath, spec.Name, filepath.Ext(spec.Install.Path))
 	pkgState.InstallDate = time.Now().Unix()
-	tx, err := g.DB.Begin()
+	tx, err := g.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -125,7 +130,7 @@ func (g *gooDB) RemovePkg(packageName, arch string) error {
 	DELETE FROM InstalledPackages where pkg_name = '%v' and pkg_arch = '%v';
 	COMMIT;`, packageName, arch)
 
-	_, err := g.DB.ExecContext(context.Background(), removeQuery)
+	_, err := g.db.ExecContext(context.Background(), removeQuery)
 	if err != nil {
 		return err
 	}
@@ -144,7 +149,7 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 		WHERE pkg_name = ?
 		ORDER BY pkg_name
 		`
-	spec, err := g.DB.Query(selectSpecQuery, pkgName)
+	spec, err := g.db.Query(selectSpecQuery, pkgName)
 	defer spec.Close()
 	if err != nil {
 		return client.PackageState{}, nil
@@ -163,7 +168,7 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 func (g *gooDB) FetchPkgs() (client.GooGetState, error) {
 	var state client.GooGetState
 
-	pkgs, err := g.DB.Query(`Select pkg_name from InstalledPackages`)
+	pkgs, err := g.db.Query(`Select pkg_name from InstalledPackages`)
 	if err != nil {
 		return nil, err
 	}

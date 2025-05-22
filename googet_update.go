@@ -52,7 +52,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	cache := filepath.Join(rootDir, cacheDir)
 	state, err := db.FetchPkgs()
 	if err != nil {

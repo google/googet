@@ -526,14 +526,14 @@ func main() {
 	}
 	lockFile = filepath.Join(rootDir, "googet.lock")
 	dbPath := filepath.Join(rootDir, dbFile)
-	// TODO: Remove this conversion code when state code is cleaned up.
+	// TODO: Move this conversion code when unused state code is cleaned up.
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		fmt.Println("Creating Googet DB and converting State file...")
 		db, err := googetdb.NewDB(dbPath)
 		if err != nil {
 			logger.Fatalf("Unable to create initial db file. If db is not created, run again as admin: %v", err)
 		}
-		defer db.DB.Close()
+		defer db.Close()
 		//check to see if state file still exists, then convert and remove old state. Request lock.
 		sf := filepath.Join(rootDir, stateFile)
 		if err := obtainLock(lockFile); err != nil {

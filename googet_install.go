@@ -56,7 +56,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...in
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	var state client.GooGetState
 	if len(flags.Args()) == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())

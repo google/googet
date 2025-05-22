@@ -15,7 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
-    "3.0.0  - Replace googet state file with sqlite database.",
+    "3.0.0  - Replace googet state file with sqlite database. Add json output for installed command.",
     "2.21.0 - Add arm64 arch support.",
     "2.20.0 - Add installdate metadata to registry key for consumption by external tools.",
     "2.19.0 - Updated to Go 1.19.",
