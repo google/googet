@@ -505,6 +505,7 @@ func main() {
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
+	cmdr.Register(&checkCmd{}, "package query")
 	cmdr.Register(&listReposCmd{}, "repository management")
 	cmdr.Register(&addRepoCmd{}, "repository management")
 	cmdr.Register(&rmRepoCmd{}, "repository management")
