@@ -145,8 +145,7 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 				continue
 			}
 
-			switch extension {
-			case ".msi":
+			if extension == ".msi" && installSource != "" {
 				a, _, err := q.GetStringValue("InstallSource")
 				if err != nil {
 					// InstallSource not found, move on to next entry
@@ -161,44 +160,44 @@ func AppAssociation(publisher, installSource, programName, extension string) (st
 					}
 					return name, productReg
 				}
-			default:
-				// TODO: Look into precompiling regex
-				for _, v := range publisherNameReg {
-					re := regexp.MustCompile("(?i)" + regex[v])
-					publisher = re.ReplaceAllString(publisher, "")
+			}
+			// TODO: Look into precompiling regex
+			for _, v := range publisherNameReg {
+				re := regexp.MustCompile("(?i)" + regex[v])
+				publisher = re.ReplaceAllString(publisher, "")
+			}
+			for _, v := range programNameReg {
+				re := regexp.MustCompile("(?i)" + regex[v])
+				programName = re.ReplaceAllString(programName, "")
+			}
+			// Ignore empty and googet labeled pacakges
+			if displayName == "" || strings.Contains(displayName, "GooGet -") {
+				continue
+			}
+			// Check if Package name is in display name removing spaces
+			if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, " ", "")), strings.ToLower(programName)) {
+				// Do an extra check for publisher for smaller package names and gain more confidence that we are returning the right package.
+				if len(programName) < 4 && !strings.Contains(strings.ToLower(strings.ReplaceAll(publisher, " ", "")), strings.ToLower(publisher)) {
+					return "", ""
 				}
-				for _, v := range programNameReg {
-					re := regexp.MustCompile("(?i)" + regex[v])
-					programName = re.ReplaceAllString(programName, "")
-				}
-				// Ignore empty and googet labeled pacakges
-				if displayName == "" || strings.Contains(displayName, "GooGet -") {
-					continue
-				}
-				// Check if Package name is in display name removing spaces
-				if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, " ", "")), strings.ToLower(programName)) {
-					// Check if the value exists, move on if it doesn't
-
-					return displayName, productReg
-				}
-				// Check if Package name is in display name removing dashes
-				if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, "-", "")), strings.ToLower(programName)) {
-					// Check if the value exists, move on if it doesn't
-					return displayName, productReg
-				}
-				if strings.Contains(strings.ToLower(programName), strings.ToLower(strings.ReplaceAll(displayName, " ", ""))) {
-					// Check if the value exists, move on if it doesn't
-					return displayName, productReg
-				}
-				a, _, err := q.GetStringValue("InstallSource")
-				if err != nil {
-					// InstallSource not found, move on to next entry
-					continue
-				}
-				iS := strings.Split(installSource, "@")
-				if strings.Contains(a, iS[0]) && installSource != "" {
-					return displayName, productReg
-				}
+				return displayName, productReg
+			}
+			// Check if Package name is in display name removing dashes
+			if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, "-", "")), strings.ToLower(programName)) {
+				// Check if the value exists, move on if it doesn't
+				return displayName, productReg
+			}
+			a, _, err := q.GetStringValue("InstallSource")
+			if err != nil {
+				// InstallSource not found, move on to next entry
+				continue
+			}
+			if installSource == "" {
+				return "", ""
+			}
+			iS := strings.Split(installSource, "@")
+			if strings.Contains(a, iS[0]) && installSource != "" {
+				return displayName, productReg
 			}
 		}
 	}

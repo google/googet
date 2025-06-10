@@ -505,6 +505,7 @@ func main() {
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
+	cmdr.Register(&checkCmd{}, "package query")
 	cmdr.Register(&listReposCmd{}, "repository management")
 	cmdr.Register(&addRepoCmd{}, "repository management")
 	cmdr.Register(&rmRepoCmd{}, "repository management")
@@ -513,7 +514,7 @@ func main() {
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
 
-	nonLockingCommands := []string{"help", "commands", "flags"}
+	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
 	if flag.NArg() == 0 || goolib.ContainsString(flag.Args()[0], nonLockingCommands) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
