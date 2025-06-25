@@ -60,8 +60,7 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 		}
 		switch ipr {
 		case "powershell":
-			// We are using `-Command` here instead of `-File` as this catches syntax errors in the script.
-			args = append([]string{"-ExecutionPolicy", "Bypass", "-NonInteractive", "-NoProfile", "-Command", cs}, args...)
+			args = append([]string{"-ExecutionPolicy", "Bypass", "-NonInteractive", "-NoProfile", "-File", cs}, args...)
 			c = exec.Command(ipr, args...)
 		case "cmd":
 			c = exec.Command(cs, args...)
