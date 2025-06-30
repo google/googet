@@ -137,8 +137,8 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) 
 	return download(r, dst, chksum)
 }
 
-// FromRepo downloads a package from a repo. It returns the path to the destination
-// file and the download URL from which the package came.
+// FromRepo downloads a package from a repo. It returns the path to the
+// downloaded file and the download URL of the package.
 func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloader *client.Downloader) (string, string, error) {
 	pkgURL, err := url.JoinPath(repo, "..", rs.Source)
 	if err != nil {
