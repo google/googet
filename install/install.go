@@ -161,7 +161,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 
 	state.Add(client.PackageState{
 		SourceRepo:     repo,
-		DownloadURL:    pkgURL, 
+		DownloadURL:    pkgURL,
 		Checksum:       rs.Checksum,
 		LocalPath:      dst,
 		PackageSpec:    rs.PackageSpec,
