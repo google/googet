@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -138,39 +137,27 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) 
 	return download(r, dst, chksum)
 }
 
-// FromRepo downloads a package from a repo.
-func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloader *client.Downloader) (string, error) {
-	repoURL, err := url.Parse(repo)
+// FromRepo downloads a package from a repo. It returns the path to the destination
+// file and the download URL from which the package came.
+func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloader *client.Downloader) (string, string, error) {
+	pkgURL, err := url.JoinPath(repo, "..", rs.Source)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	// We strip training slashes to make sure path.Dir() removes the final component (the repo name).
-	// Otherwise '/myrepo' would correctly resolve to '/', but '/myrepo/' would incorrectly resolve to '/myrepo'
-	pkgURL := &url.URL{
-		Scheme:  repoURL.Scheme,
-		Host:    repoURL.Host,
-		User:    repoURL.User,
-		RawPath: path.Join(path.Dir(strings.TrimSuffix(repoURL.EscapedPath(), "/")), rs.Source),
-	}
-	pkgURL.Path, err = url.PathUnescape(pkgURL.RawPath)
-	if err != nil {
-		return "", err
-	}
-
 	pn := goolib.PackageInfo{Name: rs.PackageSpec.Name, Arch: rs.PackageSpec.Arch, Ver: rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
-	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, downloader)
+	return dst, pkgURL, Package(ctx, pkgURL, dst, rs.Checksum, downloader)
 }
 
 // Latest downloads the latest available version of a package.
-func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, error) {
+func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, string, error) {
 	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: ver}, rm[repo])
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	return FromRepo(ctx, rs, repo, dir, downloader)
 }

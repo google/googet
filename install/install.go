@@ -143,7 +143,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 		return err
 	}
 
-	dst, err := download.FromRepo(ctx, rs, repo, cache, downloader)
+	dst, pkgURL, err := download.FromRepo(ctx, rs, repo, cache, downloader)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 
 	state.Add(client.PackageState{
 		SourceRepo:     repo,
-		DownloadURL:    strings.TrimSuffix(repo, filepath.Base(repo)) + rs.Source,
+		DownloadURL:    pkgURL, 
 		Checksum:       rs.Checksum,
 		LocalPath:      dst,
 		PackageSpec:    rs.PackageSpec,
