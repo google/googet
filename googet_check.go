@@ -40,7 +40,7 @@ type checkCmd struct {
 }
 
 func (*checkCmd) Name() string     { return "check" }
-func (*checkCmd) Synopsis() string { return "check and take over exsiting packages" }
+func (*checkCmd) Synopsis() string { return "check and take over existing packages" }
 func (*checkCmd) Usage() string {
 	return fmt.Sprintf(`%s check [-sources repo1,repo2...] [-dry_run=true]`, filepath.Base(os.Args[0]))
 }
