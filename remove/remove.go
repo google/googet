@@ -66,7 +66,7 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 				return fmt.Errorf("can not redownload %s.%s.%s, DownloadURL not saved", pi.Name, pi.Arch, pi.Ver)
 			}
 			if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
-				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it form the database: %v", pi.Name, pi.Arch, pi.Ver, err)
+				return fmt.Errorf("error redownloading %s.%s.%s, package may no longer exist in the repo, you can use the '-db_only' flag to remove it from the database: %v", pi.Name, pi.Arch, pi.Ver, err)
 			}
 		}
 
