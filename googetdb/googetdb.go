@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/googet/v2/client"
@@ -179,6 +180,9 @@ func (g *gooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	pkgQuery := `Select pkg_name from InstalledPackages`
 	if pkgName != "" {
 		pkgQuery = fmt.Sprintf(`Select pkg_name from InstalledPackages where pkg_name like "%s%%"`, pkgName)
+		if strings.HasSuffix(pkgName, ".") {
+			pkgQuery = fmt.Sprintf(`Select pkg_name from InstalledPackages where pkg_name = "%s"`, pkgName[:len(pkgName)-1])
+		}
 	}
 	pkgs, err := g.db.Query(pkgQuery)
 	if err != nil {
