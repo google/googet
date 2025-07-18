@@ -482,7 +482,8 @@ func TestMarshal(t *testing.T) {
       "Path": "install.ps1"
     },
     "Uninstall": {},
-    "Verify": {}
+    "Verify": {},
+    "ExternalProgramName": ""
   }
 }`)
 	got, err := rs.Marshal()

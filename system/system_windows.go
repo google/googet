@@ -164,6 +164,9 @@ func AppAssociation(ps *goolib.PkgSpec, installSource string) (string, string) {
 					return name, productReg
 				}
 			}
+			if displayName == ps.ExternalProgramName && ps.ExternalProgramName != "" {
+				return displayName, productReg
+			}
 			// TODO: Look into precompiling regex
 			var publisher, programName string
 			for _, v := range publisherNameReg {
@@ -185,7 +188,6 @@ func AppAssociation(ps *goolib.PkgSpec, installSource string) (string, string) {
 			}
 			if strings.Contains(strings.ToLower(strings.ReplaceAll(displayName, " ", "")), strings.ToLower(programName)) {
 				// Do an extra check for publisher for smaller package names and gain more confidence that we are returning the right package.
-				fmt.Printf("%v: %v", regPublisher, publisher)
 				if len(programName) < 4 && !strings.Contains(strings.ToLower(strings.ReplaceAll(regPublisher, " ", "")), strings.ToLower(publisher)) {
 					return "", ""
 				}

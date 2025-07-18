@@ -90,6 +90,8 @@ type PkgSpec struct {
 	Uninstall       ExecFile
 	Verify          ExecFile
 	Files           map[string]string `json:",omitempty"`
+	// The Display Name of the entry in "Add/Remove programs" for matching
+	ExternalProgramName string
 }
 
 func (ps PkgSpec) String() string {
