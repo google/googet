@@ -23,19 +23,13 @@ import (
 	"github.com/google/googet/v2/priority"
 )
 
-// genGoo creates a name.noarch.version.goo package file in directory dir
-// for the package with given name and version. When installed
-// name.goo writes a file having same name as the package to the
-// dst directory. The contents of this file is "name.noarch.version".
-// Returns a RepoSpec for the goo package.
-func genGoo(t *testing.T, dir, dst string, pi goolib.PackageInfo) goolib.RepoSpec {
+// genGoo creates a name.noarch.version.goo package file in directory dir for
+// the package with given pkgspec. When installed name.goo writes a file having
+// same name as the package to the dst directory. The contents of this file is
+// "name.noarch.version". Returns a RepoSpec for the goo package.
+func genGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 	t.Helper()
-	ps := goolib.PkgSpec{
-		Name:    pi.Name,
-		Arch:    pi.Arch,
-		Version: pi.Ver,
-		Files:   map[string]string{pi.Name: filepath.Join(dst, pi.Name)},
-	}
+	ps.Files = map[string]string{ps.Name: filepath.Join(dst, ps.Name)}
 	b, err := json.Marshal(ps)
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +47,8 @@ func genGoo(t *testing.T, dir, dst string, pi goolib.PackageInfo) goolib.RepoSpe
 		name    string
 		content []byte
 	}{
-		{pi.Name, []byte(ps.String())},
-		{pi.Name + ".pkgspec", b},
+		{ps.Name, []byte(ps.String())},
+		{ps.Name + ".pkgspec", b},
 	} {
 		if err := tw.WriteHeader(&tar.Header{Name: x.name, Mode: 0644, Size: int64(len(x.content)), ModTime: modTime}); err != nil {
 			t.Fatal(err)
@@ -89,7 +83,7 @@ func serveGoo(t *testing.T, dir string) *httptest.Server {
 
 // checkInstalled returns true if the test package identified by ps was
 // installed, based on whether or not the package file was written.
-func checkInstalled(t *testing.T, dir string, ps goolib.PackageInfo) bool {
+func checkInstalled(t *testing.T, dir string, ps goolib.PkgSpec) bool {
 	t.Helper()
 	filename := filepath.Join(dir, ps.Name)
 	b, err := os.ReadFile(filename)
@@ -110,23 +104,26 @@ func TestInstall(t *testing.T) {
 		desc          string             // description of test case
 		args          []string           // args to install command
 		state         client.GooGetState // initial DB package state
-		packages      []string           // which packages to provide in repo map
+		packages      []goolib.PkgSpec   // which packages to provide in repo map
 		wantInstalled []string           // which packages were actually installed
-		wantState     []string           // representation of final DB package state
+		wantState     []string           // abbreviated final DB package state
 	}{
 		{
 			desc:          "single-install",
 			args:          []string{"A"},
 			state:         client.GooGetState{},
-			packages:      []string{"A.noarch.1"},
+			packages:      []goolib.PkgSpec{{Name: "A", Arch: "noarch", Version: "1"}},
 			wantInstalled: []string{"A.noarch.1"},
 			wantState:     []string{"A.noarch.1"},
 		},
 		{
-			desc:          "one-already-installed",
-			args:          []string{"A", "B"},
-			state:         client.GooGetState{{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}}},
-			packages:      []string{"A.noarch.1", "B.noarch.2"},
+			desc:  "one-already-installed",
+			args:  []string{"A", "B"},
+			state: client.GooGetState{{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}}},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1"},
+				{Name: "B", Arch: "noarch", Version: "2"},
+			},
 			wantInstalled: []string{"B.noarch.2"},
 			wantState:     []string{"A.noarch.1", "B.noarch.2"},
 		},
@@ -158,8 +155,7 @@ func TestInstall(t *testing.T) {
 			// Set up the test goo packages.
 			var specs []goolib.RepoSpec
 			for _, pkg := range tc.packages {
-				pi := goolib.PkgNameSplit(pkg)
-				rs := genGoo(t, gooDir, logDir, pi)
+				rs := genGoo(t, gooDir, logDir, pkg)
 				specs = append(specs, rs)
 			}
 			// Initialize the installer's repo map.
@@ -173,7 +169,7 @@ func TestInstall(t *testing.T) {
 			}
 			// Check that expected installs occurred.
 			for _, pkg := range tc.packages {
-				if got, want := checkInstalled(t, logDir, goolib.PkgNameSplit(pkg)), slices.Contains(tc.wantInstalled, pkg); got != want {
+				if got, want := checkInstalled(t, logDir, pkg), slices.Contains(tc.wantInstalled, pkg.String()); got != want {
 					t.Fatalf("package %q installed got: %v, want: %v", pkg, got, want)
 				}
 			}
