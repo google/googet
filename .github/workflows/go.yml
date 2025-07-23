@@ -16,12 +16,13 @@ jobs:
       run:
         shell: bash
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v5
       with:
-        go-version: 1.23.x
+        go-version: 'stable'
+        check-latest: true
 
     - name: Format
       run: |
@@ -44,12 +45,13 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v5
       with:
-        go-version: 1.23.x
+        go-version: 'stable'
+        check-latest: true
 
     - name: Vet
       run: go vet ./...
