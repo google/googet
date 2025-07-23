@@ -226,7 +226,7 @@ func ExtractPkg(src string) (dst string, err error) {
 		}
 
 		name := filepath.Clean(header.Name)
-		if name[0:3] == ".."+string(os.PathSeparator) {
+		if strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
 			return "", fmt.Errorf("error unpacking package, file contains path traversal: %q", name)
 		}
 
