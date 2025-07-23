@@ -34,13 +34,14 @@ const (
 		?, ?, ?, ?)`
 )
 
-type gooDB struct {
+// GooDB is the googet database.
+type GooDB struct {
 	db *sql.DB
 }
 
 // NewDB returns the googet DB object
-func NewDB(dbFile string) (*gooDB, error) {
-	var gdb gooDB
+func NewDB(dbFile string) (*GooDB, error) {
+	var gdb GooDB
 	var err error
 	if _, err := os.Stat(dbFile); errors.Is(err, os.ErrNotExist) {
 		gdb.db, err = createDB(dbFile)
@@ -57,7 +58,7 @@ func NewDB(dbFile string) (*gooDB, error) {
 }
 
 // Close will close the db connection
-func (g *gooDB) Close() error {
+func (g *GooDB) Close() error {
 	return g.db.Close()
 }
 
@@ -89,7 +90,7 @@ func createDB(dbFile string) (*sql.DB, error) {
 }
 
 // WriteStateToDB writes new or partial state to the db.
-func (g *gooDB) WriteStateToDB(gooState client.GooGetState) error {
+func (g *GooDB) WriteStateToDB(gooState client.GooGetState) error {
 	for _, pkgState := range gooState {
 		if pkgState.PackageSpec == nil {
 			continue
@@ -102,7 +103,7 @@ func (g *gooDB) WriteStateToDB(gooState client.GooGetState) error {
 	return nil
 }
 
-func (g *gooDB) addPkg(pkgState client.PackageState) error {
+func (g *GooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec, pkgState.LocalPath)
@@ -129,7 +130,7 @@ func (g *gooDB) addPkg(pkgState client.PackageState) error {
 }
 
 // RemovePkg removes a single package from the googet database
-func (g *gooDB) RemovePkg(packageName, arch string) error {
+func (g *GooDB) RemovePkg(packageName, arch string) error {
 	removeQuery := fmt.Sprintf(`BEGIN;
 	DELETE FROM InstalledPackages where pkg_name = '%v' and pkg_arch = '%v';
 	COMMIT;`, packageName, arch)
@@ -142,7 +143,7 @@ func (g *gooDB) RemovePkg(packageName, arch string) error {
 }
 
 // FetchPkg exports a single package from the googet database
-func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
+func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 	var pkgState client.PackageState
 
 	selectSpecQuery :=
@@ -175,7 +176,7 @@ func (g *gooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 }
 
 // FetchPkgs exports all of the current packages in the googet database
-func (g *gooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
+func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
 	pkgQuery := `Select pkg_name from InstalledPackages`
 	if pkgName != "" {
