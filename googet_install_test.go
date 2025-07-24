@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -101,31 +103,75 @@ func checkInstalled(t *testing.T, dir string, ps goolib.PkgSpec) bool {
 
 func TestInstall(t *testing.T) {
 	for _, tc := range []struct {
-		desc          string             // description of test case
-		args          []string           // args to install command
-		state         client.GooGetState // initial DB package state
-		packages      []goolib.PkgSpec   // which packages to provide in repo map
-		wantInstalled []string           // which packages were actually installed
-		wantState     []string           // abbreviated final DB package state
+		desc            string             // description of test case
+		args            []string           // args to install command
+		state           client.GooGetState // initial DB package state
+		packages        []goolib.PkgSpec   // which packages to provide in repo map
+		shouldReinstall bool               // whether to reinstall
+		wantInstalled   []string           // which packages were actually installed
+		wantState       []string           // abbreviated final DB package state
 	}{
 		{
-			desc:          "single-install",
-			args:          []string{"A"},
-			state:         client.GooGetState{},
+			desc: "single-install",
+			args: []string{"A"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "C", Arch: "noarch", Version: "3"}},
+			},
 			packages:      []goolib.PkgSpec{{Name: "A", Arch: "noarch", Version: "1"}},
 			wantInstalled: []string{"A.noarch.1"},
-			wantState:     []string{"A.noarch.1"},
+			wantState:     []string{"A.noarch.1", "C.noarch.3"},
 		},
 		{
-			desc:  "one-already-installed",
-			args:  []string{"A", "B"},
-			state: client.GooGetState{{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}}},
+			desc: "no-reinstall-when-already-installed",
+			args: []string{"A", "B"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}},
+			},
 			packages: []goolib.PkgSpec{
 				{Name: "A", Arch: "noarch", Version: "1"},
 				{Name: "B", Arch: "noarch", Version: "2"},
 			},
 			wantInstalled: []string{"B.noarch.2"},
 			wantState:     []string{"A.noarch.1", "B.noarch.2"},
+		},
+		{
+			desc: "force-reinstall-when-already-installed",
+			args: []string{"A"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1"},
+			},
+			shouldReinstall: true,
+			wantInstalled:   []string{"A.noarch.1"},
+			wantState:       []string{"A.noarch.1"},
+		},
+		{
+			desc: "no-reinstall-when-not-installed",
+			args: []string{"A"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "C", Arch: "noarch", Version: "3"}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1"},
+			},
+			shouldReinstall: true,
+			wantState:       []string{"C.noarch.3"},
+		},
+		{
+			desc: "no-reinstall-deps-when-already-installed",
+			args: []string{"A"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "B", Arch: "noarch", Version: "2"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "C", Arch: "noarch", Version: "3"}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1", PkgDependencies: map[string]string{"B": "2"}},
+				{Name: "B", Arch: "noarch", Version: "2"},
+			},
+			wantInstalled: []string{"A.noarch.1"},
+			wantState:     []string{"A.noarch.1", "B.noarch.2", "C.noarch.3"},
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -135,18 +181,16 @@ func TestInstall(t *testing.T) {
 			if err != nil {
 				t.Fatalf("googetdb.NewDB: %v", err)
 			}
-			if err := db.WriteStateToDB(tc.state); err != nil {
-				t.Fatalf("db.WriteStateToDB: %v", err)
-			}
 			defer db.Close()
 			downloader, err := client.NewDownloader("")
 			if err != nil {
 				t.Fatalf("NewDownloader: %v", err)
 			}
 			i := installer{
-				db:         db,
-				cache:      t.TempDir(),
-				downloader: downloader,
+				db:              db,
+				cache:           t.TempDir(),
+				downloader:      downloader,
+				shouldReinstall: tc.shouldReinstall,
 			}
 			// Set up the test server.
 			gooDir, logDir := t.TempDir(), t.TempDir()
@@ -154,9 +198,30 @@ func TestInstall(t *testing.T) {
 			defer srv.Close()
 			// Set up the test goo packages.
 			var specs []goolib.RepoSpec
+			stateMap := make(map[string]client.PackageState)
+			for _, ps := range tc.state {
+				stateMap[ps.PackageSpec.String()] = ps
+			}
 			for _, pkg := range tc.packages {
 				rs := genGoo(t, gooDir, logDir, pkg)
 				specs = append(specs, rs)
+				// If this package was also in the installed package state, then fill in
+				// missing fields in the package state (for reinstalls).
+				key := rs.PackageSpec.String()
+				ps, ok := stateMap[key]
+				if !ok {
+					continue
+				}
+				ps.PackageSpec = rs.PackageSpec // fixes Files
+				if ps.DownloadURL, err = url.JoinPath(srv.URL, "..", rs.Source); err != nil {
+					t.Fatalf("url.JoinPath: %v", err)
+				}
+				ps.LocalPath = filepath.Join(i.cache, key+".goo")
+				ps.Checksum = rs.Checksum
+				stateMap[key] = ps
+			}
+			if err := db.WriteStateToDB(slices.Collect(maps.Values(stateMap))); err != nil {
+				t.Fatalf("db.WriteStateToDB: %v", err)
 			}
 			// Initialize the installer's repo map.
 			i.repoMap = client.RepoMap{srv.URL: client.Repo{Priority: priority.Default, Packages: specs}}

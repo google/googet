@@ -166,21 +166,26 @@ func (i *installer) installFromFile(path string) error {
 // installFromRepo installs the named package from a repo.
 func (i *installer) installFromRepo(ctx context.Context, name string, archs []string) error {
 	pi := goolib.PkgNameSplit(name)
-	pkgState, err := i.db.FetchPkg(pi.Name)
-	if err != nil {
-		return fmt.Errorf("unable to fetch %v: %v", pi.Name, err)
-	}
 	if i.shouldReinstall {
-		if err := i.reinstall(ctx, pi, pkgState); err != nil {
+		ps, err := i.db.FetchPkg(pi.Name)
+		if err != nil {
+			return fmt.Errorf("unable to fetch %v: %v", pi.Name, err)
+		}
+		if ps.PackageSpec == nil {
+			fmt.Printf("package %s not installed on the system.\n", pi.Name)
+			return nil
+		}
+		if err := i.reinstall(ctx, pi, ps); err != nil {
 			return fmt.Errorf("reinstalling %s: %v", pi.Name, err)
 		}
-		if err := i.db.WriteStateToDB(client.GooGetState{pkgState}); err != nil {
+		if err := i.db.WriteStateToDB(client.GooGetState{ps}); err != nil {
 			return fmt.Errorf("writing state db: %v", err)
 		}
 		return nil
 	}
 
 	if pi.Ver == "" {
+		var err error
 		if pi.Ver, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
 		}
@@ -193,7 +198,10 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if err != nil {
 		return fmt.Errorf("error finding %s.%s.%s in repo: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
-	state := client.GooGetState{pkgState}
+	state, err := i.db.FetchPkgs("")
+	if err != nil {
+		return fmt.Errorf("unable to fetch installed packages: %v", err)
+	}
 	if ni, err := install.NeedsInstallation(pi, state); err != nil {
 		return err
 	} else if !ni {
