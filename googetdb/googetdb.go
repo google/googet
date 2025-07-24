@@ -180,7 +180,7 @@ func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
 	pkgQuery := `Select pkg_name from InstalledPackages`
 	if pkgName != "" {
-		pkgQuery = fmt.Sprintf(`Select pkg_name from InstalledPackages where pkg_name like "%s%%"`, pkgName)
+		pkgQuery = fmt.Sprintf(`Select pkg_name from InstalledPackages where pkg_name like "%s"`, pkgName)
 	}
 	pkgs, err := g.db.Query(pkgQuery)
 	if err != nil {
