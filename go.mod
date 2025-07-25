@@ -8,7 +8,6 @@ require (
 	cloud.google.com/go/storage v1.15.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/dustin/go-humanize v1.0.1
-	github.com/go-yaml/yaml v2.1.0+incompatible
 	github.com/google/go-cmp v0.7.0
 	github.com/google/logger v1.1.1
 	github.com/google/subcommands v1.2.0
@@ -17,6 +16,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20210427180440-81ed05c6b58c
 	golang.org/x/sys v0.31.0
 	google.golang.org/api v0.46.0
+	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c
 	modernc.org/sqlite v1.37.0
 )
 

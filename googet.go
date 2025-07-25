@@ -28,7 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-yaml/yaml"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -37,6 +36,7 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"
+	"gopkg.in/yaml.v3"
 )
 
 const (
