@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -73,13 +74,13 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
 	m := make(map[string][]string)
-	rm := downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
+	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
 	for r, repo := range rm {
 		for _, p := range repo.Packages {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)

@@ -17,6 +17,8 @@ package main
 import (
 	"os"
 	"syscall"
+
+	"github.com/google/googet/v2/settings"
 )
 
 func lock(f *os.File) error {
@@ -24,6 +26,6 @@ func lock(f *os.File) error {
 		return err
 	}
 
-	deferredFuncs = append(deferredFuncs, func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close(); os.Remove(lockFile) })
+	deferredFuncs = append(deferredFuncs, func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close(); os.Remove(settings.LockFile()) })
 	return nil
 }

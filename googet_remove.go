@@ -21,12 +21,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/remove"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -48,12 +48,12 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitSuccess
 
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Error(err)
 	}
 	defer db.Close()
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		}
 		pi = goolib.PkgNameSplit(ins[0])
 		deps, dl := remove.EnumerateDeps(pi, state)
-		if !noConfirm {
+		if settings.Confirm {
 			var b bytes.Buffer
 			fmt.Fprintln(&b, "The following packages will be removed:")
 			for _, d := range dl {

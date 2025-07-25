@@ -29,6 +29,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -52,8 +53,8 @@ func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 
 func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitFailure
-	cache := filepath.Join(rootDir, cacheDir)
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	cache := settings.CacheDir()
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 		logger.Fatal(err)
 	}
 	var newPkgs client.GooGetState
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 		logger.Fatal(err)
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, cache, cacheLife)
+	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
 	unmanaged := make(map[string]string)
 	installed := make(map[string]struct{})
 	for _, ps := range state {
@@ -96,7 +97,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 					Arch: p.PackageSpec.Arch,
 					Ver:  p.PackageSpec.Version,
 				}
-				deps, err := install.ListDeps(pi, rm, r, archs)
+				deps, err := install.ListDeps(pi, rm, r, settings.Archs)
 				if err != nil {
 					logger.Fatal(err)
 				}
@@ -109,7 +110,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 						newPkgs.Add(pkg)
 					}
 				}
-				if err := install.FromRepo(ctx, pi, r, cache, rm, archs, &newPkgs, true, downloader); err != nil {
+				if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, &newPkgs, true, downloader); err != nil {
 					logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 					exitCode = subcommands.ExitFailure
 					continue

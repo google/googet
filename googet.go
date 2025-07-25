@@ -32,7 +32,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/priority"
-	"github.com/google/googet/v2/system"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"
@@ -40,29 +40,15 @@ import (
 )
 
 const (
-	stateFile = "googet.state"
-	dbFile    = "googet.db"
-	confFile  = "googet.conf"
-	logFile   = "googet.log"
-	cacheDir  = "cache"
-	repoDir   = "repos"
-	envVar    = "GooGetRoot"
-	logSize   = 10 * 1024 * 1024
+	// envVar is the environment variable which stores the googet root directory.
+	envVar = "GooGetRoot"
+	// logSize is the max allowed size of the log file.
+	logSize = 10 * 1024 * 1024
 )
 
 var (
-	rootDir        string
-	noConfirm      bool
-	verbose        bool
-	systemLog      bool
-	showVer        bool
-	version        string
-	cacheLife      = 3 * time.Minute
-	archs          []string
-	proxyServer    string
-	allowUnsafeURL bool
-	lockFile       string
-
+	// version is the googet version, set via linkopts.
+	version string
 	// Optional function to handle flag parsing. If unset, we use flag.Parse.
 	flagParse func()
 )
@@ -160,26 +146,10 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 	return repoFile{fileName: p, repoEntries: res}, nil
 }
 
-type conf struct {
-	Archs          []string
-	CacheLife      string
-	ProxyServer    string
-	AllowUnsafeURL bool
-}
-
-func unmarshalConfFile(p string) (*conf, error) {
-	b, err := ioutil.ReadFile(p)
-	if err != nil {
-		return nil, err
-	}
-	var cf conf
-	return &cf, yaml.Unmarshal(b, &cf)
-}
-
 // validateRepoURL uses the global allowUnsafeURL to determine if u should be checked for https or
 // GCS status.
 func validateRepoURL(u string) bool {
-	if allowUnsafeURL {
+	if settings.AllowUnsafeURL {
 		return true
 	}
 	gcs, _, _ := goolib.SplitGCSUrl(u)
@@ -251,7 +221,7 @@ func writeState(s *client.GooGetState, sf string) error {
 		return err
 	}
 	// Write state to a temporary file first
-	tmp, err := ioutil.TempFile(rootDir, "googet.*.state")
+	tmp, err := ioutil.TempFile(settings.RootDir, "googet.*.state")
 	if err != nil {
 		return err
 	}
@@ -298,7 +268,7 @@ func readStateFromPath(sf string) (*client.GooGetState, error) {
 
 func buildSources(s string) (map[string]priority.Value, error) {
 	if s == "" {
-		return repoList(filepath.Join(rootDir, repoDir))
+		return repoList(settings.RepoDir())
 	}
 	m := make(map[string]priority.Value)
 	for _, src := range strings.Split(s, ",") {
@@ -402,39 +372,6 @@ func rotateLog(logPath string, ls int64) error {
 	return nil
 }
 
-func readConf(cf string) {
-	gc, err := unmarshalConfFile(cf)
-	if err != nil {
-		if os.IsNotExist(err) {
-			gc = &conf{}
-		} else {
-			logger.Errorf("Error unmarshalling conf file: %v", err)
-		}
-	}
-
-	if gc.Archs != nil {
-		archs = gc.Archs
-	} else {
-		archs, err = system.InstallableArchs()
-		if err != nil {
-			logger.Fatal(err)
-		}
-	}
-
-	if gc.CacheLife != "" {
-		cacheLife, err = time.ParseDuration(gc.CacheLife)
-		if err != nil {
-			logger.Error(err)
-		}
-	}
-
-	if gc.ProxyServer != "" {
-		proxyServer = gc.ProxyServer
-	}
-
-	allowUnsafeURL = gc.AllowUnsafeURL
-}
-
 var deferredFuncs []func()
 
 func runDeferredFuncs() {
@@ -476,11 +413,11 @@ func obtainLock(lockFile string) error {
 }
 
 func main() {
-	flag.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
-	flag.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
-	flag.BoolVar(&verbose, "verbose", false, "print info level logs to stdout")
-	flag.BoolVar(&systemLog, "system_log", true, "log to Linux Syslog or Windows Event Log")
-	flag.BoolVar(&showVer, "version", false, "display GooGet version and exit")
+	rootDir := flag.String("root", os.Getenv(envVar), "googet root directory")
+	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
+	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
+	systemLog := flag.Bool("system_log", true, "log to Linux Syslog or Windows Event Log")
+	showVer := flag.Bool("version", false, "display GooGet version and exit")
 
 	if flagParse != nil {
 		flagParse()
@@ -488,7 +425,7 @@ func main() {
 		flag.Parse()
 	}
 
-	if showVer {
+	if *showVer {
 		fmt.Println("GooGet version:", version)
 		os.Exit(0)
 	}
@@ -519,14 +456,16 @@ func main() {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
-	if rootDir == "" {
+	if *rootDir == "" {
 		logger.Fatalf("The environment variable %q not defined and no '-root' flag passed.", envVar)
 	}
-	if err := os.MkdirAll(rootDir, 0774); err != nil {
+	if err := os.MkdirAll(*rootDir, 0774); err != nil {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
-	lockFile = filepath.Join(rootDir, "googet.lock")
-	dbPath := filepath.Join(rootDir, dbFile)
+	settings.Initialize(*rootDir, !*noConfirm)
+
+	lockFile := settings.LockFile()
+	dbPath := settings.DBFile()
 	// TODO: Move this conversion code when unused state code is cleaned up.
 	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
 		if err := obtainLock(lockFile); err != nil {
@@ -539,8 +478,7 @@ func main() {
 		}
 		defer db.Close()
 		// Check to see if state file still exists, then convert and remove old state. Request lock.
-		sf := filepath.Join(rootDir, stateFile)
-		state, err := readState(sf)
+		state, err := readState(settings.StateFile())
 		if err != nil {
 			logger.Fatal(err)
 		}
@@ -555,9 +493,8 @@ func main() {
 			logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
 		}
 	}
-	readConf(filepath.Join(rootDir, confFile))
 
-	logPath := filepath.Join(rootDir, logFile)
+	logPath := settings.LogFile()
 	if err := rotateLog(logPath, logSize); err != nil {
 		logger.Error(err)
 	}
@@ -568,13 +505,13 @@ func main() {
 	}
 	deferredFuncs = append(deferredFuncs, func() { lf.Close() })
 
-	logger.Init("GooGet", verbose, systemLog, lf)
+	logger.Init("GooGet", *verbose, *systemLog, lf)
 
-	if err := os.MkdirAll(filepath.Join(rootDir, cacheDir), 0774); err != nil {
+	if err := os.MkdirAll(settings.CacheDir(), 0774); err != nil {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up cache directory: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(rootDir, repoDir), 0774); err != nil {
+	if err := os.MkdirAll(settings.RepoDir(), 0774); err != nil {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up repo directory: %v", err)
 	}

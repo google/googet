@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/google/googet/v2/settings"
 	"golang.org/x/sys/windows"
 )
 
@@ -71,6 +72,6 @@ func lock(f *os.File) error {
 		return err
 	}
 
-	deferredFuncs = append(deferredFuncs, func() { unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{}); f.Close(); os.Remove(lockFile) })
+	deferredFuncs = append(deferredFuncs, func() { unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{}); f.Close(); os.Remove(settings.LockFile()) })
 	return nil
 }
