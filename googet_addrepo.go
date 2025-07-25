@@ -21,11 +21,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
+	"gopkg.in/yaml.v3"
 )
 
 type addRepoCmd struct {
