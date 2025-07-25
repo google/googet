@@ -27,6 +27,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -48,12 +49,12 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
 	defer db.Close()
-	cache := filepath.Join(rootDir, cacheDir)
+	cache := settings.CacheDir()
 	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatalf("Unable to fetch installed packges: %v", err)
@@ -73,19 +74,19 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
+	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
 	ud := updates(pm, rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
 	}
 
-	if !noConfirm {
+	if settings.Confirm {
 		if !confirmation("Perform update?") {
 			fmt.Println("Not updating.")
 			return subcommands.ExitSuccess
@@ -98,7 +99,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, &state, cmd.dbOnly, downloader); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, &state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -117,7 +118,7 @@ func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
 	var ud []goolib.PackageInfo
 	for p, ver := range pm {
 		pi := goolib.PkgNameSplit(p)
-		v, r, _, err := client.FindRepoLatest(pi, rm, archs)
+		v, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
 			logger.Info(err)

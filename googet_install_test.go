@@ -23,6 +23,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 )
 
 // genGoo creates a name.noarch.version.goo package file in directory dir for
@@ -176,8 +177,8 @@ func TestInstall(t *testing.T) {
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Set up the installer.
-			dbDir := t.TempDir()
-			db, err := googetdb.NewDB(filepath.Join(dbDir, dbFile))
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
 			if err != nil {
 				t.Fatalf("googetdb.NewDB: %v", err)
 			}

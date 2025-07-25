@@ -24,6 +24,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -60,7 +61,7 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 }
 
 func cleanPackages(pl []string) {
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func cleanPackages(pl []string) {
 }
 
 func clean(il []string) {
-	files, err := filepath.Glob(filepath.Join(rootDir, cacheDir, "*"))
+	files, err := filepath.Glob(filepath.Join(settings.CacheDir(), "*"))
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func clean(il []string) {
 }
 
 func cleanOld() {
-	state, err := readState(filepath.Join(rootDir, stateFile))
+	state, err := readState(settings.StateFile())
 	if err != nil {
 		logger.Fatal(err)
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -56,13 +57,13 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife)
-	v, _, a, err := client.FindRepoLatest(pi, rm, archs)
+	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	v, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitSuccess
 	}
 
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)

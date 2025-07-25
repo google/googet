@@ -28,6 +28,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -57,7 +58,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	var state client.GooGetState
 	var exitCode subcommands.ExitStatus
 	var displayText string
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -70,8 +71,7 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 		}
 		if len(state) == 0 {
 			logger.Infof("Database")
-			sf := filepath.Join(rootDir, stateFile)
-			stateFile, err := readState(sf)
+			stateFile, err := readState(settings.StateFile())
 			if err != nil {
 				logger.Fatal(err)
 			}

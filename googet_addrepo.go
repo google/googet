@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"gopkg.in/yaml.v3"
@@ -90,7 +91,7 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 		logger.Fatal(err)
 	}
 
-	repoPath := filepath.Join(rootDir, repoDir, cmd.file)
+	repoPath := filepath.Join(settings.RepoDir(), cmd.file)
 
 	if _, err := oswrap.Stat(repoPath); err != nil && os.IsNotExist(err) {
 		if err := writeRepoFile(repoFile{repoPath, []repoEntry{newEntry}}); err != nil {

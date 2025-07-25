@@ -20,7 +20,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -29,6 +28,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 )
 
 func TestRepoList(t *testing.T) {
@@ -79,7 +79,7 @@ func TestRepoList(t *testing.T) {
 		if err := ioutil.WriteFile(testFile, tt.content, 0660); err != nil {
 			t.Fatalf("error writing repo: %v", err)
 		}
-		allowUnsafeURL = tt.allowUnsafeURL
+		settings.AllowUnsafeURL = tt.allowUnsafeURL
 		got, err := repoList(tempDir)
 		if err != nil {
 			t.Fatal(err)
@@ -113,44 +113,6 @@ func TestInstalledPackages(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("returned map does not match expected map: got %v, want %v", got, want)
-	}
-}
-
-func TestReadConf(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer oswrap.RemoveAll(tempDir)
-
-	confPath := filepath.Join(tempDir, "test.conf")
-	f, err := oswrap.Create(confPath)
-	if err != nil {
-		t.Fatalf("error creating conf file: %v", err)
-	}
-
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nallowunsafeurl: true")
-	if _, err := f.Write(content); err != nil {
-		t.Fatalf("error writing conf file: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("error closing conf file: %v", err)
-	}
-
-	readConf(confPath)
-
-	ea := []string{"noarch", "x86_64", "arm64"}
-	if !reflect.DeepEqual(archs, ea) {
-		t.Errorf("readConf did not create expected arch list, want: %s, got: %s", ea, archs)
-	}
-
-	ecl := time.Duration(10 * time.Minute)
-	if cacheLife != ecl {
-		t.Errorf("readConf did not create expected cacheLife, want: %s, got: %s", ecl, cacheLife)
-	}
-
-	if allowUnsafeURL != true {
-		t.Error("readConf did not set allowunsafeurl to true")
 	}
 }
 
@@ -207,16 +169,18 @@ func TestRotateLog(t *testing.T) {
 
 func TestCleanPackages(t *testing.T) {
 	var err error
-	rootDir, err = ioutil.TempDir("", "")
+	rootDir, err := ioutil.TempDir("", "")
+	settings.Initialize(rootDir, false)
 	if err != nil {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
 	defer oswrap.RemoveAll(rootDir)
 
-	wantFile := filepath.Join(rootDir, cacheDir, "want")
-	notWantFile := filepath.Join(rootDir, cacheDir, "notWant")
+	cache := settings.CacheDir()
+	wantFile := filepath.Join(cache, "want")
+	notWantFile := filepath.Join(cache, "notWant")
 
-	if err := oswrap.MkdirAll(filepath.Join(rootDir, cacheDir), 0700); err != nil {
+	if err := oswrap.MkdirAll(cache, 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := ioutil.WriteFile(wantFile, nil, 0700); err != nil {
@@ -241,7 +205,7 @@ func TestCleanPackages(t *testing.T) {
 		},
 	}
 
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		t.Fatal(err)
 	}

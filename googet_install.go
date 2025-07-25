@@ -28,6 +28,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -62,24 +63,24 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 		return subcommands.ExitFailure
 	}
 
-	db, err := googetdb.NewDB(filepath.Join(rootDir, dbFile))
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
 	defer db.Close()
 
-	downloader, err := client.NewDownloader(proxyServer)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
 	i := &installer{
 		db:              db,
-		cache:           filepath.Join(rootDir, cacheDir),
+		cache:           settings.CacheDir(),
 		dbOnly:          cmd.dbOnly,
 		shouldReinstall: cmd.reinstall,
 		redownload:      cmd.redownload,
-		confirm:         !noConfirm,
+		confirm:         settings.Confirm,
 		downloader:      downloader,
 	}
 
@@ -93,7 +94,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 		if repos == nil {
 			logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 		}
-		i.repoMap = i.downloader.AvailableVersions(ctx, repos, i.cache, cacheLife)
+		i.repoMap = i.downloader.AvailableVersions(ctx, repos, i.cache, settings.CacheLife)
 	}
 
 	var errs error
@@ -106,8 +107,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 			continue
 		}
 
-		// TODO: archs should not be a global variable.
-		if err := i.installFromRepo(ctx, arg, archs); err != nil {
+		if err := i.installFromRepo(ctx, arg, settings.Archs); err != nil {
 			logger.Errorf("Error installing from %q from repo: %v", arg, err)
 			errs = errors.Join(errs, err)
 		}
