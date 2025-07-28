@@ -73,6 +73,9 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 
 	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		logger.Fatal(err)
+	}
 	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)
