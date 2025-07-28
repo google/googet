@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
@@ -64,11 +65,9 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
 		var ins []string
-		var pDeps map[string]string
 		for _, ps := range state {
 			if ps.Match(pi) {
 				ins = append(ins, ps.PackageSpec.Name+"."+ps.PackageSpec.Arch)
-				pDeps = ps.PackageSpec.PkgDependencies
 			}
 		}
 		if len(ins) == 0 {
@@ -94,6 +93,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			}
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
+
 		if err = remove.All(ctx, pi, deps, &state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
@@ -103,8 +103,10 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		fmt.Printf("Removal of %s completed\n", pi.Name)
 		// TODO: Make sure we aren't removing packages that other packages depend on.
 		db.RemovePkg(pi.Name, pi.Arch)
-		for d := range pDeps {
-			di := goolib.PkgNameSplit(d)
+		for _, dep := range dl {
+			// We should have strings that look like "packagename.arch version"
+			d := strings.SplitN(dep, " ", 2)
+			di := goolib.PkgNameSplit(d[0])
 			db.RemovePkg(di.Name, di.Arch)
 		}
 
