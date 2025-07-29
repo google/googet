@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	
+
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -34,7 +34,7 @@ import (
 type latestCmd struct {
 	compare bool
 	sources string
-	json	bool
+	json    bool
 }
 
 type packageStatus struct {
@@ -88,7 +88,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Fatal(err)
 	}
 	defer db.Close()
-	
+
 	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)
