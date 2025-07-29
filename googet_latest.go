@@ -17,7 +17,7 @@ package main
 
 import (
 	"context"
-	"encoding/json" 
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -95,7 +95,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	pi.Arch = a
 	var ver string
-	pkgFound :=false
+	pkgFound := false
 	for _, p := range state {
 		if p.Match(pi) {
 			ver = p.PackageSpec.Version
