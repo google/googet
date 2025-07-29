@@ -33,6 +33,14 @@ import (
 type latestCmd struct {
 	compare bool
 	sources string
+	json	bool
+}
+
+type packageStatus struct {
+	PackageName      string `json:"package_name"`
+	Status           string `json:"status"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	LatestVersion    string `json:"latest_version"`
 }
 
 func (*latestCmd) Name() string     { return "latest" }
@@ -44,6 +52,8 @@ func (*latestCmd) Usage() string {
 func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.compare, "compare", false, "compare to version locally installed")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
+	f.BoolVar(&cmd.json, "json", false, "output status as a JSON object (requires --compare)")
+
 }
 
 func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -67,7 +77,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Fatal(err)
 	}
-	if !cmd.compare {
+	if !cmd.compare && !cmd.json {
 		fmt.Println(v)
 		return subcommands.ExitSuccess
 	}
@@ -76,28 +86,64 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer db.Close()
+	
 	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)
 	}
 	pi.Arch = a
 	var ver string
+	pkgFound :=false
 	for _, p := range state {
 		if p.Match(pi) {
 			ver = p.PackageSpec.Version
+			pkgFound = true
 			break
 		}
-		fmt.Println(v)
+	}
+
+	status := packageStatus{
+		PackageName:      pi.Name,
+		InstalledVersion: ver,
+		LatestVersion:    v,
+	}
+	if !pkgFound {
+		status.Status = "not_installed"
+		status.InstalledVersion = ""
+	} else {
+		c, err := goolib.Compare(v, ver)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		switch c {
+		case 1:
+			status.Status = "update_available"
+		case 0:
+			status.Status = "up_to_date"
+		case -1:
+			status.Status = "newer_version_installed"
+		}
+	}
+	if cmd.json {
+		out, err := json.Marshal(status)
+		if err != nil {
+			logger.Fatalf("Failed to marshal JSON: %v", err)
+		}
+		fmt.Println(string(out))
 		return subcommands.ExitSuccess
 	}
-	c, err := goolib.Compare(v, ver)
-	if err != nil {
-		logger.Fatal(err)
+
+	// If not JSON, use  human readable format.
+	switch status.Status {
+	case "update_available":
+		fmt.Printf("%s: Update available (current: %s, latest: %s)\n", status.PackageName, status.InstalledVersion, status.LatestVersion)
+	case "up_to_date":
+		fmt.Printf("%s: Up-to-date (%s)\n", status.PackageName, status.InstalledVersion)
+	case "newer_version_installed":
+		fmt.Printf("%s: Newer version installed (current: %s, repo: %s)\n", status.PackageName, status.InstalledVersion, status.LatestVersion)
+	case "not_installed":
+		fmt.Printf("%s: Not installed (latest available: %s)\n", status.PackageName, status.LatestVersion)
 	}
-	if c == -1 {
-		fmt.Println(ver)
-		return subcommands.ExitSuccess
-	}
-	fmt.Println(v)
 	return subcommands.ExitSuccess
 }
