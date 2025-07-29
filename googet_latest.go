@@ -17,11 +17,12 @@ package main
 
 import (
 	"context"
+	"encoding/json" 
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-
+	
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
