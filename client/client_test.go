@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
@@ -91,6 +92,18 @@ func TestGetPackageStateNoMatch(t *testing.T) {
 	s := &GooGetState{PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
 	if _, err := s.GetPackageState(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}); err == nil {
 		t.Error("did not get expected error when running GetPackageState")
+	}
+}
+
+func TestPackageMap(t *testing.T) {
+	s := &GooGetState{
+		PackageState{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.2.3@4", Arch: "noarch"}},
+		PackageState{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "0.1.0@1", Arch: "noarch"}},
+	}
+	want := PackageMap{"foo.noarch": "1.2.3@4", "bar.noarch": "0.1.0@1"}
+	got := s.PackageMap()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("PackageMap unexpected diff (-want +got):\n%v", diff)
 	}
 }
 

@@ -60,8 +60,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		logger.Fatalf("Unable to fetch installed packges: %v", err)
 	}
 
-	pm := installedPackages(state)
-	if len(pm) == 0 {
+	if len(state) == 0 {
 		fmt.Println("No packages installed.")
 		return subcommands.ExitSuccess
 	}
@@ -80,7 +79,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
-	ud := updates(pm, rm)
+	ud := updates(state.PackageMap(), rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
@@ -113,7 +112,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	return exitCode
 }
 
-func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
+func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
 	fmt.Println("Searching for available updates...")
 	var ud []goolib.PackageInfo
 	for p, ver := range pm {

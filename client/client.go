@@ -90,6 +90,19 @@ func (s *GooGetState) GetPackageState(pi goolib.PackageInfo) (PackageState, erro
 	return PackageState{}, fmt.Errorf("no match found for package %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 }
 
+// PackageMap is a map of package "name.arch" to package version.
+type PackageMap map[string]string
+
+// PackageMap returns a PackageMap of all installed packages based on the
+// GooGetState.
+func (s GooGetState) PackageMap() PackageMap {
+	pm := make(PackageMap)
+	for _, p := range s {
+		pm[p.PackageSpec.Name+"."+p.PackageSpec.Arch] = p.PackageSpec.Version
+	}
+	return pm
+}
+
 // Marshal JSON marshals GooGetState.
 func (s *GooGetState) Marshal() ([]byte, error) {
 	return json.Marshal(s)
