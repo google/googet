@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/google/googet/v2/googetdb"
-	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -72,7 +72,7 @@ func cleanPackages(pl []string) {
 	}
 
 	for _, pkg := range state {
-		if goolib.ContainsString(pkg.PackageSpec.Name, pl) {
+		if slices.Contains(pl, pkg.PackageSpec.Name) {
 			if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
 				logger.Error(err)
 			}
@@ -86,7 +86,7 @@ func clean(il []string) {
 		logger.Fatal(err)
 	}
 	for _, file := range files {
-		if !goolib.ContainsString(file, il) {
+		if !slices.Contains(il, file) {
 			if err := oswrap.RemoveAll(file); err != nil {
 				logger.Error(err)
 			}
