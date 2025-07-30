@@ -23,7 +23,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
@@ -141,13 +140,12 @@ func TestRotateLog(t *testing.T) {
 }
 
 func TestCleanPackages(t *testing.T) {
-	var err error
 	rootDir, err := ioutil.TempDir("", "")
-	settings.Initialize(rootDir, false)
 	if err != nil {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
 	defer oswrap.RemoveAll(rootDir)
+	settings.Initialize(rootDir, false)
 
 	cache := settings.CacheDir()
 	wantFile := filepath.Join(cache, "want")
@@ -164,27 +162,10 @@ func TestCleanPackages(t *testing.T) {
 	}
 
 	state := client.GooGetState{
-		{
-			LocalPath: wantFile,
-			PackageSpec: &goolib.PkgSpec{
-				Name: "want",
-			},
-		},
-		{
-			LocalPath: notWantFile,
-			PackageSpec: &goolib.PkgSpec{
-				Name: "notWant",
-			},
-		},
+		{LocalPath: wantFile, PackageSpec: &goolib.PkgSpec{Name: "want"}},
+		{LocalPath: notWantFile, PackageSpec: &goolib.PkgSpec{Name: "notWant"}},
 	}
-
-	db, err := googetdb.NewDB(settings.DBFile())
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.WriteStateToDB(state)
-
-	cleanPackages([]string{"notWant"})
+	cleanInstalled(state, map[string]bool{"notWant": true})
 
 	if _, err := oswrap.Stat(wantFile); err != nil {
 		t.Errorf("cleanPackages removed wantDir, Stat err: %v", err)
