@@ -17,7 +17,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -87,32 +86,6 @@ func TestRepoList(t *testing.T) {
 		if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("test case %d: repoList unexpected diff (-want +got): %v", i+1, diff)
 		}
-	}
-}
-
-func TestInstalledPackages(t *testing.T) {
-	state := []client.PackageState{
-		{
-			PackageSpec: &goolib.PkgSpec{
-				Name:    "foo",
-				Version: "1.2.3@4",
-				Arch:    "noarch",
-			},
-		},
-		{
-			PackageSpec: &goolib.PkgSpec{
-				Name:    "bar",
-				Version: "0.1.0@1",
-				Arch:    "noarch",
-			},
-		},
-	}
-
-	want := packageMap{"foo.noarch": "1.2.3@4", "bar.noarch": "0.1.0@1"}
-	got := installedPackages(state)
-
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("returned map does not match expected map: got %v, want %v", got, want)
 	}
 }
 
@@ -225,13 +198,13 @@ func TestCleanPackages(t *testing.T) {
 func TestUpdates(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		pm   packageMap
+		pm   client.PackageMap
 		rm   client.RepoMap
 		want []goolib.PackageInfo
 	}{
 		{
 			name: "upgrade to later version",
-			pm: packageMap{
+			pm: client.PackageMap{
 				"foo.x86_32": "1.0",
 				"bar.x86_32": "2.0",
 			},
@@ -248,7 +221,7 @@ func TestUpdates(t *testing.T) {
 		},
 		{
 			name: "rollback to earlier version",
-			pm: packageMap{
+			pm: client.PackageMap{
 				"foo.x86_32": "2.0",
 				"bar.x86_32": "2.0",
 			},
@@ -271,7 +244,7 @@ func TestUpdates(t *testing.T) {
 		},
 		{
 			name: "no change if rollback version already installed",
-			pm: packageMap{
+			pm: client.PackageMap{
 				"foo.x86_32": "1.0",
 			},
 			rm: client.RepoMap{

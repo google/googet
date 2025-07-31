@@ -53,18 +53,6 @@ var (
 	flagParse func()
 )
 
-type packageMap map[string]string
-
-// installedPackages returns a packagemap of all installed packages based on the
-// googet state file given.
-func installedPackages(state client.GooGetState) packageMap {
-	pm := make(packageMap)
-	for _, p := range state {
-		pm[p.PackageSpec.Name+"."+p.PackageSpec.Arch] = p.PackageSpec.Version
-	}
-	return pm
-}
-
 type repoFile struct {
 	fileName    string
 	repoEntries []repoEntry

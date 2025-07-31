@@ -114,9 +114,8 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 }
 
 func (cmd *installedCmd) formatSimple(state client.GooGetState, displayText string) subcommands.ExitStatus {
-	pm := installedPackages(state)
 	var pl []string
-	for p, v := range pm {
+	for p, v := range state.PackageMap() {
 		pl = append(pl, p+"."+v)
 	}
 
