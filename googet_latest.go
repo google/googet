@@ -58,6 +58,14 @@ func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if flags.NArg() != 1 {
+		logger.Errorf("Error: exactly one package name argument is required.\nUsage: %s", cmd.Usage())
+		return subcommands.ExitUsageError
+	}
+	if cmd.json && !cmd.compare {
+		logger.Error("Error: --json flag requires the --compare flag to be set.")
+		return subcommands.ExitUsageError
+	}
 	pi := goolib.PkgNameSplit(flags.Arg(0))
 
 	repos, err := buildSources(cmd.sources)
@@ -78,7 +86,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Fatal(err)
 	}
-	if !cmd.compare && !cmd.json {
+	if !cmd.compare {
 		fmt.Println(v)
 		return subcommands.ExitSuccess
 	}
