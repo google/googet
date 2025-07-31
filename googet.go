@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -440,7 +441,7 @@ func main() {
 	cmdr.ImportantFlag("noconfirm")
 
 	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
-	if flag.NArg() == 0 || goolib.ContainsString(flag.Args()[0], nonLockingCommands) {
+	if flag.NArg() == 0 || slices.Contains(nonLockingCommands, flag.Args()[0]) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 

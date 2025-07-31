@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -91,7 +92,7 @@ func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 		if !ok {
 			return err
 		}
-		if !ContainsInt(s.ExitStatus(), ec) {
+		if !slices.Contains(ec, s.ExitStatus()) {
 			return fmt.Errorf("command exited with error code %v", s.ExitStatus())
 		}
 	}
@@ -147,26 +148,6 @@ func ExtractPkgSpec(r io.Reader) (*PkgSpec, error) {
 		return nil, err
 	}
 	return ReadPackageSpec(zr)
-}
-
-// ContainsInt checks if a is in slice.
-func ContainsInt(a int, slice []int) bool {
-	for _, b := range slice {
-		if a == b {
-			return true
-		}
-	}
-	return false
-}
-
-// ContainsString checks if a is in slice.
-func ContainsString(a string, slice []string) bool {
-	for _, b := range slice {
-		if a == b {
-			return true
-		}
-	}
-	return false
 }
 
 // SplitGCSUrl parses and splits a GCS URL returning if the URL belongs to a GCS object,

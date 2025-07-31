@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -372,7 +373,7 @@ func (ps *PkgSpec) verify() error {
 	if ps.Name == "" {
 		return errors.New("no name defined in package spec")
 	}
-	if !ContainsString(ps.Arch, validArch) {
+	if !slices.Contains(validArch, ps.Arch) {
 		return fmt.Errorf("invalid architecture: %q", ps.Arch)
 	}
 	if ps.Version == "" {
