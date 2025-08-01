@@ -142,6 +142,7 @@ func TestCreateIfMissing(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewDB(%v): %v", dbFile, err)
 			}
+			defer db.Close()
 			pkgs, err := db.FetchPkgs("")
 			if err != nil {
 				t.Fatalf("Unable to fetch packages: %v", err)
