@@ -23,7 +23,6 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -36,7 +35,6 @@ import (
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"github.com/olekukonko/tablewriter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -272,75 +270,6 @@ func confirmation(msg string) bool {
 	fmt.Scanln(&c)
 	c = strings.ToLower(c)
 	return c == "y" || c == "yes"
-}
-
-func info(ps *goolib.PkgSpec, r string) {
-	fmt.Println()
-
-	pkgInfo := []struct {
-		name, value string
-	}{
-		{"Name", ps.Name},
-		{"Arch", ps.Arch},
-		{"Version", ps.Version},
-		{"Repo", path.Base(r)},
-		{"Authors", ps.Authors},
-		{"Owners", ps.Owners},
-		{"Source", ps.Source},
-		{"Description", ps.Description},
-		{"Dependencies", ""},
-		{"ReleaseNotes", ""},
-	}
-	var w int
-	for _, pi := range pkgInfo {
-		if len(pi.name) > w {
-			w = len(pi.name)
-		}
-	}
-	wf := fmt.Sprintf("%%-%vs: %%s\n", w+1)
-
-	for _, pi := range pkgInfo {
-		if pi.name == "Dependencies" {
-			var deps []string
-			for p, v := range ps.PkgDependencies {
-				deps = append(deps, p+" "+v)
-			}
-			if len(deps) == 0 {
-				fmt.Printf(wf, pi.name, "None")
-			} else {
-				fmt.Printf(wf, pi.name, deps[0])
-				for _, l := range deps[1:] {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		} else if pi.name == "ReleaseNotes" && ps.ReleaseNotes != nil {
-			sl, _ := tablewriter.WrapString(ps.ReleaseNotes[0], 76-w)
-			fmt.Printf(wf, pi.name, sl[0])
-			for _, l := range sl[1:] {
-				fmt.Printf(wf, "", l)
-			}
-			for _, l := range ps.ReleaseNotes[1:] {
-				sl, _ := tablewriter.WrapString(l, 76-w)
-				fmt.Printf(wf, "", sl[0])
-				for _, l := range sl[1:] {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		} else {
-			cl := strings.Split(strings.TrimSpace(pi.value), "\n")
-			sl, _ := tablewriter.WrapString(cl[0], 76-w)
-			fmt.Printf(wf, pi.name, sl[0])
-			for _, l := range sl[1:] {
-				fmt.Printf(wf, "", l)
-			}
-			for _, l := range cl[1:] {
-				sl, _ := tablewriter.WrapString(l, 76-w)
-				for _, l := range sl {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		}
-	}
 }
 
 func rotateLog(logPath string, ls int64) error {

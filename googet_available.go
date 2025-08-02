@@ -120,7 +120,8 @@ func repo(pi goolib.PackageInfo, rm client.RepoMap) {
 	for r, repo := range rm {
 		for _, p := range repo.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {
-				info(p.PackageSpec, r)
+				fmt.Println()
+				p.PackageSpec.PrettyPrint(os.Stdout, r)
 				return
 			}
 		}
