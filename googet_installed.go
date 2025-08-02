@@ -166,7 +166,8 @@ func (cmd *installedCmd) formatJSON(state client.GooGetState) subcommands.ExitSt
 func local(pi goolib.PackageInfo, state client.GooGetState) {
 	for _, p := range state {
 		if p.Match(pi) {
-			info(p.PackageSpec, "installed")
+			fmt.Println()
+			p.PackageSpec.PrettyPrint(os.Stdout, "installed")
 			return
 		}
 	}
