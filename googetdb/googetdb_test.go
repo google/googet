@@ -95,6 +95,7 @@ func TestWriteStateToDBPreservesExistingTimestamps(t *testing.T) {
 	}
 	// Update the packages in the db.
 	nowFunc = func() time.Time { return time.Unix(175000000, 0) }
+	t.Cleanup(func() { nowFunc = time.Now })
 	s = client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2", Version: "2"}},
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test4", Version: "3"}},
