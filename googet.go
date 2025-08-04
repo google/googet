@@ -28,7 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/priority"
@@ -202,57 +201,6 @@ func repos(dir string) ([]repoFile, error) {
 	return rfs, nil
 }
 
-func writeState(s *client.GooGetState, sf string) error {
-	b, err := s.Marshal()
-	if err != nil {
-		return err
-	}
-	// Write state to a temporary file first
-	tmp, err := ioutil.TempFile(settings.RootDir, "googet.*.state")
-	if err != nil {
-		return err
-	}
-	newStateFile := tmp.Name()
-	if _, err = tmp.Write(b); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(newStateFile, 0664); err != nil {
-		return err
-	}
-	// Back up the old state file so we can recover it if need be
-	backupStateFile := sf + ".bak"
-	if err = os.Rename(sf, backupStateFile); err != nil {
-		logger.Infof("Unable to back up state file %s to %s. Err: %v", sf, backupStateFile, err)
-	}
-	// Move the new temp file to the live path
-	return os.Rename(newStateFile, sf)
-}
-
-func readState(sf string) (client.GooGetState, error) {
-	state, err := readStateFromPath(sf)
-	if err != nil {
-		sfNotExist := os.IsNotExist(err)
-		state, err = readStateFromPath(sf + ".bak")
-		if sfNotExist && os.IsNotExist(err) {
-			logger.Info("No state file found, assuming no packages installed.")
-			return client.GooGetState{}, nil
-		}
-	}
-
-	return *state, err
-}
-
-func readStateFromPath(sf string) (*client.GooGetState, error) {
-	b, err := ioutil.ReadFile(sf)
-	if err != nil {
-		return nil, err
-	}
-	return client.UnmarshalState(b)
-}
-
 func buildSources(s string) (map[string]priority.Value, error) {
 	if s == "" {
 		return repoList(settings.RepoDir())
@@ -370,7 +318,7 @@ func main() {
 	cmdr.ImportantFlag("noconfirm")
 
 	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
-	if flag.NArg() == 0 || slices.Contains(nonLockingCommands, flag.Args()[0]) {
+	if flag.NArg() == 0 || slices.Contains(nonLockingCommands, flag.Arg(0)) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
@@ -382,34 +330,16 @@ func main() {
 	}
 	settings.Initialize(*rootDir, !*noConfirm)
 
-	lockFile := settings.LockFile()
-	dbPath := settings.DBFile()
-	// TODO: Move this conversion code when unused state code is cleaned up.
-	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
-		if err := obtainLock(lockFile); err != nil {
-			logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
-		}
-		fmt.Println("Creating Googet DB and converting State file...")
-		db, err := googetdb.NewDB(dbPath)
-		if err != nil {
-			logger.Fatalf("Unable to create initial db file. If db is not created, run again as admin: %v", err)
-		}
-		defer db.Close()
-		// Check to see if state file still exists, then convert and remove old state. Request lock.
-		state, err := readState(settings.StateFile())
-		if err != nil {
-			logger.Fatal(err)
-		}
-		db.WriteStateToDB(state)
-	} else {
-		// Allow installed to run through sql db creation
-		if flag.Args()[0] == "installed" {
-			os.Exit(int(cmdr.Execute(context.Background())))
-		}
-		// If we converted the db, we don't want to request the lock twice.
-		if err := obtainLock(lockFile); err != nil {
-			logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
-		}
+	dbFile := settings.DBFile()
+
+	// "googet installed" is allowed to execute without a lock if the googet
+	// database has already been created.
+	if googetdb.Exists(dbFile) && flag.Arg(0) == "installed" {
+		os.Exit(int(cmdr.Execute(context.Background())))
+	}
+
+	if err := obtainLock(settings.LockFile()); err != nil {
+		logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
 	}
 
 	logPath := settings.LogFile()
@@ -425,6 +355,10 @@ func main() {
 
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 
+	if err := googetdb.CreateIfMissing(dbFile); err != nil {
+		runDeferredFuncs()
+		logger.Fatalf("Error creating initial db file. If db is not created, run again as admin: %v", err)
+	}
 	if err := os.MkdirAll(settings.CacheDir(), 0774); err != nil {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up cache directory: %v", err)

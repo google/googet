@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
+	"github.com/google/logger"
 
 	_ "modernc.org/sqlite" // Import the SQLite driver (unnamed)
 )
@@ -33,6 +35,9 @@ const (
 	stateQuery = `INSERT or REPLACE INTO InstalledPackages (pkg_name, pkg_ver, pkg_arch, pkg_json) VALUES (
 		?, ?, ?, ?)`
 )
+
+// nowFunc returns the current time; can be overridden in tests.
+var nowFunc = time.Now
 
 // GooDB is the googet database.
 type GooDB struct {
@@ -107,7 +112,9 @@ func (g *GooDB) addPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec, pkgState.LocalPath)
-	pkgState.InstallDate = time.Now().Unix()
+	if pkgState.InstallDate == 0 {
+		pkgState.InstallDate = nowFunc().Unix()
+	}
 
 	tx, err := g.db.Begin()
 	if err != nil {
@@ -200,4 +207,57 @@ func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	}
 
 	return state, nil
+}
+
+// readState reads the JSON installed package state from the given path,
+// retrying with a .bak extension if the first read fails.
+//
+// Deprecated: Use the googet.db sqlite database instead.
+func readState(sf string) (client.GooGetState, error) {
+	state, err := readStateFromPath(sf)
+	if err != nil {
+		sfNotExist := os.IsNotExist(err)
+		state, err = readStateFromPath(sf + ".bak")
+		if sfNotExist && os.IsNotExist(err) {
+			logger.Info("No state file found, assuming no packages installed.")
+			return client.GooGetState{}, nil
+		}
+	}
+	return state, err
+}
+
+// readStateFromPath is a helper function for readState.
+func readStateFromPath(sf string) (client.GooGetState, error) {
+	var s client.GooGetState
+	b, err := os.ReadFile(sf)
+	if err != nil {
+		return s, err
+	}
+	return s, json.Unmarshal(b, &s)
+}
+
+// Exists returns true if the database file already exists.
+func Exists(dbFile string) bool {
+	_, err := os.Stat(dbFile)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+// CreateIfMissing creates a new database file at the given path, seeding it
+// with the contents of the old JSON state file if it exists.
+func CreateIfMissing(dbFile string) error {
+	if Exists(dbFile) {
+		return nil
+	}
+	fmt.Println("Creating Googet DB and converting state file...")
+	db, err := NewDB(dbFile)
+	if err != nil {
+		return fmt.Errorf("unable to create initial db file: %v", err)
+	}
+	defer db.Close()
+	// If state file still exists, then convert.
+	state, err := readState(settings.StateFile())
+	if err != nil {
+		return fmt.Errorf("could not read state file: %v", err)
+	}
+	return db.WriteStateToDB(state)
 }
