@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -59,21 +60,60 @@ func TestRemovePackage(t *testing.T) {
 	}
 	defer db.Close()
 	s := client.GooGetState{
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2"}, InstallDate: 123456789},
 	}
 	db.WriteStateToDB(s)
 	r := client.GooGetState{
-		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1"}, InstallDate: 123456789},
 	}
 	db.RemovePkg("test2", "")
 	pkgs, err := db.FetchPkgs("")
 	if err != nil {
 		t.Errorf("Unable to fetch packages: %v", err)
 	}
-	if diff := cmp.Diff(r, pkgs, cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")); diff != "" {
+	if diff := cmp.Diff(r, pkgs); diff != "" {
 		fmt.Println(diff)
 		t.Errorf("GetPackageState did not return expected result, want: %#v, got: %#v", pkgs, s)
+	}
+}
+
+func TestWriteStateToDBPreservesExistingTimestamps(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%v): %v", dbFile, err)
+	}
+	// Set the initial package state.
+	s := client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1", Version: "1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2", Version: "1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test3", Version: "1"}, InstallDate: 123456789},
+	}
+	if err := db.WriteStateToDB(s); err != nil {
+		t.Fatalf("db.WriteStateToDB(%v): %v", s, err)
+	}
+	// Update the packages in the db.
+	nowFunc = func() time.Time { return time.Unix(175000000, 0) }
+	s = client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2", Version: "2"}},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test4", Version: "3"}},
+	}
+	if err := db.WriteStateToDB(s); err != nil {
+		t.Fatalf("db.WriteStateToDB(%v): %v", s, err)
+	}
+	got, err := db.FetchPkgs("")
+	if err != nil {
+		t.Fatalf("db.FetchPkgs: %v", err)
+	}
+	want := client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1", Version: "1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test2", Version: "2"}, InstallDate: 175000000},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test3", Version: "1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test4", Version: "3"}, InstallDate: 175000000},
+	}
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("FetchPkgs got unexpected diff (-want +got):\n%v", diff)
 	}
 }
 

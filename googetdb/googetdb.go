@@ -36,6 +36,9 @@ const (
 		?, ?, ?, ?)`
 )
 
+// nowFunc returns the current time; can be overridden in tests.
+var nowFunc = time.Now
+
 // GooDB is the googet database.
 type GooDB struct {
 	db *sql.DB
@@ -110,7 +113,7 @@ func (g *GooDB) addPkg(pkgState client.PackageState) error {
 
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec, pkgState.LocalPath)
 	if pkgState.InstallDate == 0 {
-		pkgState.InstallDate = time.Now().Unix()
+		pkgState.InstallDate = nowFunc().Unix()
 	}
 
 	tx, err := g.db.Begin()
