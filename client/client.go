@@ -368,11 +368,11 @@ func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 // latest returns the version and repo having the greatest (priority, version) from the set of
 // package specs in psm.
 func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
-	var ver, repo string
+	var ver, repoURL string
 	var pri priority.Value
-	for r, pl := range psm {
+	for u, pl := range psm {
 		for _, pkg := range pl {
-			q := rm[r].Priority
+			q := rm[u].Priority
 			c := 1
 			if ver != "" {
 				var err error
@@ -382,13 +382,13 @@ func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
 				}
 			}
 			if c == 1 {
-				repo = r
+				repoURL = u
 				ver = pkg.Version
 				pri = q
 			}
 		}
 	}
-	return ver, repo
+	return ver, repoURL
 }
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
@@ -402,10 +402,10 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, 
 		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
 	}
 	for _, a := range archs {
-		for r, repo := range rm {
-			for _, p := range repo.Packages {
+		for u, r := range rm {
+			for _, p := range r.Packages {
 				if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == a {
-					psm[r] = append(psm[r], p.PackageSpec)
+					psm[u] = append(psm[u], p.PackageSpec)
 				}
 			}
 		}
@@ -420,10 +420,10 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, 
 // WhatRepo returns what repo a package is in.
 // Name, Arch, and Ver fields of PackageInfo must be provided.
 func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {
-	for r, repo := range rm {
-		for _, p := range repo.Packages {
+	for u, r := range rm {
+		for _, p := range r.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {
-				return r, nil
+				return u, nil
 			}
 		}
 	}
