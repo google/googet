@@ -84,6 +84,7 @@ func TestWriteStateToDBPreservesExistingTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB(%v): %v", dbFile, err)
 	}
+	defer db.Close()
 	// Set the initial package state.
 	s := client.GooGetState{
 		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test1", Version: "1"}, InstallDate: 123456789},
