@@ -103,17 +103,6 @@ func (s GooGetState) PackageMap() PackageMap {
 	return pm
 }
 
-// Marshal JSON marshals GooGetState.
-func (s *GooGetState) Marshal() ([]byte, error) {
-	return json.Marshal(s)
-}
-
-// UnmarshalState unmarshals data into GooGetState.
-func UnmarshalState(b []byte) (*GooGetState, error) {
-	var s GooGetState
-	return &s, json.Unmarshal(b, &s)
-}
-
 // Match reports whether the PackageState corresponds to the package info.
 func (ps *PackageState) Match(pi goolib.PackageInfo) bool {
 	return ps.PackageSpec.Name == pi.Name && (ps.PackageSpec.Arch == pi.Arch || pi.Arch == "") && (ps.PackageSpec.Version == pi.Ver || pi.Ver == "")
