@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -66,7 +67,7 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 		return subcommands.ExitUsageError
 	}
 
-	repos, err := buildSources(cmd.sources)
+	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 				exitCode = subcommands.ExitSuccess
 				pi := goolib.PkgNameSplit(p)
 				if cmd.info {
-					repo(pi, rm)
+					findAndPrintPackageInfo(pi, rm)
 					continue
 				}
 				fmt.Println(" ", pi.Name+"."+pi.Arch+" "+pi.Ver)
@@ -116,7 +117,9 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 	return exitCode
 }
 
-func repo(pi goolib.PackageInfo, rm client.RepoMap) {
+// findAndPrintPackageInfo finds the repo and PkgSpec matching the given package
+// info and then prints out their details.
+func findAndPrintPackageInfo(pi goolib.PackageInfo, rm client.RepoMap) {
 	for r, repo := range rm {
 		for _, p := range repo.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {

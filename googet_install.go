@@ -28,6 +28,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -87,7 +88,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 	// We only need to build sources and download indexes if there are any
 	// non-file goo arguments passed to the install command (usually the case).
 	if !allFileGoos(flag.Args()) {
-		repos, err := buildSources(cmd.sources)
+		repos, err := repo.BuildSources(cmd.sources)
 		if err != nil {
 			logger.Fatal(err)
 		}

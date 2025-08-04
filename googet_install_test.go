@@ -24,6 +24,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
+	"github.com/google/logger"
 )
 
 // genGoo creates a name.noarch.version.goo package file in directory dir for
@@ -103,6 +104,7 @@ func checkInstalled(t *testing.T, dir string, ps goolib.PkgSpec) bool {
 }
 
 func TestInstall(t *testing.T) {
+	logger.Init("GooGet", true, false, io.Discard)
 	for _, tc := range []struct {
 		desc            string             // description of test case
 		args            []string           // args to install command

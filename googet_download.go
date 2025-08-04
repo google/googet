@@ -25,6 +25,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/download"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -51,7 +52,7 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 		fmt.Fprintf(os.Stderr, "%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
 	}
-	repos, err := buildSources(cmd.sources)
+	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
 		logger.Fatal(err)
 	}

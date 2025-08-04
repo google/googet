@@ -29,6 +29,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
@@ -68,7 +69,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 	if err != nil {
 		logger.Fatal(err)
 	}
-	repos, err := buildSources(cmd.sources)
+	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
 		logger.Fatal(err)
 	}

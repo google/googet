@@ -21,12 +21,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"gopkg.in/yaml.v3"
 )
 
 type addRepoCmd struct {
@@ -38,10 +37,10 @@ func (*addRepoCmd) Name() string     { return "addrepo" }
 func (*addRepoCmd) Synopsis() string { return "add repository" }
 func (*addRepoCmd) Usage() string {
 	return fmt.Sprintf(`%s addrepo [-file <repofile>] [-priority <value>] <name> <url>:
-	Add repository to GooGet's repository list. 
-	If -file is not set 'name.repo' will be used for the file name 
-	overwriting any existing file with than name. 
-	If -file is set the specified repo will be appended to that repo file, 
+	Add repository to GooGet's repository list.
+	If -file is not set 'name.repo' will be used for the file name
+	overwriting any existing file with that name.
+	If -file is set the specified repo will be appended to that repo file,
 	creating it if it does not exist.
 	If -priority is specified, the repo will be configured with this priority level.
 `, filepath.Base(os.Args[0]))
@@ -53,23 +52,16 @@ func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	var newEntry repoEntry
-	switch f.NArg() {
-	case 0, 1:
-		fmt.Fprintln(os.Stderr, "Not enough arguments")
-		f.Usage()
-		return subcommands.ExitUsageError
-	case 2:
-		newEntry.Name = f.Arg(0)
-		newEntry.URL = f.Arg(1)
-	default:
-		fmt.Fprintln(os.Stderr, "Excessive arguments")
+	if got, want := f.NArg(), 2; got != want {
+		fmt.Fprintf(os.Stderr, "Wrong number of arguments: got %v, want %v\n", got, want)
 		f.Usage()
 		return subcommands.ExitUsageError
 	}
 
+	entry := repo.Entry{Name: f.Arg(0), URL: f.Arg(1)}
+
 	if cmd.file == "" {
-		cmd.file = newEntry.Name + ".repo"
+		cmd.file = entry.Name + ".repo"
 	} else {
 		if !strings.HasSuffix(cmd.file, ".repo") {
 			fmt.Fprintln(os.Stderr, "Repo file name must end in '.repo'")
@@ -79,48 +71,20 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 
 	if cmd.priority != "" {
 		var err error
-		newEntry.Priority, err = priority.FromString(cmd.priority)
+		entry.Priority, err = priority.FromString(cmd.priority)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Unrecognized priority value: %q\n", cmd.priority)
 			return subcommands.ExitUsageError
 		}
 	}
 
-	content, err := yaml.Marshal([]repoEntry{newEntry})
+	repoFile := filepath.Join(settings.RepoDir(), cmd.file)
+	content, err := repo.AddEntryToFile(entry, repoFile)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err)
+		return subcommands.ExitFailure
 	}
 
-	repoPath := filepath.Join(settings.RepoDir(), cmd.file)
-
-	if _, err := oswrap.Stat(repoPath); err != nil && os.IsNotExist(err) {
-		if err := writeRepoFile(repoFile{repoPath, []repoEntry{newEntry}}); err != nil {
-			logger.Fatal(err)
-		}
-		fmt.Printf("Wrote repo file %s with content:\n%s\n", repoPath, content)
-		return subcommands.ExitSuccess
-	}
-
-	rf, err := unmarshalRepoFile(repoPath)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	var res []repoEntry
-	for _, re := range rf.repoEntries {
-		if re.Name != newEntry.Name && re.URL != newEntry.URL {
-			res = append(res, re)
-		}
-	}
-
-	res = append(res, newEntry)
-	rf = repoFile{rf.fileName, res}
-
-	if err := writeRepoFile(rf); err != nil {
-		logger.Fatal(err)
-	}
-
-	fmt.Printf("Appended to repo file %s with the following content:\n%s\n", repoPath, content)
-
+	fmt.Printf("Appended to repo file %s with the following content:\n%s\n", repoFile, content)
 	return subcommands.ExitSuccess
 }

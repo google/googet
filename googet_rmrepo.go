@@ -21,9 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
-	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
 
@@ -40,58 +39,23 @@ func (*rmRepoCmd) Usage() string {
 func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {}
 
 func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	var name string
-	switch f.NArg() {
-	case 0:
-		fmt.Fprintln(os.Stderr, "Not enough arguments")
-		f.Usage()
-		return subcommands.ExitUsageError
-	case 1:
-		name = f.Arg(0)
-	default:
-		fmt.Fprintln(os.Stderr, "Excessive arguments")
+	if got, want := f.NArg(), 1; got != want {
+		fmt.Fprintf(os.Stderr, "Wrong number of arguments: got %v, want %v\n", got, want)
 		f.Usage()
 		return subcommands.ExitUsageError
 	}
 
-	rfs, err := repos(settings.RepoDir())
+	name := f.Arg(0)
+	changed, err := repo.RemoveEntryFromFiles(name, settings.RepoDir())
 	if err != nil {
-		logger.Fatal(err)
+		fmt.Fprintf(os.Stderr, "Failed to remove %q entries: %v\n", name, err)
+		return subcommands.ExitFailure
 	}
 
-	var foundRepo repoFile
-	for _, rf := range rfs {
-		for _, re := range rf.repoEntries {
-			if strings.EqualFold(re.Name, name) {
-				foundRepo = rf
-				break
-			}
-		}
+	if len(changed) == 0 {
+		fmt.Fprintf(os.Stderr, "Entry %q not found in any files\n", name)
+	} else {
+		fmt.Fprintf(os.Stderr, "Removed %q from files: %v\n", name, strings.Join(changed, ", "))
 	}
-
-	if foundRepo.fileName == "" {
-		fmt.Fprintf(os.Stderr, "Repo %q not found, nothing to remove.\n", name)
-		return subcommands.ExitUsageError
-	}
-
-	var res []repoEntry
-	for _, re := range foundRepo.repoEntries {
-		if !strings.EqualFold(re.Name, name) {
-			res = append(res, re)
-		}
-	}
-
-	if len(res) > 0 {
-		if err := writeRepoFile(repoFile{foundRepo.fileName, res}); err != nil {
-			logger.Fatal(err)
-		}
-		fmt.Printf("Removed repo %q from repo file %s.\n", name, foundRepo.fileName)
-		return subcommands.ExitSuccess
-	}
-
-	if err := oswrap.Remove(foundRepo.fileName); err != nil {
-		logger.Fatal(err)
-	}
-	fmt.Printf("Removed repo %q and repo file %s.\n", name, foundRepo.fileName)
 	return subcommands.ExitSuccess
 }

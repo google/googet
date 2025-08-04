@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -36,15 +37,13 @@ func (*listReposCmd) Usage() string {
 func (cmd *listReposCmd) SetFlags(f *flag.FlagSet) {}
 
 func (cmd *listReposCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	rfs, err := repos(settings.RepoDir())
+	rfs, err := repo.ConfigFiles(settings.RepoDir())
 	if err != nil {
 		logger.Fatal(err)
 	}
-
 	for _, rf := range rfs {
-		fmt.Println(rf.fileName + ":")
-
-		for _, re := range rf.repoEntries {
+		fmt.Println(rf.Path + ":")
+		for _, re := range rf.Entries {
 			fmt.Printf("  %s: %s\n", re.Name, re.URL)
 		}
 	}

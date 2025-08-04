@@ -15,78 +15,15 @@ package main
 
 import (
 	"io/ioutil"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
-	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 )
-
-func TestRepoList(t *testing.T) {
-	testRepo := "https://foo.com/googet/bar"
-	testHTTPRepo := "http://foo.com/googet/bar"
-
-	tempDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer oswrap.RemoveAll(tempDir)
-
-	testFile := filepath.Join(tempDir, "test.repo")
-
-	repoTests := []struct {
-		content        []byte
-		want           map[string]priority.Value
-		allowUnsafeURL bool
-	}{
-		{[]byte("\n"), nil, false},
-		{[]byte("# This is just a comment"), nil, false},
-		{[]byte("url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		{[]byte("\n # Comment\nurl: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		{[]byte("- url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		// The HTTP repo should be dropped.
-		{[]byte("- url: " + testHTTPRepo), nil, false},
-		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testHTTPRepo), map[string]priority.Value{testHTTPRepo: priority.Default}, true},
-		{[]byte("- URL: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		// The HTTP repo should be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		// The HTTP repo should not be dropped.
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testHTTPRepo), map[string]priority.Value{testRepo: priority.Default, testHTTPRepo: 500}, true},
-		{[]byte("- url: " + testRepo + "\n\n- URL: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		{[]byte("- url: " + testRepo + "\n\n- url: " + testRepo), map[string]priority.Value{testRepo: priority.Default}, false},
-		// Should contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: true"), map[string]priority.Value{"oauth-" + testRepo: priority.Default}, false},
-		// Should not contain oauth- prefix
-		{[]byte("- url: " + testRepo + "\n  useoauth: false"), map[string]priority.Value{testRepo: priority.Default}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: 1200"), map[string]priority.Value{testRepo: priority.Value(1200)}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: default"), map[string]priority.Value{testRepo: priority.Default}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: canary"), map[string]priority.Value{testRepo: priority.Canary}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: pin"), map[string]priority.Value{testRepo: priority.Pin}, false},
-		{[]byte("- url: " + testRepo + "\n  priority: rollback"), map[string]priority.Value{testRepo: priority.Rollback}, false},
-	}
-
-	for i, tt := range repoTests {
-		if err := ioutil.WriteFile(testFile, tt.content, 0660); err != nil {
-			t.Fatalf("error writing repo: %v", err)
-		}
-		settings.AllowUnsafeURL = tt.allowUnsafeURL
-		got, err := repoList(tempDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("test case %d: repoList unexpected diff (-want +got): %v", i+1, diff)
-		}
-	}
-}
 
 func TestRotateLog(t *testing.T) {
 	tempDir, err := ioutil.TempDir("", "")
@@ -250,78 +187,6 @@ func TestUpdates(t *testing.T) {
 			pi := updates(tc.pm, tc.rm)
 			if diff := cmp.Diff(tc.want, pi); diff != "" {
 				t.Errorf("update(%v, %v) got unexpected diff (-want +got):\n%v", tc.pm, tc.rm, diff)
-			}
-		})
-	}
-}
-
-func TestWriteRepoFile(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		entries []repoEntry
-		want    string
-	}{
-		{
-			name:    "with-no-priority-specified",
-			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar"}},
-			want: `- name: bar
-  url: https://foo.com/googet/bar
-  useoauth: false
-`,
-		},
-		{
-			name:    "with-default-priority",
-			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: priority.Default}},
-			want: `- name: bar
-  url: https://foo.com/googet/bar
-  useoauth: false
-  priority: default
-`,
-		},
-		{
-			name:    "with-rollback-priority",
-			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: priority.Rollback}},
-			want: `- name: bar
-  url: https://foo.com/googet/bar
-  useoauth: false
-  priority: rollback
-`,
-		},
-		{
-			name:    "with-non-standard-priority",
-			entries: []repoEntry{{Name: "bar", URL: "https://foo.com/googet/bar", Priority: 42}},
-			want: `- name: bar
-  url: https://foo.com/googet/bar
-  useoauth: false
-  priority: 42
-`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f, err := os.CreateTemp("", "test.repo")
-			if err != nil {
-				t.Fatalf("os.CreateTemp: %v", err)
-			}
-			defer func() {
-				os.Remove(f.Name())
-			}()
-			if err := f.Close(); err != nil {
-				t.Fatalf("f.Close: %v", err)
-			}
-			rf := repoFile{fileName: f.Name(), repoEntries: tc.entries}
-			if err := writeRepoFile(rf); err != nil {
-				t.Fatalf("writeRepoFile(%v): %v", rf, err)
-			}
-			b, err := os.ReadFile(f.Name())
-			if err != nil {
-				t.Fatalf("os.ReadFile(%v): %v", f.Name(), err)
-			}
-			t.Logf("wrote repo file contents:\n%v", string(b))
-			// Make the diff easier to read by splitting into lines first.
-			got := strings.Split(string(b), "\n")
-			want := strings.Split(tc.want, "\n")
-			if diff := cmp.Diff(want, got); diff != "" {
-				t.Errorf("writeRepoFile got unexpected diff (-want +got):\n%v", diff)
 			}
 		})
 	}

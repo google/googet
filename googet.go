@@ -21,7 +21,6 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,12 +31,10 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
-	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 	"github.com/olekukonko/tablewriter"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -53,156 +50,6 @@ var (
 	// Optional function to handle flag parsing. If unset, we use flag.Parse.
 	flagParse func()
 )
-
-type repoFile struct {
-	fileName    string
-	repoEntries []repoEntry
-}
-
-type repoEntry struct {
-	Name     string
-	URL      string
-	UseOAuth bool
-	Priority priority.Value `yaml:",omitempty"`
-}
-
-// UnmarshalYAML provides custom unmarshalling for repoEntry objects.
-func (r *repoEntry) UnmarshalYAML(unmarshal func(any) error) error {
-	var u map[string]string
-	if err := unmarshal(&u); err != nil {
-		return err
-	}
-	for k, v := range u {
-		switch key := strings.ToLower(k); key {
-		case "name":
-			r.Name = v
-		case "url":
-			r.URL = v
-		case "useoauth":
-			r.UseOAuth = strings.ToLower(v) == "true"
-		case "priority":
-			var err error
-			r.Priority, err = priority.FromString(v)
-			if err != nil {
-				return fmt.Errorf("invalid priority: %v", v)
-			}
-		}
-	}
-	if r.URL == "" {
-		return fmt.Errorf("repo entry missing url: %+v", u)
-	}
-	return nil
-}
-
-func writeRepoFile(rf repoFile) error {
-	d, err := yaml.Marshal(rf.repoEntries)
-	if err != nil {
-		return err
-	}
-	return ioutil.WriteFile(rf.fileName, d, 0664)
-}
-
-func unmarshalRepoFile(p string) (repoFile, error) {
-	b, err := ioutil.ReadFile(p)
-	if err != nil {
-		return repoFile{}, err
-	}
-
-	// Don't try to unmarshal files with no YAML content
-	var yml bool
-	lns := strings.Split(string(b), "\n")
-	for _, ln := range lns {
-		ln = strings.TrimSpace(ln)
-		if !strings.HasPrefix(ln, "#") && ln != "" {
-			yml = true
-			break
-		}
-	}
-	if !yml {
-		return repoFile{}, nil
-	}
-
-	// Both repoFile and []repoFile are valid for backwards compatibility.
-	var re repoEntry
-	if err := yaml.Unmarshal(b, &re); err == nil && re.URL != "" {
-		return repoFile{fileName: p, repoEntries: []repoEntry{re}}, nil
-	}
-
-	var res []repoEntry
-	if err := yaml.Unmarshal(b, &res); err != nil {
-		return repoFile{}, err
-	}
-	return repoFile{fileName: p, repoEntries: res}, nil
-}
-
-// validateRepoURL uses the global allowUnsafeURL to determine if u should be checked for https or
-// GCS status.
-func validateRepoURL(u string) bool {
-	if settings.AllowUnsafeURL {
-		return true
-	}
-	gcs, _, _ := goolib.SplitGCSUrl(u)
-	parsed, err := url.Parse(u)
-	if err != nil {
-		logger.Errorf("Failed to parse URL '%s', skipping repo", u)
-		return false
-	}
-	if parsed.Scheme != "https" && !gcs {
-		logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", u)
-		return false
-	}
-	return true
-}
-
-// repoList returns a deduped set of all repos listed in the repo config files contained in dir.
-// The repos are mapped to priority values. If a repo config does not specify a priority, the repo
-// is assigned the default priority value. If the same repo appears multiple times with different
-// priority values, it is mapped to the highest seen priority value.
-func repoList(dir string) (map[string]priority.Value, error) {
-	rfs, err := repos(dir)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]priority.Value)
-	for _, rf := range rfs {
-		for _, re := range rf.repoEntries {
-			u := re.URL
-			if u == "" || !validateRepoURL(u) {
-				continue
-			}
-			if re.UseOAuth {
-				u = "oauth-" + u
-			}
-			p := re.Priority
-			if p <= 0 {
-				p = priority.Default
-			}
-			if q, ok := result[u]; !ok || p > q {
-				result[u] = p
-			}
-		}
-	}
-	return result, nil
-}
-
-func repos(dir string) ([]repoFile, error) {
-	fl, err := filepath.Glob(filepath.Join(dir, "*.repo"))
-	if err != nil {
-		return nil, err
-	}
-	var rfs []repoFile
-	for _, f := range fl {
-		rf, err := unmarshalRepoFile(f)
-		if err != nil {
-			logger.Error(err)
-			continue
-		}
-		if rf.fileName != "" {
-			rfs = append(rfs, rf)
-		}
-	}
-	return rfs, nil
-}
 
 func writeState(s *client.GooGetState, sf string) error {
 	b, err := s.Marshal()
@@ -253,17 +100,6 @@ func readStateFromPath(sf string) (*client.GooGetState, error) {
 		return nil, err
 	}
 	return client.UnmarshalState(b)
-}
-
-func buildSources(s string) (map[string]priority.Value, error) {
-	if s == "" {
-		return repoList(settings.RepoDir())
-	}
-	m := make(map[string]priority.Value)
-	for _, src := range strings.Split(s, ",") {
-		m[src] = priority.Default
-	}
-	return m, nil
 }
 
 func confirmation(msg string) bool {
