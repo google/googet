@@ -23,8 +23,11 @@ import (
 	"path/filepath"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -46,15 +49,18 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	cache := filepath.Join(rootDir, cacheDir)
-	sf := filepath.Join(rootDir, stateFile)
-	state, err := readState(sf)
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Fatal(err)
 	}
+	defer db.Close()
+	cache := settings.CacheDir()
+	state, err := db.FetchPkgs("")
+	if err != nil {
+		logger.Fatalf("Unable to fetch installed packges: %v", err)
+	}
 
-	pm := installedPackages(*state)
-	if len(pm) == 0 {
+	if len(state) == 0 {
 		fmt.Println("No packages installed.")
 		return subcommands.ExitSuccess
 	}
@@ -67,14 +73,19 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
-	ud := updates(pm, rm)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
+	ud := updates(state.PackageMap(), rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
 	}
 
-	if !noConfirm {
+	if settings.Confirm {
 		if !confirmation("Perform update?") {
 			fmt.Println("Not updating.")
 			return subcommands.ExitSuccess
@@ -87,43 +98,58 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, archs, state, cmd.dbOnly, proxyServer); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, &state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
 		}
 	}
 
-	if err := writeState(state, sf); err != nil {
-		logger.Fatalf("Error writing state file: %v", err)
+	if err := db.WriteStateToDB(state); err != nil {
+		logger.Fatalf("Error writing state db: %v", err)
 	}
 
 	return exitCode
 }
 
-func updates(pm packageMap, rm client.RepoMap) []goolib.PackageInfo {
+func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
 	fmt.Println("Searching for available updates...")
 	var ud []goolib.PackageInfo
 	for p, ver := range pm {
 		pi := goolib.PkgNameSplit(p)
-		v, r, _, err := client.FindRepoLatest(pi, rm, archs)
+		v, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.Compare(v, ver)
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, v, priority.Default, ver)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
-		if c == 1 {
-			fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
-			logger.Infof("Update for package %s, %s installed and %s available from %s.", p, ver, v, r)
-			ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
+		if c < 1 {
+			logger.Infof("%s - highest priority version already installed", p)
 			continue
 		}
-		logger.Infof("%s - latest version installed", p)
+		// The versions might actually be the same even though the priorities are different,
+		// so do another check to skip reinstall of the same version.
+		c, err = goolib.Compare(v, ver)
+		if err != nil {
+			logger.Error(err)
+			continue
+		}
+		if c == 0 {
+			logger.Infof("%s - same version installed", p)
+			continue
+		}
+		op := "Upgrade"
+		if c == -1 {
+			op = "Downgrade"
+		}
+		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
+		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, v, r)
+		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
 	}
 	return ud
 }

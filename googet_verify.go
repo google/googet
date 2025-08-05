@@ -22,8 +22,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/verify"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -52,10 +55,18 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	exitCode := subcommands.ExitSuccess
 
-	sf := filepath.Join(rootDir, stateFile)
-	state, err := readState(sf)
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Error(err)
+		logger.Fatal(err)
+	}
+	defer db.Close()
+	state, err := db.FetchPkgs("")
+	if err != nil {
+		logger.Fatal(err)
+	}
+	downloader, err := client.NewDownloader(settings.ProxyServer)
+	if err != nil {
+		logger.Fatal(err)
 	}
 
 	for _, arg := range flags.Args() {
@@ -69,7 +80,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 		// Check for multiples.
 		var ins []string
-		for _, p := range *state {
+		for _, p := range state {
 			if p.Match(pi) {
 				ins = append(ins, p.PackageSpec.Name+"."+p.PackageSpec.Arch)
 			}
@@ -80,7 +91,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			continue
 		}
 
-		v, err := verify.Command(ctx, ps, proxyServer)
+		v, err := verify.Command(ctx, ps, downloader)
 		if err != nil {
 			logger.Errorf("Error running verify command for %s: %v", pkg, err)
 			exitCode = subcommands.ExitFailure
@@ -99,7 +110,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
 			logger.Info(msg)
 			fmt.Println(msg)
-			if err := install.Reinstall(ctx, ps, *state, false, proxyServer); err != nil {
+			if err := install.Reinstall(ctx, ps, false, downloader); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {

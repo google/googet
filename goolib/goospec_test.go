@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/blang/semver"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/googet/v2/priority"
 )
 
 func mkVer(sem string, rel int64) Version {
@@ -202,6 +204,38 @@ func TestCompare(t *testing.T) {
 func TestBadCompare(t *testing.T) {
 	if _, err := Compare("1.2a.3", "1.2.3"); err == nil {
 		t.Error("expected error, bad semver version")
+	}
+}
+
+func TestComparePriorityVersion(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		p1   priority.Value
+		v1   string
+		p2   priority.Value
+		v2   string
+		want int
+	}{
+		{"same priority, same version, lesser release", priority.Value(500), "1.2.3@1", priority.Value(500), "1.2.3@2", -1},
+		{"same priority lesser version", priority.Value(500), "1.2.3@1", priority.Value(500), "1.2.4@2", -1},
+		{"same priority, greater version", priority.Value(500), "1.2.4@1", priority.Value(500), "1.2.3@2", 1},
+		{"same priority, same version", priority.Value(500), "1.2.3", priority.Value(500), "1.2.3", 0},
+		{"lesser priority, same version, lesser release", priority.Value(500), "1.2.3@1", priority.Value(1000), "1.2.3@2", -1},
+		{"lesser priority, lesser version", priority.Value(500), "1.2.3@1", priority.Value(1000), "1.2.4@2", -1},
+		{"lesser priority, greater version", priority.Value(500), "1.2.4@1", priority.Value(1000), "1.2.3@2", -1},
+		{"lesser priority, same version", priority.Value(500), "1.2.3", priority.Value(1000), "1.2.3", -1},
+		{"greater priority, same version, lesser release", priority.Value(1000), "1.2.3@1", priority.Value(500), "1.2.3@2", 1},
+		{"greater priority, lesser version", priority.Value(1000), "1.2.3@1", priority.Value(500), "1.2.4@2", 1},
+		{"greater priority, greater version", priority.Value(1000), "1.2.4@1", priority.Value(500), "1.2.3@2", 1},
+		{"greater priority, same version", priority.Value(1000), "1.2.3", priority.Value(500), "1.2.3", 1},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got, err := ComparePriorityVersion(tc.p1, tc.v1, tc.p2, tc.v2); err != nil {
+				t.Fatalf("ComparePriorityVersion(%v, %v, %v, %v): %v", tc.p1, tc.v1, tc.p2, tc.v2, err)
+			} else if got != tc.want {
+				t.Fatalf("ComparePriorityVersion(%v, %v, %v, %v) got: %v; want: %v", tc.p1, tc.v1, tc.p2, tc.v2, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -449,7 +483,8 @@ func TestMarshal(t *testing.T) {
       "Path": "install.ps1"
     },
     "Uninstall": {},
-    "Verify": {}
+    "Verify": {},
+    "ExternalProgramName": ""
   }
 }`)
 	got, err := rs.Marshal()
@@ -508,3 +543,77 @@ In the same village where my father and my mother dwelt, dwelt also a thin, upri
 These last words, you must know, were not according to the old form in which such licences, faculties, and powers usually ran, which in like cases had heretofore been granted to the sisterhood. But it was according to a neat Formula of Didius his own devising, who having a particular turn for taking to pieces, and new framing over again all kind of instruments in that way, not only hit upon this dainty amendment, but coaxed many of the old licensed matrons in the neighbourhood, to open their faculties afresh, in order to have this wham-wham of his inserted.
 
 I own I never could envy Didius in these kinds of fancies of his:—But every man to his own taste.—Did not Dr. Kunastrokius, that great man, at his leisure hours, take the greatest delight imaginable in combing of asses tails, and plucking the dead hairs out with his teeth, though he had tweezers always in his pocket? Nay, if you come to that, Sir, have not the wisest of men in all ages, not excepting Solomon himself,—have they not had their Hobby-Horses;—their running horses,—their coins and their cockle-shells, their drums and their trumpets, their fiddles, their pallets,—their maggots and their butterflies?—and so long as a man rides his Hobby-Horse peaceably and quietly along the King's highway, and neither compels you or me to get up behind him,—pray, Sir, what have either you or I to do with it?`)
+
+func TestPrettyPrint(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		ps   PkgSpec
+		repo string
+		want string
+	}{
+		{
+			desc: "with-multiple-deps",
+			ps: PkgSpec{
+				Name:            "foo",
+				Version:         "1.2.3",
+				Arch:            "noarch",
+				Description:     "foo is a package with a very long description which should end up being wrapped over multiple lines.\n\nit also has newlines.",
+				Authors:         "nobody",
+				PkgDependencies: map[string]string{"bar": "2.1.8", "baz": "3.1.4", "quux": "9"},
+			},
+			repo: "installed",
+			want: `
+Name         : foo
+Arch         : noarch
+Version      : 1.2.3
+Repo         : installed
+Authors      : nobody
+Owners       : 
+Source       : 
+Description  : foo is a package with a very long description which should end
+             : up being wrapped over multiple lines.
+             : 
+             : it also has newlines.
+Dependencies : bar 2.1.8
+             : baz 3.1.4
+             : quux 9
+ReleaseNotes : 
+`,
+		},
+		{
+			desc: "with-release-notes",
+			ps: PkgSpec{
+				Name:         "zork",
+				Version:      "7.4@300",
+				Arch:         "x86_64",
+				Description:  "zork is a text adventure game.",
+				Owners:       "infocom",
+				ReleaseNotes: []string{"1977.06.01 - initial development", "1979.11.15 - bug fixes", "1980.12.01 - published"},
+			},
+			repo: "https://gooserver.com/repos/testing",
+			want: `
+Name         : zork
+Arch         : x86_64
+Version      : 7.4@300
+Repo         : testing
+Authors      : 
+Owners       : infocom
+Source       : 
+Description  : zork is a text adventure game.
+Dependencies : None
+ReleaseNotes : 1977.06.01 - initial development
+             : 1979.11.15 - bug fixes
+             : 1980.12.01 - published
+`,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			var b bytes.Buffer
+			tc.ps.PrettyPrint(&b, tc.repo)
+			got, want := b.String(), strings.TrimLeft(tc.want, "\n")
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("PrettyPrint got unexpected diff (-want +got):\n%v", diff)
+			}
+		})
+	}
+}

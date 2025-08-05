@@ -23,55 +23,33 @@ import (
 	"io/ioutil"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/go-yaml/yaml"
-	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
-	"github.com/google/googet/v2/system"
+	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
-	"github.com/olekukonko/tablewriter"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	stateFile = "googet.state"
-	confFile  = "googet.conf"
-	logFile   = "googet.log"
-	cacheDir  = "cache"
-	repoDir   = "repos"
-	envVar    = "GooGetRoot"
-	logSize   = 10 * 1024 * 1024
+	// envVar is the environment variable which stores the googet root directory.
+	envVar = "GooGetRoot"
+	// logSize is the max allowed size of the log file.
+	logSize = 10 * 1024 * 1024
 )
 
 var (
-	rootDir        string
-	noConfirm      bool
-	verbose        bool
-	systemLog      bool
-	showVer        bool
-	version        string
-	cacheLife      = 3 * time.Minute
-	archs          []string
-	proxyServer    string
-	allowUnsafeURL bool
-	lockFile       string
+	// version is the googet version, set via linkopts.
+	version string
+	// Optional function to handle flag parsing. If unset, we use flag.Parse.
+	flagParse func()
 )
-
-type packageMap map[string]string
-
-// installedPackages returns a packagemap of all installed packages based on the
-// googet state file given.
-func installedPackages(state client.GooGetState) packageMap {
-	pm := make(packageMap)
-	for _, p := range state {
-		pm[p.PackageSpec.Name+"."+p.PackageSpec.Arch] = p.PackageSpec.Version
-	}
-	return pm
-}
 
 type repoFile struct {
 	fileName    string
@@ -82,10 +60,11 @@ type repoEntry struct {
 	Name     string
 	URL      string
 	UseOAuth bool
+	Priority priority.Value `yaml:",omitempty"`
 }
 
 // UnmarshalYAML provides custom unmarshalling for repoEntry objects.
-func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (r *repoEntry) UnmarshalYAML(unmarshal func(any) error) error {
 	var u map[string]string
 	if err := unmarshal(&u); err != nil {
 		return err
@@ -98,6 +77,12 @@ func (r *repoEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			r.URL = v
 		case "useoauth":
 			r.UseOAuth = strings.ToLower(v) == "true"
+		case "priority":
+			var err error
+			r.Priority, err = priority.FromString(v)
+			if err != nil {
+				return fmt.Errorf("invalid priority: %v", v)
+			}
 		}
 	}
 	if r.URL == "" {
@@ -147,60 +132,54 @@ func unmarshalRepoFile(p string) (repoFile, error) {
 	return repoFile{fileName: p, repoEntries: res}, nil
 }
 
-type conf struct {
-	Archs          []string
-	CacheLife      string
-	ProxyServer    string
-	AllowUnsafeURL bool
-}
-
-func unmarshalConfFile(p string) (*conf, error) {
-	b, err := ioutil.ReadFile(p)
-	if err != nil {
-		return nil, err
+// validateRepoURL uses the global allowUnsafeURL to determine if u should be checked for https or
+// GCS status.
+func validateRepoURL(u string) bool {
+	if settings.AllowUnsafeURL {
+		return true
 	}
-	var cf conf
-	return &cf, yaml.Unmarshal(b, &cf)
+	gcs, _, _ := goolib.SplitGCSUrl(u)
+	parsed, err := url.Parse(u)
+	if err != nil {
+		logger.Errorf("Failed to parse URL '%s', skipping repo", u)
+		return false
+	}
+	if parsed.Scheme != "https" && !gcs {
+		logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", u)
+		return false
+	}
+	return true
 }
 
-func repoList(dir string) ([]string, error) {
+// repoList returns a deduped set of all repos listed in the repo config files contained in dir.
+// The repos are mapped to priority values. If a repo config does not specify a priority, the repo
+// is assigned the default priority value. If the same repo appears multiple times with different
+// priority values, it is mapped to the highest seen priority value.
+func repoList(dir string) (map[string]priority.Value, error) {
 	rfs, err := repos(dir)
 	if err != nil {
 		return nil, err
 	}
-	var rl []string
+	result := make(map[string]priority.Value)
 	for _, rf := range rfs {
 		for _, re := range rf.repoEntries {
-			switch {
-			case re.URL != "":
-				if re.UseOAuth {
-					rl = append(rl, "oauth-"+re.URL)
-				} else {
-					rl = append(rl, re.URL)
-				}
+			u := re.URL
+			if u == "" || !validateRepoURL(u) {
+				continue
+			}
+			if re.UseOAuth {
+				u = "oauth-" + u
+			}
+			p := re.Priority
+			if p <= 0 {
+				p = priority.Default
+			}
+			if q, ok := result[u]; !ok || p > q {
+				result[u] = p
 			}
 		}
 	}
-
-	if !allowUnsafeURL {
-		var srl []string
-		for _, r := range rl {
-			rTrimmed := strings.TrimPrefix(r, "oauth-")
-			isGCSURL, _, _ := goolib.SplitGCSUrl(rTrimmed)
-			parsed, err := url.Parse(rTrimmed)
-			if err != nil {
-				logger.Errorf("Failed to parse URL '%s', skipping repo", r)
-				continue
-			}
-			if parsed.Scheme != "https" && !isGCSURL {
-				logger.Errorf("%s will not be used as a repository, only https and Google Cloud Storage endpoints will be used unless 'allowunsafeurl' is set to 'true' in googet.conf", r)
-				continue
-			}
-			srl = append(srl, r)
-		}
-		return srl, nil
-	}
-	return rl, nil
+	return result, nil
 }
 
 func repos(dir string) ([]repoFile, error) {
@@ -222,63 +201,15 @@ func repos(dir string) ([]repoFile, error) {
 	return rfs, nil
 }
 
-func writeState(s *client.GooGetState, sf string) error {
-	b, err := s.Marshal()
-	if err != nil {
-		return err
+func buildSources(s string) (map[string]priority.Value, error) {
+	if s == "" {
+		return repoList(settings.RepoDir())
 	}
-	// Write state to a temporary file first
-	tmp, err := ioutil.TempFile(rootDir, "googet.*.state")
-	if err != nil {
-		return err
+	m := make(map[string]priority.Value)
+	for _, src := range strings.Split(s, ",") {
+		m[src] = priority.Default
 	}
-	newStateFile := tmp.Name()
-	if _, err = tmp.Write(b); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(newStateFile, 0664); err != nil {
-		return err
-	}
-	// Back up the old state file so we can recover it if need be
-	backupStateFile := sf + ".bak"
-	if err = os.Rename(sf, backupStateFile); err != nil {
-		logger.Infof("Unable to back up state file %s to %s. Err: %v", sf, backupStateFile, err)
-	}
-	// Move the new temp file to the live path
-	return os.Rename(newStateFile, sf)
-}
-
-func readState(sf string) (*client.GooGetState, error) {
-	state, err := readStateFromPath(sf)
-	if err != nil {
-		sfNotExist := os.IsNotExist(err)
-		state, err = readStateFromPath(sf + ".bak")
-		if sfNotExist && os.IsNotExist(err) {
-			logger.Info("No state file found, assuming no packages installed.")
-			return &client.GooGetState{}, nil
-		}
-	}
-
-	return state, err
-}
-
-func readStateFromPath(sf string) (*client.GooGetState, error) {
-	b, err := ioutil.ReadFile(sf)
-	if err != nil {
-		return nil, err
-	}
-	return client.UnmarshalState(b)
-}
-
-func buildSources(s string) ([]string, error) {
-	if s != "" {
-		srcs := strings.Split(s, ",")
-		return srcs, nil
-	}
-	return repoList(filepath.Join(rootDir, repoDir))
+	return m, nil
 }
 
 func confirmation(msg string) bool {
@@ -287,75 +218,6 @@ func confirmation(msg string) bool {
 	fmt.Scanln(&c)
 	c = strings.ToLower(c)
 	return c == "y" || c == "yes"
-}
-
-func info(ps *goolib.PkgSpec, r string) {
-	fmt.Println()
-
-	pkgInfo := []struct {
-		name, value string
-	}{
-		{"Name", ps.Name},
-		{"Arch", ps.Arch},
-		{"Version", ps.Version},
-		{"Repo", path.Base(r)},
-		{"Authors", ps.Authors},
-		{"Owners", ps.Owners},
-		{"Source", ps.Source},
-		{"Description", ps.Description},
-		{"Dependencies", ""},
-		{"ReleaseNotes", ""},
-	}
-	var w int
-	for _, pi := range pkgInfo {
-		if len(pi.name) > w {
-			w = len(pi.name)
-		}
-	}
-	wf := fmt.Sprintf("%%-%vs: %%s\n", w+1)
-
-	for _, pi := range pkgInfo {
-		if pi.name == "Dependencies" {
-			var deps []string
-			for p, v := range ps.PkgDependencies {
-				deps = append(deps, p+" "+v)
-			}
-			if len(deps) == 0 {
-				fmt.Printf(wf, pi.name, "None")
-			} else {
-				fmt.Printf(wf, pi.name, deps[0])
-				for _, l := range deps[1:] {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		} else if pi.name == "ReleaseNotes" && ps.ReleaseNotes != nil {
-			sl, _ := tablewriter.WrapString(ps.ReleaseNotes[0], 76-w)
-			fmt.Printf(wf, pi.name, sl[0])
-			for _, l := range sl[1:] {
-				fmt.Printf(wf, "", l)
-			}
-			for _, l := range ps.ReleaseNotes[1:] {
-				sl, _ := tablewriter.WrapString(l, 76-w)
-				fmt.Printf(wf, "", sl[0])
-				for _, l := range sl[1:] {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		} else {
-			cl := strings.Split(strings.TrimSpace(pi.value), "\n")
-			sl, _ := tablewriter.WrapString(cl[0], 76-w)
-			fmt.Printf(wf, pi.name, sl[0])
-			for _, l := range sl[1:] {
-				fmt.Printf(wf, "", l)
-			}
-			for _, l := range cl[1:] {
-				sl, _ := tablewriter.WrapString(l, 76-w)
-				for _, l := range sl {
-					fmt.Printf(wf, "", l)
-				}
-			}
-		}
-	}
 }
 
 func rotateLog(logPath string, ls int64) error {
@@ -374,39 +236,6 @@ func rotateLog(logPath string, ls int64) error {
 		return fmt.Errorf("error moving log file: %v", err)
 	}
 	return nil
-}
-
-func readConf(cf string) {
-	gc, err := unmarshalConfFile(cf)
-	if err != nil {
-		if os.IsNotExist(err) {
-			gc = &conf{}
-		} else {
-			logger.Errorf("Error unmarshalling conf file: %v", err)
-		}
-	}
-
-	if gc.Archs != nil {
-		archs = gc.Archs
-	} else {
-		archs, err = system.InstallableArchs()
-		if err != nil {
-			logger.Fatal(err)
-		}
-	}
-
-	if gc.CacheLife != "" {
-		cacheLife, err = time.ParseDuration(gc.CacheLife)
-		if err != nil {
-			logger.Error(err)
-		}
-	}
-
-	if gc.ProxyServer != "" {
-		proxyServer = gc.ProxyServer
-	}
-
-	allowUnsafeURL = gc.AllowUnsafeURL
 }
 
 var deferredFuncs []func()
@@ -450,23 +279,24 @@ func obtainLock(lockFile string) error {
 }
 
 func main() {
-	ggFlags := flag.NewFlagSet(filepath.Base(os.Args[0]), flag.ContinueOnError)
-	ggFlags.StringVar(&rootDir, "root", os.Getenv(envVar), "googet root directory")
-	ggFlags.BoolVar(&noConfirm, "noconfirm", false, "skip confirmation")
-	ggFlags.BoolVar(&verbose, "verbose", false, "print info level logs to stdout")
-	ggFlags.BoolVar(&systemLog, "system_log", true, "log to Linux Syslog or Windows Event Log")
-	ggFlags.BoolVar(&showVer, "version", false, "display GooGet version and exit")
+	rootDir := flag.String("root", os.Getenv(envVar), "googet root directory")
+	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
+	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
+	systemLog := flag.Bool("system_log", true, "log to Linux Syslog or Windows Event Log")
+	showVer := flag.Bool("version", false, "display GooGet version and exit")
 
-	if err := ggFlags.Parse(os.Args[1:]); err != nil && err != flag.ErrHelp {
-		logger.Fatal(err)
+	if flagParse != nil {
+		flagParse()
+	} else {
+		flag.Parse()
 	}
 
-	if showVer {
+	if *showVer {
 		fmt.Println("GooGet version:", version)
 		os.Exit(0)
 	}
 
-	cmdr := subcommands.NewCommander(ggFlags, "googet")
+	cmdr := subcommands.NewCommander(flag.CommandLine, "googet")
 	cmdr.Register(cmdr.FlagsCommand(), "")
 	cmdr.Register(cmdr.CommandsCommand(), "")
 	cmdr.Register(cmdr.HelpCommand(), "")
@@ -478,6 +308,7 @@ func main() {
 	cmdr.Register(&installedCmd{}, "package query")
 	cmdr.Register(&latestCmd{}, "package query")
 	cmdr.Register(&availableCmd{}, "package query")
+	cmdr.Register(&checkCmd{}, "package query")
 	cmdr.Register(&listReposCmd{}, "repository management")
 	cmdr.Register(&addRepoCmd{}, "repository management")
 	cmdr.Register(&rmRepoCmd{}, "repository management")
@@ -486,25 +317,32 @@ func main() {
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
 
-	nonLockingCommands := []string{"help", "commands", "flags"}
-	if ggFlags.NArg() == 0 || goolib.ContainsString(ggFlags.Args()[0], nonLockingCommands) {
+	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
+	if flag.NArg() == 0 || slices.Contains(nonLockingCommands, flag.Arg(0)) {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
-	if rootDir == "" {
+	if *rootDir == "" {
 		logger.Fatalf("The environment variable %q not defined and no '-root' flag passed.", envVar)
 	}
-	if err := os.MkdirAll(rootDir, 0774); err != nil {
+	if err := os.MkdirAll(*rootDir, 0774); err != nil {
 		logger.Fatalln("Error setting up root directory:", err)
 	}
+	settings.Initialize(*rootDir, !*noConfirm)
 
-	lockFile = filepath.Join(rootDir, "googet.lock")
-	if err := obtainLock(lockFile); err != nil {
+	dbFile := settings.DBFile()
+
+	// "googet installed" is allowed to execute without a lock if the googet
+	// database has already been created.
+	if googetdb.Exists(dbFile) && flag.Arg(0) == "installed" {
+		os.Exit(int(cmdr.Execute(context.Background())))
+	}
+
+	if err := obtainLock(settings.LockFile()); err != nil {
 		logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
 	}
-	readConf(filepath.Join(rootDir, confFile))
 
-	logPath := filepath.Join(rootDir, logFile)
+	logPath := settings.LogFile()
 	if err := rotateLog(logPath, logSize); err != nil {
 		logger.Error(err)
 	}
@@ -515,17 +353,20 @@ func main() {
 	}
 	deferredFuncs = append(deferredFuncs, func() { lf.Close() })
 
-	logger.Init("GooGet", verbose, systemLog, lf)
+	logger.Init("GooGet", *verbose, *systemLog, lf)
 
-	if err := os.MkdirAll(filepath.Join(rootDir, cacheDir), 0774); err != nil {
+	if err := googetdb.CreateIfMissing(dbFile); err != nil {
+		runDeferredFuncs()
+		logger.Fatalf("Error creating initial db file. If db is not created, run again as admin: %v", err)
+	}
+	if err := os.MkdirAll(settings.CacheDir(), 0774); err != nil {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up cache directory: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(rootDir, repoDir), 0774); err != nil {
+	if err := os.MkdirAll(settings.RepoDir(), 0774); err != nil {
 		runDeferredFuncs()
 		logger.Fatalf("Error setting up repo directory: %v", err)
 	}
-
 	es := cmdr.Execute(context.Background())
 	runDeferredFuncs()
 	os.Exit(int(es))

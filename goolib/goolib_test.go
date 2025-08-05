@@ -50,38 +50,6 @@ func TestBadScriptInterpreter(t *testing.T) {
 	}
 }
 
-func TestContainsInt(t *testing.T) {
-	table := []struct {
-		a     int
-		slice []int
-		want  bool
-	}{
-		{1, []int{1, 2}, true},
-		{3, []int{1, 2}, false},
-	}
-	for _, tt := range table {
-		if got, want := ContainsInt(tt.a, tt.slice), tt.want; got != want {
-			t.Errorf("Contains(%d, %v) incorrect return: got %v, want %t", tt.a, tt.slice, got, want)
-		}
-	}
-}
-
-func TestContainsString(t *testing.T) {
-	table := []struct {
-		a     string
-		slice []string
-		want  bool
-	}{
-		{"a", []string{"a", "b"}, true},
-		{"c", []string{"a", "b"}, false},
-	}
-	for _, tt := range table {
-		if got, want := ContainsString(tt.a, tt.slice), tt.want; got != want {
-			t.Errorf("Contains(%s, %v) incorrect return: got %v, want %t", tt.a, tt.slice, got, want)
-		}
-	}
-}
-
 func randString(runes []rune, min, max int) string {
 	s := make([]rune, rand.Intn(1+max-min)+min)
 	for i := range s {

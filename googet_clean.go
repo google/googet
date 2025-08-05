@@ -21,8 +21,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -46,56 +48,72 @@ func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if cmd.all {
 		fmt.Println("Removing all files and directories in cachedir.")
-		clean(nil)
-	} else if cmd.packages != "" {
-		pl := strings.Split(cmd.packages, ",")
-		fmt.Printf("Removing package cache for %s\n", pl)
-		cleanPackages(pl)
-	} else {
-		fmt.Println("Removing all files and directories in cachedir that don't correspond to a currently installed package.")
-		cleanOld()
+		cleanDirectory(nil)
+		return subcommands.ExitSuccess
 	}
-	return subcommands.ExitSuccess
-}
 
-func cleanPackages(pl []string) {
-	state, err := readState(filepath.Join(rootDir, stateFile))
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer db.Close()
+	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	for _, pkg := range *state {
-		if goolib.ContainsString(pkg.PackageSpec.Name, pl) {
-			if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
-				logger.Error(err)
-			}
+	if cmd.packages != "" {
+		pl := strings.Split(cmd.packages, ",")
+		included := make(map[string]bool)
+		for _, name := range pl {
+			included[name] = true
+		}
+		fmt.Printf("Removing package cache for %s\n", pl)
+		cleanInstalled(state, included)
+		return subcommands.ExitSuccess
+	}
+
+	fmt.Println("Removing all files and directories in cachedir that don't correspond to a currently installed package.")
+	cleanUninstalled(state)
+	return subcommands.ExitSuccess
+}
+
+// cleanInstalled deletes the cached files for installed packages that are
+// specified in the included map.
+func cleanInstalled(state client.GooGetState, included map[string]bool) {
+	for _, pkg := range state {
+		if !included[pkg.PackageSpec.Name] {
+			continue
+		}
+		if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
+			logger.Error(err)
 		}
 	}
 }
 
-func clean(il []string) {
-	files, err := filepath.Glob(filepath.Join(rootDir, cacheDir, "*"))
+// cleanDirectory deletes all files in the cache directory except those whose path
+// appears in the excluded map.
+func cleanDirectory(excluded map[string]bool) {
+	files, err := filepath.Glob(filepath.Join(settings.CacheDir(), "*"))
 	if err != nil {
 		logger.Fatal(err)
 	}
 	for _, file := range files {
-		if !goolib.ContainsString(file, il) {
-			if err := oswrap.RemoveAll(file); err != nil {
-				logger.Error(err)
-			}
+		if excluded[file] {
+			continue
+		}
+		if err := oswrap.RemoveAll(file); err != nil {
+			logger.Error(err)
 		}
 	}
 }
 
-func cleanOld() {
-	state, err := readState(filepath.Join(rootDir, stateFile))
-	if err != nil {
-		logger.Fatal(err)
+// cleanUninstalled deletes all files in the cache directory except those that
+// correspond to an installed package in state.
+func cleanUninstalled(state client.GooGetState) {
+	excluded := make(map[string]bool)
+	for _, pkg := range state {
+		excluded[pkg.LocalPath] = true
 	}
-
-	var il []string
-	for _, pkg := range *state {
-		il = append(il, pkg.LocalPath)
-	}
-	clean(il)
+	cleanDirectory(excluded)
 }

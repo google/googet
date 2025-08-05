@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -73,10 +74,15 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
+	downloader, err := client.NewDownloader(settings.ProxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
 	m := make(map[string][]string)
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
-	for r, pl := range rm {
-		for _, p := range pl {
+	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	for r, repo := range rm {
+		for _, p := range repo.Packages {
 			m[r] = append(m[r], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)
 		}
 	}
@@ -111,10 +117,11 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 }
 
 func repo(pi goolib.PackageInfo, rm client.RepoMap) {
-	for r, pl := range rm {
-		for _, p := range pl {
+	for r, repo := range rm {
+		for _, p := range repo.Packages {
 			if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == pi.Arch && p.PackageSpec.Version == pi.Ver {
-				info(p.PackageSpec, r)
+				fmt.Println()
+				p.PackageSpec.PrettyPrint(os.Stdout, r)
 				return
 			}
 		}

@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
@@ -94,14 +95,28 @@ func TestGetPackageStateNoMatch(t *testing.T) {
 	}
 }
 
+func TestPackageMap(t *testing.T) {
+	s := &GooGetState{
+		PackageState{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.2.3@4", Arch: "noarch"}},
+		PackageState{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "0.1.0@1", Arch: "noarch"}},
+	}
+	want := PackageMap{"foo.noarch": "1.2.3@4", "bar.noarch": "0.1.0@1"}
+	got := s.PackageMap()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("PackageMap unexpected diff (-want +got):\n%v", diff)
+	}
+}
+
 func TestWhatRepo(t *testing.T) {
 	rm := RepoMap{
-		"foo_repo": []goolib.RepoSpec{
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.2.3@4",
-					Arch:    "noarch",
+		"foo_repo": Repo{
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "foo_pkg",
+						Version: "1.2.3@4",
+						Arch:    "noarch",
+					},
 				},
 			},
 		},
@@ -117,62 +132,125 @@ func TestWhatRepo(t *testing.T) {
 }
 
 func TestFindRepoLatest(t *testing.T) {
-	archs := []string{"noarch", "x86_64"}
-	rm := RepoMap{
-		"foo_repo": []goolib.RepoSpec{
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.2.3@4",
-					Arch:    "noarch",
-				},
-			},
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo_pkg",
-					Version: "1.0.0@1",
-					Arch:    "noarch",
-				},
-			},
-			{
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "bar_pkg",
-					Version: "1.0.0@1",
-					Arch:    "noarch",
-				},
-			},
-		},
-	}
-
-	table := []struct {
-		pkg   string
-		arch  string
-		wVer  string
-		wArch string
-		wRepo string
+	for _, tt := range []struct {
+		desc        string
+		pi          goolib.PackageInfo
+		archs       []string
+		rm          RepoMap
+		wantVersion string
+		wantArch    string
+		wantRepo    string
+		wantErr     bool
 	}{
-		{"foo_pkg", "noarch", "1.2.3@4", "noarch", "foo_repo"},
-		{"foo_pkg", "", "1.2.3@4", "noarch", "foo_repo"},
-	}
-	for _, tt := range table {
-		gotVer, gotRepo, gotArch, err := FindRepoLatest(goolib.PackageInfo{Name: tt.pkg, Arch: tt.arch, Ver: ""}, rm, archs)
-		if err != nil {
-			t.Fatalf("FindRepoLatest failed: %v", err)
-		}
-		if gotVer != tt.wVer {
-			t.Errorf("FindRepoLatest for %q, %q returned version: %q, want %q", tt.pkg, tt.arch, gotVer, tt.wVer)
-		}
-		if gotArch != tt.wArch {
-			t.Errorf("FindRepoLatest for %q, %q returned arch: %q, want %q", tt.pkg, tt.arch, gotArch, tt.wArch)
-		}
-		if gotRepo != tt.wRepo {
-			t.Errorf("FindRepoLatest for %q, %q returned repo: %q, want %q", tt.pkg, tt.arch, gotRepo, tt.wRepo)
-		}
-	}
-
-	werr := "no versions of package bar_pkg.x86_64 found in any repo"
-	if _, _, _, err := FindRepoLatest(goolib.PackageInfo{Name: "bar_pkg", Arch: "x86_64", Ver: ""}, rm, archs); err.Error() != werr {
-		t.Errorf("did not get expected error: got %q, want %q", err, werr)
+		{
+			desc:  "name and arch",
+			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
+			archs: []string{"noarch", "x86_64", "arm64"},
+			rm: RepoMap{
+				"foo_repo": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "arm64"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
+				}},
+			},
+			wantVersion: "1.2.3@4",
+			wantArch:    "noarch",
+			wantRepo:    "foo_repo",
+		},
+		{
+			desc:  "name only",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"noarch", "x86_64", "arm64"},
+			rm: RepoMap{
+				"foo_repo": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "arm64"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
+				}},
+			},
+			wantVersion: "1.2.3@4",
+			wantArch:    "noarch",
+			wantRepo:    "foo_repo",
+		},
+		{
+			desc:  "specified arch not present",
+			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "x86_64"},
+			archs: []string{"noarch", "x86_64", "arm64"},
+			rm: RepoMap{
+				"foo_repo": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			desc:  "multiple repos with same priority",
+			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
+			archs: []string{"noarch", "x86_64", "arm64"},
+			rm: RepoMap{
+				"foo_repo": Repo{
+					Priority: 500,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
+					},
+				},
+				"bar_repo": Repo{
+					Priority: 500,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.4.5@1", Arch: "noarch"}},
+					},
+				},
+			},
+			wantVersion: "2.4.5@1",
+			wantArch:    "noarch",
+			wantRepo:    "bar_repo",
+		},
+		{
+			desc:  "multiple repos with different priority",
+			pi:    goolib.PackageInfo{Name: "foo_pkg", Arch: "noarch"},
+			archs: []string{"noarch", "x86_64", "arm64"},
+			rm: RepoMap{
+				"high_priority_repo": Repo{
+					Priority: 1500,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.2.3@4", Arch: "noarch"}},
+					},
+				},
+				"low_priority_repo": Repo{
+					Priority: 500,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.4.5@1", Arch: "noarch"}},
+					},
+				},
+			},
+			wantVersion: "1.2.3@4",
+			wantArch:    "noarch",
+			wantRepo:    "high_priority_repo",
+		},
+	} {
+		t.Run(tt.desc, func(t *testing.T) {
+			gotVersion, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
+			if err != nil && !tt.wantErr {
+				t.Fatalf("FindRepoLatest(%v, %v, %v) failed: %v", tt.pi, tt.rm, tt.archs, err)
+			} else if err == nil && tt.wantErr {
+				t.Fatalf("FindRepoLatest(%v, %v, %v) got nil error, wanted non-nil", tt.pi, tt.rm, tt.archs)
+			}
+			if gotVersion != tt.wantVersion {
+				t.Errorf("FindRepoLatest(%v, %v, %v) got version: %q, want %q", tt.pi, tt.rm, tt.archs, gotVersion, tt.wantVersion)
+			}
+			if gotArch != tt.wantArch {
+				t.Errorf("FindRepoLatest(%v, %v, %v) got arch: %q, want %q", tt.pi, tt.rm, tt.archs, gotArch, tt.wantArch)
+			}
+			if gotRepo != tt.wantRepo {
+				t.Errorf("FindRepoLatest(%v, %v, %v) got repo: %q, want %q", tt.pi, tt.rm, tt.archs, gotRepo, tt.wantRepo)
+			}
+		})
 	}
 }
 
@@ -203,7 +281,11 @@ func TestUnmarshalRepoPackagesJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -248,7 +330,11 @@ func TestUnmarshalRepoPackagesGzip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	got, err := unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -286,7 +372,11 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 
 	// No http server as this should use the cached content.
-	got, err := unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife, proxyServer)
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), url, tempDir, cacheLife)
 	if err != nil {
 		t.Fatalf("Error running unmarshalRepoPackages: %v", err)
 	}
@@ -298,12 +388,12 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 
 func TestFindRepoSpec(t *testing.T) {
 	want := goolib.RepoSpec{PackageSpec: &goolib.PkgSpec{Name: "test"}}
-	rs := []goolib.RepoSpec{
+	repo := Repo{Packages: []goolib.RepoSpec{
 		want,
 		{PackageSpec: &goolib.PkgSpec{Name: "test2"}},
-	}
+	}}
 
-	got, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs)
+	got, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, repo)
 	if err != nil {
 		t.Errorf("error running FindRepoSpec: %v", err)
 	}
@@ -313,9 +403,9 @@ func TestFindRepoSpec(t *testing.T) {
 }
 
 func TestFindRepoSpecNoMatch(t *testing.T) {
-	rs := []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}
+	repo := Repo{Packages: []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "test2"}}}}
 
-	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, rs); err == nil {
+	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, repo); err == nil {
 		t.Error("did not get expected error when running FindRepoSpec")
 	}
 }

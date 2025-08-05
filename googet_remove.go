@@ -21,10 +21,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/remove"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -46,16 +49,23 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	exitCode := subcommands.ExitSuccess
 
-	sf := filepath.Join(rootDir, stateFile)
-	state, err := readState(sf)
+	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Error(err)
 	}
-
+	defer db.Close()
+	downloader, err := client.NewDownloader(settings.ProxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	state, err := db.FetchPkgs("")
+	if err != nil {
+		logger.Fatalf("Unable to fetch installed pacakges: %v", err)
+	}
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
 		var ins []string
-		for _, ps := range *state {
+		for _, ps := range state {
 			if ps.Match(pi) {
 				ins = append(ins, ps.PackageSpec.Name+"."+ps.PackageSpec.Arch)
 			}
@@ -69,8 +79,8 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			return subcommands.ExitFailure
 		}
 		pi = goolib.PkgNameSplit(ins[0])
-		deps, dl := remove.EnumerateDeps(pi, *state)
-		if !noConfirm {
+		deps, dl := remove.EnumerateDeps(pi, state)
+		if settings.Confirm {
 			var b bytes.Buffer
 			fmt.Fprintln(&b, "The following packages will be removed:")
 			for _, d := range dl {
@@ -83,16 +93,23 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			}
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-		if err = remove.All(ctx, pi, deps, state, cmd.dbOnly, proxyServer); err != nil {
+
+		if err = remove.All(ctx, pi, deps, &state, cmd.dbOnly, downloader); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue
 		}
 		logger.Infof("Removal of %q and dependant packages completed", pi.Name)
 		fmt.Printf("Removal of %s completed\n", pi.Name)
-		if err := writeState(state, sf); err != nil {
-			logger.Fatalf("error writing state file: %v", err)
+		// TODO: Make sure we aren't removing packages that other packages depend on.
+		db.RemovePkg(pi.Name, pi.Arch)
+		for _, dep := range dl {
+			// We should have strings that look like "packagename.arch version"
+			d := strings.SplitN(dep, " ", 2)
+			di := goolib.PkgNameSplit(d[0])
+			db.RemovePkg(di.Name, di.Arch)
 		}
+
 	}
 	return exitCode
 }

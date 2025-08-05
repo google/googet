@@ -23,9 +23,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -37,46 +37,90 @@ import (
 	"github.com/google/logger"
 )
 
-const (
-	httpOK = 200
-)
-
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-func Package(ctx context.Context, pkgURL, dst, chksum, proxyServer string) error {
-	if err := oswrap.RemoveAll(dst); err != nil {
-		return err
-	}
+func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
 	if isGCSURL {
-		return packageGCS(ctx, bucket, object, dst, chksum, "")
+		if err := oswrap.RemoveAll(dst); err != nil {
+			return err
+		}
+		return packageGCS(ctx, bucket, object, dst, chksum)
 	}
 
-	return packageHTTP(ctx, pkgURL, dst, chksum, proxyServer)
+	return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
 }
 
-// Downloads a package from an HTTP(s) server
-func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, proxyServer string) error {
-	resp, err := client.Get(ctx, pkgURL, proxyServer)
+// packageHTTP downloads a package from an HTTP(S) server.
+func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) error {
+	// Try to open any already existing file, otherwise create new file.
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Hash the contents of the existing file.
+	hash := sha256.New()
+	size, err := io.Copy(hash, f)
+	if err != nil {
+		return err
+	}
+	// If the file checksum matches what we expect, then the file is already
+	// downloaded and we can quit early.
+	if sum := hex.EncodeToString(hash.Sum(nil)); sum == chksum {
+		logger.Infof("using existing file: %s (sum = %s)", dst, sum)
+		return nil
+	}
+	// Otherwise we have either an empty or partial download.
+	// Check that the server supports ranged requests and that the
+	// existing file is smaller than what we want to download.
+	logger.Infof("existing file size: %d", size)
+	ok, length, err := downloader.CanResume(url)
+	if err != nil {
+		logger.Errorf("CanResume: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	if ok && size < length {
+		logger.Infof("resuming download of %s (%d bytes remaining)", url, length-size)
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-", size))
+	} else {
+		// Get rid of the old file and download from start, resetting hash.
+		if err := f.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			return err
+		}
+		hash.Reset()
+	}
+	resp, err := downloader.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != httpOK {
-		return fmt.Errorf("Invalid return code from server, got: %d, want: %d", resp.StatusCode, httpOK)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("downloading %s: %v", url, err)
 	}
-
-	logger.Infof("Downloading %q", pkgURL)
-	return download(resp.Body, dst, chksum)
+	// Continue hashing the file as we download it.
+	n, err := io.Copy(io.MultiWriter(hash, f), resp.Body)
+	if err != nil {
+		return fmt.Errorf("downloading %s: %v", url, err)
+	}
+	// Verify the checksum of the fully downloaded file.
+	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
+		os.RemoveAll(dst) // delete the bad file
+		return fmt.Errorf("checksum doesn't match: got %s, want %s", sum, chksum)
+	}
+	logger.Infof("Successfully downloaded %s bytes", humanize.IBytes(uint64(n)))
+	return nil
 }
 
 // Downloads a package from Google Cloud Storage
-func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, proxyServer string) error {
-	if proxyServer != "" {
-		return fmt.Errorf("Proxy server not supported with GCS URLs")
-	}
-
+func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) error {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
@@ -93,41 +137,29 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, 
 	return download(r, dst, chksum)
 }
 
-// FromRepo downloads a package from a repo.
-func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, proxyServer string) (string, error) {
-	repoURL, err := url.Parse(repo)
+// FromRepo downloads a package from a repo. It returns the path to the
+// downloaded file and the download URL of the package.
+func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloader *client.Downloader) (string, string, error) {
+	pkgURL, err := url.JoinPath(repo, "..", rs.Source)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	// We strip training slashes to make sure path.Dir() removes the final component (the repo name).
-	// Otherwise '/myrepo' would correctly resolve to '/', but '/myrepo/' would incorrectly resolve to '/myrepo'
-	pkgURL := &url.URL{
-		Scheme:  repoURL.Scheme,
-		Host:    repoURL.Host,
-		User:    repoURL.User,
-		RawPath: path.Join(path.Dir(strings.TrimSuffix(repoURL.EscapedPath(), "/")), rs.Source),
-	}
-	pkgURL.Path, err = url.PathUnescape(pkgURL.RawPath)
-	if err != nil {
-		return "", err
-	}
-
 	pn := goolib.PackageInfo{Name: rs.PackageSpec.Name, Arch: rs.PackageSpec.Arch, Ver: rs.PackageSpec.Version}.PkgName()
 	dst := filepath.Join(dir, filepath.Base(pn))
-	return dst, Package(ctx, pkgURL.String(), dst, rs.Checksum, proxyServer)
+	return dst, pkgURL, Package(ctx, pkgURL, dst, rs.Checksum, downloader)
 }
 
 // Latest downloads the latest available version of a package.
-func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, proxyServer string) (string, error) {
+func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, string, error) {
 	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: ver}, rm[repo])
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return FromRepo(ctx, rs, repo, dir, proxyServer)
+	return FromRepo(ctx, rs, repo, dir, downloader)
 }
 
 func download(r io.Reader, dst, chksum string) (err error) {
@@ -159,7 +191,7 @@ func download(r io.Reader, dst, chksum string) (err error) {
 }
 
 // ExtractPkg takes a path to a package and extracts it to a directory based on the
-// package name, it returns the path to the extraced directory.
+// package name, it returns the path to the extracted directory.
 func ExtractPkg(src string) (dst string, err error) {
 	dst = strings.TrimSuffix(src, filepath.Ext(src))
 	if src == "" || dst == "" {
@@ -194,7 +226,7 @@ func ExtractPkg(src string) (dst string, err error) {
 		}
 
 		name := filepath.Clean(header.Name)
-		if name[0:3] == ".."+string(os.PathSeparator) {
+		if strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
 			return "", fmt.Errorf("error unpacking package, file contains path traversal: %q", name)
 		}
 

@@ -17,13 +17,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -31,6 +34,14 @@ import (
 type latestCmd struct {
 	compare bool
 	sources string
+	json    bool
+}
+
+type packageStatus struct {
+	PackageName      string `json:"package_name"`
+	Status           string `json:"status"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	LatestVersion    string `json:"latest_version"`
 }
 
 func (*latestCmd) Name() string     { return "latest" }
@@ -42,9 +53,19 @@ func (*latestCmd) Usage() string {
 func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.compare, "compare", false, "compare to version locally installed")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
+	f.BoolVar(&cmd.json, "json", false, "output status as a JSON object (requires --compare)")
+
 }
 
 func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if flags.NArg() != 1 {
+		logger.Errorf("Error: exactly one package name argument is required.\nUsage: %s", cmd.Usage())
+		return subcommands.ExitUsageError
+	}
+	if cmd.json && !cmd.compare {
+		logger.Error("Error: --json flag requires the --compare flag to be set.")
+		return subcommands.ExitUsageError
+	}
 	pi := goolib.PkgNameSplit(flags.Arg(0))
 
 	repos, err := buildSources(cmd.sources)
@@ -55,8 +76,13 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
 	}
 
-	rm := client.AvailableVersions(ctx, repos, filepath.Join(rootDir, cacheDir), cacheLife, proxyServer)
-	v, _, a, err := client.FindRepoLatest(pi, rm, archs)
+	downloader, err := client.NewDownloader(settings.ProxyServer)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	v, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -65,28 +91,68 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitSuccess
 	}
 
-	state, err := readState(filepath.Join(rootDir, stateFile))
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer db.Close()
+
+	state, err := db.FetchPkgs("")
 	if err != nil {
 		logger.Fatal(err)
 	}
 	pi.Arch = a
 	var ver string
-	for _, p := range *state {
+	pkgFound := false
+	for _, p := range state {
 		if p.Match(pi) {
 			ver = p.PackageSpec.Version
+			pkgFound = true
 			break
 		}
-		fmt.Println(v)
+	}
+
+	status := packageStatus{
+		PackageName:      pi.Name,
+		InstalledVersion: ver,
+		LatestVersion:    v,
+	}
+	if !pkgFound {
+		status.Status = "not_installed"
+		status.InstalledVersion = ""
+	} else {
+		c, err := goolib.Compare(v, ver)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		switch c {
+		case 1:
+			status.Status = "update_available"
+		case 0:
+			status.Status = "up_to_date"
+		case -1:
+			status.Status = "newer_version_installed"
+		}
+	}
+	if cmd.json {
+		out, err := json.Marshal(status)
+		if err != nil {
+			logger.Fatalf("Failed to marshal JSON: %v", err)
+		}
+		fmt.Println(string(out))
 		return subcommands.ExitSuccess
 	}
-	c, err := goolib.Compare(v, ver)
-	if err != nil {
-		logger.Fatal(err)
+
+	// If not JSON, use  human readable format.
+	switch status.Status {
+	case "update_available":
+		fmt.Printf("%s: Update available (current: %s, latest: %s)\n", status.PackageName, status.InstalledVersion, status.LatestVersion)
+	case "up_to_date":
+		fmt.Printf("%s: Up-to-date (%s)\n", status.PackageName, status.InstalledVersion)
+	case "newer_version_installed":
+		fmt.Printf("%s: Newer version installed (current: %s, repo: %s)\n", status.PackageName, status.InstalledVersion, status.LatestVersion)
+	case "not_installed":
+		fmt.Printf("%s: Not installed (latest available: %s)\n", status.PackageName, status.LatestVersion)
 	}
-	if c == -1 {
-		fmt.Println(ver)
-		return subcommands.ExitSuccess
-	}
-	fmt.Println(v)
 	return subcommands.ExitSuccess
 }

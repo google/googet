@@ -107,8 +107,11 @@ func TestUninstallPkg(t *testing.T) {
 			LocalPath: f.Name(),
 		},
 	}
-
-	if err := uninstallPkg(context.Background(), goolib.PackageInfo{Name: "foo"}, st, false, ""); err != nil {
+	d, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	if err := uninstallPkg(context.Background(), goolib.PackageInfo{Name: "foo"}, st, false, d); err != nil {
 		t.Fatalf("Error running uninstallPkg: %v", err)
 	}
 

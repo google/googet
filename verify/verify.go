@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,7 +108,7 @@ func Files(ps client.PackageState) (bool, error) {
 // Command runs a packages verify command.
 // Will only return true if the verify command exits with 0 or an approved
 // return code.
-func Command(ctx context.Context, ps client.PackageState, proxyServer string) (bool, error) {
+func Command(ctx context.Context, ps client.PackageState, downloader *client.Downloader) (bool, error) {
 	if ps.PackageSpec.Verify.Path == "" {
 		return true, nil
 	}
@@ -140,16 +138,7 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 		if ps.DownloadURL == "" {
 			return false, fmt.Errorf("can not pull package %s from repo, DownloadURL not saved", pkg)
 		}
-
-		httpClient := &http.Client{}
-		if proxyServer != "" {
-			proxyURL, err := url.Parse(proxyServer)
-			if err != nil {
-				return false, err
-			}
-			httpClient.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-		}
-		resp, err := httpClient.Get(ps.DownloadURL)
+		resp, err := downloader.Get(ctx, ps.DownloadURL)
 		if err != nil {
 			return false, err
 		}
@@ -164,13 +153,13 @@ func Command(ctx context.Context, ps client.PackageState, proxyServer string) (b
 	}
 	f.Close()
 
-	// Try just running the extracted command, rextract the full package on any error.
+	// Try just running the extracted command, re-extract the full package on any error.
 	if err := system.Verify(dir, ps.PackageSpec); err == nil {
 		return true, nil
 	}
 
 	if rd {
-		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, proxyServer); err != nil {
+		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
 			return false, fmt.Errorf("error redownloading package: %v", err)
 		}
 	}

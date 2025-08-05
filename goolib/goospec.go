@@ -22,8 +22,10 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +33,8 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/google/googet/v2/priority"
+	"github.com/olekukonko/tablewriter"
 )
 
 type build struct {
@@ -68,7 +72,7 @@ const (
 	maxTagValueSize = 1024 * 10 // 10k
 )
 
-var validArch = []string{"noarch", "x86_64", "x86_32", "arm"}
+var validArch = []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}
 
 // PkgSpec is an individual package specification.
 type PkgSpec struct {
@@ -89,6 +93,8 @@ type PkgSpec struct {
 	Uninstall       ExecFile
 	Verify          ExecFile
 	Files           map[string]string `json:",omitempty"`
+	// The Display Name of the entry in "Add/Remove programs" for matching
+	ExternalProgramName string
 }
 
 func (ps PkgSpec) String() string {
@@ -167,6 +173,17 @@ func fixVer(ver string) string {
 		out[i+offset] = trimmed
 	}
 	return strings.Join(out, ".") + suffix
+}
+
+// ComparePriorityVersion compares (p1, v1) to (p2, v2) as priority-version tuples.
+func ComparePriorityVersion(p1 priority.Value, v1 string, p2 priority.Value, v2 string) (int, error) {
+	if p1 < p2 {
+		return -1, nil
+	}
+	if p1 > p2 {
+		return 1, nil
+	}
+	return Compare(v1, v2)
 }
 
 // ParseVersion parses the string version into goospec.Version. ParseVersion
@@ -358,7 +375,7 @@ func (ps *PkgSpec) verify() error {
 	if ps.Name == "" {
 		return errors.New("no name defined in package spec")
 	}
-	if !ContainsString(ps.Arch, validArch) {
+	if !slices.Contains(validArch, ps.Arch) {
 		return fmt.Errorf("invalid architecture: %q", ps.Arch)
 	}
 	if ps.Version == "" {
@@ -436,4 +453,70 @@ func UnmarshalPackageSpec(data []byte) (*PkgSpec, error) {
 		return nil, err
 	}
 	return &p, nil
+}
+
+// PrettyPrint writes a formatted description of the PkgSpec to w.
+// fromRepo indicates which repo the package was sourced from.
+func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
+	pkgInfo := []struct {
+		name, value string
+	}{
+		{"Name", ps.Name},
+		{"Arch", ps.Arch},
+		{"Version", ps.Version},
+		{"Repo", path.Base(fromRepo)},
+		{"Authors", ps.Authors},
+		{"Owners", ps.Owners},
+		{"Source", ps.Source},
+		{"Description", ps.Description},
+		{"Dependencies", ""},
+		{"ReleaseNotes", ""},
+	}
+	var width int
+	for _, pi := range pkgInfo {
+		if len(pi.name) > width {
+			width = len(pi.name)
+		}
+	}
+
+	write := func(label, value string) {
+		fmt.Fprintf(w, "%-*s: %s\n", width+1, label, value)
+	}
+
+	writeLines := func(label string, lines []string) {
+		if len(lines) == 0 {
+			write(label, "")
+			return
+		}
+		for _, line := range lines {
+			sl, _ := tablewriter.WrapString(line, 76-width)
+			for _, l := range sl {
+				write(label, l)
+				label = ""
+			}
+		}
+	}
+
+	for _, pi := range pkgInfo {
+		switch pi.name {
+		case "Dependencies":
+			if len(ps.PkgDependencies) == 0 {
+				write(pi.name, "None")
+				continue
+			}
+			var deps []string
+			for p, v := range ps.PkgDependencies {
+				deps = append(deps, p+" "+v)
+			}
+			slices.Sort(deps)
+			write(pi.name, deps[0])
+			for _, l := range deps[1:] {
+				write("", l)
+			}
+		case "ReleaseNotes":
+			writeLines(pi.name, ps.ReleaseNotes)
+		default:
+			writeLines(pi.name, strings.Split(strings.TrimSpace(pi.value), "\n"))
+		}
+	}
 }

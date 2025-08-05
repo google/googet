@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -53,7 +54,7 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 		return subcommands.ExitUsageError
 	}
 
-	rfs, err := repos(filepath.Join(rootDir, repoDir))
+	rfs, err := repos(settings.RepoDir())
 	if err != nil {
 		logger.Fatal(err)
 	}
