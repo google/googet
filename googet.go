@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -151,8 +150,10 @@ func main() {
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
 
-	nonLockingCommands := []string{"help", "commands", "flags", "listrepos"}
-	if flag.NArg() == 0 || slices.Contains(nonLockingCommands, flag.Arg(0)) {
+	// These commands may execute without a lock and before any initialization.
+	cmdName := flag.Arg(0) // empty string if no args
+	switch cmdName {
+	case "", "help", "commands", "flags":
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
@@ -164,11 +165,17 @@ func main() {
 	}
 	settings.Initialize(*rootDir, !*noConfirm)
 
+	// "googet listrepos" may execute without a lock after the root directory and
+	// settings are initialized.
+	if cmdName == "listrepos" {
+		os.Exit(int(cmdr.Execute(context.Background())))
+	}
+
 	dbFile := settings.DBFile()
 
 	// "googet installed" is allowed to execute without a lock if the googet
 	// database has already been created.
-	if googetdb.Exists(dbFile) && flag.Arg(0) == "installed" {
+	if googetdb.Exists(dbFile) && cmdName == "installed" {
 		os.Exit(int(cmdr.Execute(context.Background())))
 	}
 
