@@ -25,8 +25,10 @@ import (
 	"testing"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 )
 
@@ -35,6 +37,8 @@ func init() {
 }
 
 func TestUninstallPkg(t *testing.T) {
+	// Set up the installer.
+	settings.Initialize(t.TempDir(), false)
 	src, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
@@ -111,10 +115,19 @@ func TestUninstallPkg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDownloader: %v", err)
 	}
-	if err := uninstallPkg(context.Background(), goolib.PackageInfo{Name: "foo"}, st, false, d); err != nil {
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	db.WriteStateToDB(*st)
+	if err := uninstallPkg(context.Background(), goolib.PackageInfo{Name: "foo"}, false, d, db); err != nil {
 		t.Fatalf("Error running uninstallPkg: %v", err)
 	}
-
+	newState, err := db.FetchPkgs("")
+	if newState != nil {
+		t.Errorf("Package not removed from state: %v", newState)
+	}
 	for _, n := range []string{testFile.Name(), dst} {
 		if _, err := oswrap.Stat(n); err == nil {
 			t.Errorf("%s was not removed", n)

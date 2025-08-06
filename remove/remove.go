@@ -22,15 +22,16 @@ import (
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/download"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 )
 
-func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooGetState, dbOnly bool, downloader *client.Downloader) error {
+func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Executing removal of package %q", pi.Name)
-	ps, err := state.GetPackageState(pi)
+	ps, err := db.FetchPkg(pi.Name)
 	if err != nil {
 		return fmt.Errorf("package not found in state file: %v", err)
 	}
@@ -106,7 +107,7 @@ func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, state *client.GooG
 			logger.Errorf("error removing package data from cache directory: %v", err)
 		}
 	}
-	return state.Remove(pi)
+	return db.RemovePkg(ps.PackageSpec.Name, ps.PackageSpec.Arch)
 }
 
 // DepMap is a map of packages to dependant packages.
@@ -145,8 +146,12 @@ func (deps DepMap) build(name, arch string, state client.GooGetState) {
 }
 
 // EnumerateDeps returns a DepMap and list of dependencies for a package.
-func EnumerateDeps(pi goolib.PackageInfo, state client.GooGetState) (DepMap, []string) {
+func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string) {
 	dm := make(DepMap)
+	state, err := db.FetchPkgs("")
+	if err != nil {
+		logger.Fatalf("Error connecting to state database while building dependency map: %v", err)
+	}
 	dm.build(pi.Name, pi.Arch, state)
 	var dl []string
 	for k := range dm {
@@ -162,17 +167,17 @@ func EnumerateDeps(pi goolib.PackageInfo, state client.GooGetState) (DepMap, []s
 
 // All removes a package and all dependent packages. Packages with no dependent packages
 // will be removed first.
-func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, state *client.GooGetState, dbOnly bool, downloader *client.Downloader) error {
+func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	for len(deps) > 1 {
 		for dep := range deps {
 			if len(deps[dep]) == 0 {
 				di := goolib.PkgNameSplit(dep)
-				if err := uninstallPkg(ctx, di, state, dbOnly, downloader); err != nil {
+				if err := uninstallPkg(ctx, di, dbOnly, downloader, db); err != nil {
 					return err
 				}
 				deps.remove(dep)
 			}
 		}
 	}
-	return uninstallPkg(ctx, pi, state, dbOnly, downloader)
+	return uninstallPkg(ctx, pi, dbOnly, downloader, db)
 }

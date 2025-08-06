@@ -64,7 +64,6 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 	if err != nil {
 		logger.Fatal(err)
 	}
-	var newPkgs client.GooGetState
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
@@ -98,31 +97,13 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 					Arch: p.PackageSpec.Arch,
 					Ver:  p.PackageSpec.Version,
 				}
-				deps, err := install.ListDeps(pi, rm, u, settings.Archs)
-				if err != nil {
-					logger.Fatal(err)
-				}
-				for _, di := range deps {
-					pkg, err := db.FetchPkg(di.Name)
-					if err != nil {
-						logger.Fatal(err)
-					}
-					if pkg.PackageSpec != nil {
-						newPkgs.Add(pkg)
-					}
-				}
-				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, &newPkgs, true, downloader); err != nil {
+				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, true, downloader, db); err != nil {
 					logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 					exitCode = subcommands.ExitFailure
 					continue
 				}
 				logger.Infof("Unmanaged software added to googet database(packagename: application name): %v: %v\n", p.PackageSpec.Name, app)
 			}
-		}
-	}
-	if len(newPkgs) != 0 {
-		if err = db.WriteStateToDB(newPkgs); err != nil {
-			logger.Fatal(err)
 		}
 	}
 	if len(unmanaged) == 0 {

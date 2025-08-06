@@ -149,17 +149,8 @@ func (i *installer) installFromFile(path string) error {
 		fmt.Printf("Not installing %s...\n", base)
 		return nil
 	}
-	// Pull the whole state to check against local pkgspec.
-	state, err := i.db.FetchPkgs("")
-	if err != nil {
-		return fmt.Errorf("unable to fetch installed packages: %v", err)
-	}
-	insPkg, err := install.FromDisk(path, i.cache, &state, i.dbOnly, i.shouldReinstall)
-	if err != nil {
+	if err := install.FromDisk(path, i.cache, i.dbOnly, i.shouldReinstall, i.db); err != nil {
 		return fmt.Errorf("installing %s: %v", path, err)
-	}
-	if err := i.db.WriteStateToDB(insPkg); err != nil {
-		return fmt.Errorf("writing state database: %v", err)
 	}
 	return nil
 }
@@ -199,18 +190,14 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if err != nil {
 		return fmt.Errorf("error finding %s.%s.%s in repo: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
-	state, err := i.db.FetchPkgs("")
-	if err != nil {
-		return fmt.Errorf("unable to fetch installed packages: %v", err)
-	}
-	if ni, err := install.NeedsInstallation(pi, state); err != nil {
+	if ni, err := install.NeedsInstallation(pi, i.db); err != nil {
 		return err
 	} else if !ni {
 		fmt.Printf("%s.%s.%s or a newer version is already installed on the system\n", pi.Name, pi.Arch, pi.Ver)
 		return nil
 	}
 	if i.confirm {
-		b, err := enumerateDeps(pi, i.repoMap, r, archs, state)
+		b, err := i.enumerateDeps(pi, r, archs)
 		if err != nil {
 			return err
 		}
@@ -219,12 +206,10 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 			return nil
 		}
 	}
-	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, &state, i.dbOnly, i.downloader); err != nil {
+	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.downloader, i.db); err != nil {
 		return fmt.Errorf("installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
-	if err := i.db.WriteStateToDB(state); err != nil {
-		return fmt.Errorf("writing state file: %v", err)
-	}
+
 	return nil
 }
 
@@ -245,15 +230,15 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 	return nil
 }
 
-func enumerateDeps(pi goolib.PackageInfo, rm client.RepoMap, r string, archs []string, state client.GooGetState) (*bytes.Buffer, error) {
-	dl, err := install.ListDeps(pi, rm, r, archs)
+func (i *installer) enumerateDeps(pi goolib.PackageInfo, r string, archs []string) (*bytes.Buffer, error) {
+	dl, err := install.ListDeps(pi, i.repoMap, r, archs)
 	if err != nil {
 		return nil, fmt.Errorf("error listing dependencies for %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
 	var b bytes.Buffer
 	fmt.Fprintln(&b, "The following packages will be installed:")
 	for _, di := range dl {
-		ni, err := install.NeedsInstallation(di, state)
+		ni, err := install.NeedsInstallation(di, i.db)
 		if err != nil {
 			return nil, err
 		}

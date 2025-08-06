@@ -60,10 +60,6 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		logger.Fatal(err)
 	}
 	defer db.Close()
-	state, err := db.FetchPkgs("")
-	if err != nil {
-		logger.Fatal(err)
-	}
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
 		logger.Fatal(err)
@@ -71,25 +67,12 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
-		ps, err := state.GetPackageState(pi)
+		ps, err := db.FetchPkg(pi.Name)
 		if err != nil {
 			logger.Errorf("Package %q not installed, cannot verify.", arg)
 			continue
 		}
 		pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
-
-		// Check for multiples.
-		var ins []string
-		for _, p := range state {
-			if p.Match(pi) {
-				ins = append(ins, p.PackageSpec.Name+"."+p.PackageSpec.Arch)
-			}
-		}
-		if len(ins) > 1 {
-			fmt.Fprintf(os.Stderr, "More than one %s installed, chose one of:\n%s\n", arg, ins)
-			exitCode = subcommands.ExitFailure
-			continue
-		}
 
 		v, err := verify.Command(ctx, ps, downloader)
 		if err != nil {

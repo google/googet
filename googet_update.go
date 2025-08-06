@@ -99,15 +99,11 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, &state, cmd.dbOnly, downloader); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, cmd.dbOnly, downloader, db); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
 		}
-	}
-
-	if err := db.WriteStateToDB(state); err != nil {
-		logger.Fatalf("Error writing state db: %v", err)
 	}
 
 	return exitCode
