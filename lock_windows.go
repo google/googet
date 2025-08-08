@@ -67,11 +67,13 @@ func unlockFileEx(hFile uintptr, nNumberOfBytesToLockLow, nNumberOfBytesToLockHi
 	return nil
 }
 
-func lock(f *os.File) error {
+func lock(f *os.File) (func(), error) {
 	if err := lockFileEx(f.Fd(), LOCKFILE_EXCLUSIVE_LOCK, 1, 0, &syscall.Overlapped{}); err != nil {
-		return err
+		return nil, err
 	}
-
-	deferredFuncs = append(deferredFuncs, func() { unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{}); f.Close(); os.Remove(settings.LockFile()) })
-	return nil
+	return func() {
+		unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{})
+		f.Close()
+		os.Remove(settings.LockFile())
+	}, nil
 }

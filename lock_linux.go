@@ -21,11 +21,13 @@ import (
 	"github.com/google/googet/v2/settings"
 )
 
-func lock(f *os.File) error {
+func lock(f *os.File) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
+		return nil, err
 	}
-
-	deferredFuncs = append(deferredFuncs, func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close(); os.Remove(settings.LockFile()) })
-	return nil
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+		os.Remove(settings.LockFile())
+	}, nil
 }

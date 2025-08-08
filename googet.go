@@ -71,28 +71,22 @@ func rotateLog(logPath string, ls int64) error {
 	return nil
 }
 
-var deferredFuncs []func()
-
-func runDeferredFuncs() {
-	for _, f := range deferredFuncs {
-		f()
-	}
-}
-
-func obtainLock(lockFile string) error {
+func obtainLock(lockFile string) (func(), error) {
 	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
-	if err != nil && !os.IsExist(err) {
-		return err
+	if err != nil {
+		return nil, err
 	}
 
 	f, err := os.OpenFile(lockFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil && !os.IsExist(err) {
-		return err
+	if err != nil {
+		return nil, err
 	}
 
+	var cleanup func()
 	c := make(chan error)
 	go func() {
-		c <- lock(f)
+		cleanup, err = lock(f)
+		c <- err
 	}()
 
 	ticker := time.NewTicker(5 * time.Second)
@@ -101,17 +95,21 @@ func obtainLock(lockFile string) error {
 		select {
 		case err := <-c:
 			if err != nil {
-				return err
+				return nil, err
 			}
-			return nil
+			return cleanup, nil
 		case <-ticker.C:
 			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
 		}
 	}
-	return errors.New("timed out waiting for lock")
+	return nil, errors.New("timed out waiting for lock")
 }
 
 func main() {
+	os.Exit(run(context.Background()))
+}
+
+func run(ctx context.Context) int {
 	rootDir := flag.String("root", os.Getenv(envVar), "googet root directory")
 	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
 	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
@@ -126,7 +124,7 @@ func main() {
 
 	if *showVer {
 		fmt.Println("GooGet version:", version)
-		os.Exit(0)
+		return 0
 	}
 
 	cmdr := subcommands.NewCommander(flag.CommandLine, "googet")
@@ -154,21 +152,23 @@ func main() {
 	cmdName := flag.Arg(0) // empty string if no args
 	switch cmdName {
 	case "", "help", "commands", "flags":
-		os.Exit(int(cmdr.Execute(context.Background())))
+		return int(cmdr.Execute(ctx))
 	}
 
 	if *rootDir == "" {
-		logger.Fatalf("The environment variable %q not defined and no '-root' flag passed.", envVar)
+		logger.Errorf("The environment variable %q is not defined and no '-root' flag passed", envVar)
+		return 1
 	}
 	if err := os.MkdirAll(*rootDir, 0774); err != nil {
-		logger.Fatalln("Error setting up root directory:", err)
+		logger.Errorf("Unable to create root directory: %v", err)
+		return 1
 	}
 	settings.Initialize(*rootDir, !*noConfirm)
 
 	// "googet listrepos" may execute without a lock after the root directory and
 	// settings are initialized.
 	if cmdName == "listrepos" {
-		os.Exit(int(cmdr.Execute(context.Background())))
+		return (int(cmdr.Execute(context.Background())))
 	}
 
 	dbFile := settings.DBFile()
@@ -176,39 +176,43 @@ func main() {
 	// "googet installed" is allowed to execute without a lock if the googet
 	// database has already been created.
 	if googetdb.Exists(dbFile) && cmdName == "installed" {
-		os.Exit(int(cmdr.Execute(context.Background())))
+		return int(cmdr.Execute(ctx))
 	}
 
-	if err := obtainLock(settings.LockFile()); err != nil {
-		logger.Fatalf("Cannot obtain GooGet lock, you may need to run with admin rights, error: %v", err)
-	}
-
-	logPath := settings.LogFile()
-	if err := rotateLog(logPath, logSize); err != nil {
-		logger.Error(err)
-	}
-	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
+	cleanup, err := obtainLock(settings.LockFile())
 	if err != nil {
-		runDeferredFuncs()
-		logger.Fatalln("Failed to open log file:", err)
+		logger.Errorf("Failed to obtain lock: %v", err)
+		return 1
 	}
-	deferredFuncs = append(deferredFuncs, func() { lf.Close() })
+	if cleanup != nil {
+		defer cleanup()
+	}
 
+	logFile := settings.LogFile()
+	if err := rotateLog(logFile, logSize); err != nil {
+		logger.Errorf("Failed to rotate log file %q: %v", logFile, err)
+		return 1
+	}
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
+	if err != nil {
+		logger.Errorf("failed to open log file %q: %v", logFile, err)
+		return 1
+	}
+	defer lf.Close()
 	logger.Init("GooGet", *verbose, *systemLog, lf)
+	defer logger.Close()
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
-		runDeferredFuncs()
-		logger.Fatalf("Error creating initial db file. If db is not created, run again as admin: %v", err)
+		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)
+		return 1
 	}
 	if err := os.MkdirAll(settings.CacheDir(), 0774); err != nil {
-		runDeferredFuncs()
-		logger.Fatalf("Error setting up cache directory: %v", err)
+		logger.Errorf("Unable to create cache directory: %v", err)
+		return 1
 	}
 	if err := os.MkdirAll(settings.RepoDir(), 0774); err != nil {
-		runDeferredFuncs()
-		logger.Fatalf("Error setting up repo directory: %v", err)
+		logger.Errorf("Unable to create repo directory: %v", err)
+		return 1
 	}
-	es := cmdr.Execute(context.Background())
-	runDeferredFuncs()
-	os.Exit(int(es))
+	return int(cmdr.Execute(ctx))
 }
