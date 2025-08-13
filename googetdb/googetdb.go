@@ -100,7 +100,7 @@ func (g *GooDB) WriteStateToDB(gooState client.GooGetState) error {
 		if pkgState.PackageSpec == nil {
 			continue
 		}
-		err := g.addPkg(pkgState)
+		err := g.AddPkg(pkgState)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,8 @@ func (g *GooDB) WriteStateToDB(gooState client.GooGetState) error {
 	return nil
 }
 
-func (g *GooDB) addPkg(pkgState client.PackageState) error {
+// AddPkg adds a single package to the googet database
+func (g *GooDB) AddPkg(pkgState client.PackageState) error {
 	spec := pkgState.PackageSpec
 
 	pkgState.InstalledApp.Name, pkgState.InstalledApp.Reg = system.AppAssociation(spec, pkgState.LocalPath)

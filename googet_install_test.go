@@ -176,6 +176,34 @@ func TestInstall(t *testing.T) {
 			wantInstalled: []string{"A.noarch.1"},
 			wantState:     []string{"A.noarch.1", "B.noarch.2", "C.noarch.3"},
 		},
+		{
+			desc: "remove-replaced-package",
+			args: []string{"B"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "5"}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "5"},
+				{Name: "B", Arch: "noarch", Version: "2", Replaces: []string{"A.noarch.3"}},
+			},
+			wantInstalled: []string{"B.noarch.2"},
+			wantState:     []string{"B.noarch.2"},
+		},
+		{
+			desc: "remove-replaced-package-with-deps",
+			args: []string{"B"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "5"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "C", Arch: "noarch", Version: "3", PkgDependencies: map[string]string{"A": "5"}}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "5"},
+				{Name: "B", Arch: "noarch", Version: "2", Replaces: []string{"A.noarch.3"}},
+				{Name: "C", Arch: "noarch", Version: "3", PkgDependencies: map[string]string{"A": "5"}},
+			},
+			wantInstalled: []string{"B.noarch.2"},
+			wantState:     []string{"B.noarch.2"},
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Set up the installer.

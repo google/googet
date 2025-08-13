@@ -1,6 +1,6 @@
 module github.com/google/googet/v2
 
-go 1.24
+go 1.24.0
 
 require (
 	cloud.google.com/go/storage v1.28.1

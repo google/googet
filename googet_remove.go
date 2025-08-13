@@ -58,28 +58,18 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	if err != nil {
 		logger.Fatal(err)
 	}
-	state, err := db.FetchPkgs("")
-	if err != nil {
-		logger.Fatalf("Unable to fetch installed pacakges: %v", err)
-	}
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
-		var ins []string
-		for _, ps := range state {
-			if ps.Match(pi) {
-				ins = append(ins, ps.PackageSpec.Name+"."+ps.PackageSpec.Arch)
-			}
+		ps, err := db.FetchPkg(pi.Name)
+		if err != nil {
+			logger.Fatal(err)
 		}
-		if len(ins) == 0 {
+		if ps.PackageSpec == nil {
 			logger.Errorf("Package %q not installed, cannot remove.", arg)
 			continue
 		}
-		if len(ins) > 1 {
-			fmt.Fprintf(os.Stderr, "More than one %s installed, chose one of:\n%s\n", arg, ins)
-			return subcommands.ExitFailure
-		}
-		pi = goolib.PkgNameSplit(ins[0])
-		deps, dl := remove.EnumerateDeps(pi, state)
+		pi = goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch}
+		deps, dl := remove.EnumerateDeps(pi, db)
 		if settings.Confirm {
 			var b bytes.Buffer
 			fmt.Fprintln(&b, "The following packages will be removed:")
@@ -94,7 +84,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		}
 		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
 
-		if err = remove.All(ctx, pi, deps, &state, cmd.dbOnly, downloader); err != nil {
+		if err = remove.All(ctx, pi, deps, cmd.dbOnly, downloader, db); err != nil {
 			logger.Errorf("error removing %s, %v", arg, err)
 			exitCode = subcommands.ExitFailure
 			continue

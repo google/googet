@@ -25,8 +25,10 @@ import (
 	"testing"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 )
 
@@ -35,6 +37,7 @@ func init() {
 }
 
 func TestMinInstalled(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -51,7 +54,12 @@ func TestMinInstalled(t *testing.T) {
 			},
 		},
 	}
-
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	db.WriteStateToDB(state)
 	table := []struct {
 		pkg, arch string
 		ins       bool
@@ -64,7 +72,7 @@ func TestMinInstalled(t *testing.T) {
 		{"baz_pkg", "noarch", false},
 	}
 	for _, tt := range table {
-		ma, err := minInstalled(goolib.PackageInfo{Name: tt.pkg, Arch: tt.arch, Ver: "1.0.0@1"}, state)
+		ma, err := minInstalled(goolib.PackageInfo{Name: tt.pkg, Arch: tt.arch, Ver: "1.0.0@1"}, db)
 		if err != nil {
 			t.Fatalf("error checking minAvailable: %v", err)
 		}
@@ -75,6 +83,7 @@ func TestMinInstalled(t *testing.T) {
 }
 
 func TestNeedsInstallation(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -98,7 +107,12 @@ func TestNeedsInstallation(t *testing.T) {
 			},
 		},
 	}
-
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	db.WriteStateToDB(state)
 	table := []struct {
 		pkg string
 		ver string
@@ -110,7 +124,7 @@ func TestNeedsInstallation(t *testing.T) {
 		{"pkg", "1.0.0@1", true},      // not installed
 	}
 	for _, tt := range table {
-		ins, err := NeedsInstallation(goolib.PackageInfo{Name: tt.pkg, Arch: "noarch", Ver: tt.ver}, state)
+		ins, err := NeedsInstallation(goolib.PackageInfo{Name: tt.pkg, Arch: "noarch", Ver: tt.ver}, db)
 		if err != nil {
 			t.Fatalf("Error checking NeedsInstallation: %v", err)
 		}
