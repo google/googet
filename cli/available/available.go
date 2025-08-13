@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package available
 
 // The available subcommand searches the repo for packages using the filter provided. The default
 // filter is an empty string and will return all packages.
@@ -32,6 +32,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&availableCmd{}, "package query") }
 
 type availableCmd struct {
 	info    bool

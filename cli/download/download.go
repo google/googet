@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package download
 
 // The download subcommand handles the downloading of a package.
 
@@ -30,6 +30,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&downloadCmd{}, "package management") }
 
 type downloadCmd struct {
 	downloadDir string

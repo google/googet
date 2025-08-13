@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package install
 
 // The install subcommand handles the downloading and installation of a package.
 
@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -33,6 +34,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&installCmd{}, "package management") }
 
 type installCmd struct {
 	reinstall  bool
@@ -145,7 +148,7 @@ type installer struct {
 // installFromFile installs a package from the specified file path.
 func (i *installer) installFromFile(path string) error {
 	base := filepath.Base(path)
-	if i.confirm && !confirmation(fmt.Sprintf("Install %s?", base)) {
+	if i.confirm && !cli.Confirmation(fmt.Sprintf("Install %s?", base)) {
 		fmt.Printf("Not installing %s...\n", base)
 		return nil
 	}
@@ -201,7 +204,7 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		if err != nil {
 			return err
 		}
-		if !confirmation(b.String()) {
+		if !cli.Confirmation(b.String()) {
 			fmt.Println("canceling install...")
 			return nil
 		}
@@ -219,7 +222,7 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 		return fmt.Errorf("cannot reinstall something that is not already installed")
 	}
 	if i.confirm {
-		if !confirmation(fmt.Sprintf("Reinstall %s?", pi.Name)) {
+		if !cli.Confirmation(fmt.Sprintf("Reinstall %s?", pi.Name)) {
 			fmt.Printf("Not reinstalling %s...\n", pi.Name)
 			return nil
 		}

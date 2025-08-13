@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package listrepos
 
 import (
 	"context"
@@ -25,6 +25,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&listReposCmd{}, "repository management") }
 
 type listReposCmd struct{}
 

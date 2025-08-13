@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package verify
 
 // The verify subcommand handles verifying of packages.
 
@@ -31,6 +31,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&verifyCmd{}, "package management") }
 
 type verifyCmd struct {
 	reinstall bool

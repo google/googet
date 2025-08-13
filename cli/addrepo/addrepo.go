@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package addrepo
 
 import (
 	"context"
@@ -27,6 +27,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&addRepoCmd{}, "repository management") }
 
 type addRepoCmd struct {
 	file     string

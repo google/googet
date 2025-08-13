@@ -22,13 +22,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
+
+	_ "github.com/google/googet/v2/cli/addrepo"
+	_ "github.com/google/googet/v2/cli/available"
+	_ "github.com/google/googet/v2/cli/check"
+	_ "github.com/google/googet/v2/cli/clean"
+	_ "github.com/google/googet/v2/cli/download"
+	_ "github.com/google/googet/v2/cli/install"
+	_ "github.com/google/googet/v2/cli/installed"
+	_ "github.com/google/googet/v2/cli/latest"
+	_ "github.com/google/googet/v2/cli/listrepos"
+	_ "github.com/google/googet/v2/cli/remove"
+	_ "github.com/google/googet/v2/cli/rmrepo"
+	_ "github.com/google/googet/v2/cli/update"
+	_ "github.com/google/googet/v2/cli/verify"
 )
 
 const (
@@ -44,14 +57,6 @@ var (
 	// Optional function to handle flag parsing. If unset, we use flag.Parse.
 	flagParse func()
 )
-
-func confirmation(msg string) bool {
-	var c string
-	fmt.Print(msg + " (y/N): ")
-	fmt.Scanln(&c)
-	c = strings.ToLower(c)
-	return c == "y" || c == "yes"
-}
 
 func rotateLog(logPath string, ls int64) error {
 	fi, err := os.Stat(logPath)
@@ -129,24 +134,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	cmdr := subcommands.NewCommander(flag.CommandLine, "googet")
+	cmdr := subcommands.DefaultCommander
 	cmdr.Register(cmdr.FlagsCommand(), "")
 	cmdr.Register(cmdr.CommandsCommand(), "")
 	cmdr.Register(cmdr.HelpCommand(), "")
-	cmdr.Register(&installCmd{}, "package management")
-	cmdr.Register(&downloadCmd{}, "package management")
-	cmdr.Register(&removeCmd{}, "package management")
-	cmdr.Register(&updateCmd{}, "package management")
-	cmdr.Register(&verifyCmd{}, "package management")
-	cmdr.Register(&installedCmd{}, "package query")
-	cmdr.Register(&latestCmd{}, "package query")
-	cmdr.Register(&availableCmd{}, "package query")
-	cmdr.Register(&checkCmd{}, "package query")
-	cmdr.Register(&listReposCmd{}, "repository management")
-	cmdr.Register(&addRepoCmd{}, "repository management")
-	cmdr.Register(&rmRepoCmd{}, "repository management")
-	cmdr.Register(&cleanCmd{}, "")
-
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
 

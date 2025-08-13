@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package remove
 
 // The remove subcommand handles the uninstallation of a package.
 
@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -31,6 +32,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&removeCmd{}, "package management") }
 
 type removeCmd struct {
 	dbOnly bool
@@ -77,7 +80,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 				fmt.Fprintln(&b, "  "+d)
 			}
 			fmt.Fprintf(&b, "Do you wish to remove %s and all dependencies?", pi.Name)
-			if !confirmation(b.String()) {
+			if !cli.Confirmation(b.String()) {
 				fmt.Println("canceling removal...")
 				continue
 			}

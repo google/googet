@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package update
 
 // The update subcommand handles bulk updating of packages.
 
@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -32,6 +33,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&updateCmd{}, "package management") }
 
 type updateCmd struct {
 	dbOnly  bool
@@ -87,7 +90,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	}
 
 	if settings.Confirm {
-		if !confirmation("Perform update?") {
+		if !cli.Confirmation("Perform update?") {
 			fmt.Println("Not updating.")
 			return subcommands.ExitSuccess
 		}

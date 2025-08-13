@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package clean
 
 import (
 	"context"
@@ -28,6 +28,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&cleanCmd{}, "") }
 
 type cleanCmd struct {
 	all      bool

@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package main
+package latest
 
 // The latest subcommand searches the repo for the specified package and returns the latest version.
 
@@ -31,6 +31,8 @@ import (
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
+
+func init() { subcommands.Register(&latestCmd{}, "package query") }
 
 type latestCmd struct {
 	compare bool

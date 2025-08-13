@@ -18,11 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
-	"github.com/google/googet/v2/settings"
 )
 
 func TestRotateLog(t *testing.T) {
@@ -73,121 +69,5 @@ func TestRotateLog(t *testing.T) {
 				t.Error("rotateLog rotated a log we didn't expect")
 			}
 		}
-	}
-}
-
-func TestCleanPackages(t *testing.T) {
-	rootDir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer oswrap.RemoveAll(rootDir)
-	settings.Initialize(rootDir, false)
-
-	cache := settings.CacheDir()
-	wantFile := filepath.Join(cache, "want")
-	notWantFile := filepath.Join(cache, "notWant")
-
-	if err := oswrap.MkdirAll(cache, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := ioutil.WriteFile(wantFile, nil, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := ioutil.WriteFile(notWantFile, nil, 0700); err != nil {
-		t.Fatal(err)
-	}
-
-	state := client.GooGetState{
-		{LocalPath: wantFile, PackageSpec: &goolib.PkgSpec{Name: "want"}},
-		{LocalPath: notWantFile, PackageSpec: &goolib.PkgSpec{Name: "notWant"}},
-	}
-	cleanInstalled(state, map[string]bool{"notWant": true})
-
-	if _, err := oswrap.Stat(wantFile); err != nil {
-		t.Errorf("cleanPackages removed wantDir, Stat err: %v", err)
-	}
-
-	if _, err := oswrap.Stat(notWantFile); err == nil {
-		t.Errorf("cleanPackages did not remove notWantDir")
-	}
-}
-
-func TestUpdates(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		pm   client.PackageMap
-		rm   client.RepoMap
-		want []goolib.PackageInfo
-	}{
-		{
-			name: "upgrade to later version",
-			pm: client.PackageMap{
-				"foo.x86_32": "1.0",
-				"bar.x86_32": "2.0",
-			},
-			rm: client.RepoMap{
-				"stable": client.Repo{
-					Priority: 500,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "2.0", Arch: "x86_32"}},
-						{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "2.0", Arch: "x86_32"}},
-					},
-				},
-			},
-			want: []goolib.PackageInfo{{Name: "foo", Arch: "x86_32", Ver: "2.0"}},
-		},
-		{
-			name: "rollback to earlier version",
-			pm: client.PackageMap{
-				"foo.x86_32": "2.0",
-				"bar.x86_32": "2.0",
-			},
-			rm: client.RepoMap{
-				"stable": client.Repo{
-					Priority: 500,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "2.0", Arch: "x86_32"}},
-						{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "2.0", Arch: "x86_32"}},
-					},
-				},
-				"rollback": client.Repo{
-					Priority: 1500,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
-					},
-				},
-			},
-			want: []goolib.PackageInfo{{Name: "foo", Arch: "x86_32", Ver: "1.0"}},
-		},
-		{
-			name: "no change if rollback version already installed",
-			pm: client.PackageMap{
-				"foo.x86_32": "1.0",
-			},
-			rm: client.RepoMap{
-				"stable": client.Repo{
-					Priority: 500,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "2.0", Arch: "x86_32"}},
-						{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "2.0", Arch: "x86_32"}},
-					},
-				},
-				"rollback": client.Repo{
-					Priority: 1500,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
-					},
-				},
-			},
-			want: nil,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			pi := updates(tc.pm, tc.rm)
-			if diff := cmp.Diff(tc.want, pi); diff != "" {
-				t.Errorf("update(%v, %v) got unexpected diff (-want +got):\n%v", tc.pm, tc.rm, diff)
-			}
-		})
 	}
 }
