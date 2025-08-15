@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 )
 
 func TestRotateLog(t *testing.T) {
