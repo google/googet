@@ -55,7 +55,7 @@ func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	exitCode := subcommands.ExitFailure
+	exitCode := subcommands.ExitSuccess
 	cache := settings.CacheDir()
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
