@@ -21,7 +21,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
@@ -50,59 +49,53 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	exitCode := subcommands.ExitSuccess
-
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Error(err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Error(err)
+		return subcommands.ExitFailure
 	}
+	status := subcommands.ExitSuccess
 	for _, arg := range flags.Args() {
-		pi := goolib.PkgNameSplit(arg)
-		ps, err := db.FetchPkg(pi.Name)
-		if err != nil {
-			logger.Fatal(err)
+		if err := cmd.removeOne(ctx, arg, downloader, db); err != nil {
+			logger.Errorf("error removing %v: %v", arg, err)
+			status = subcommands.ExitFailure
 		}
-		if ps.PackageSpec == nil {
-			logger.Errorf("Package %q not installed, cannot remove.", arg)
-			continue
-		}
-		pi = goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch}
-		deps, dl := remove.EnumerateDeps(pi, db)
-		if settings.Confirm {
-			var b bytes.Buffer
-			fmt.Fprintln(&b, "The following packages will be removed:")
-			for _, d := range dl {
-				fmt.Fprintln(&b, "  "+d)
-			}
-			fmt.Fprintf(&b, "Do you wish to remove %s and all dependencies?", pi.Name)
-			if !cli.Confirmation(b.String()) {
-				fmt.Println("canceling removal...")
-				continue
-			}
-		}
-		fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-
-		if err = remove.All(ctx, pi, deps, cmd.dbOnly, downloader, db); err != nil {
-			logger.Errorf("error removing %s, %v", arg, err)
-			exitCode = subcommands.ExitFailure
-			continue
-		}
-		logger.Infof("Removal of %q and dependant packages completed", pi.Name)
-		fmt.Printf("Removal of %s completed\n", pi.Name)
-		// TODO: Make sure we aren't removing packages that other packages depend on.
-		db.RemovePkg(pi.Name, pi.Arch)
-		for _, dep := range dl {
-			// We should have strings that look like "packagename.arch version"
-			d := strings.SplitN(dep, " ", 2)
-			di := goolib.PkgNameSplit(d[0])
-			db.RemovePkg(di.Name, di.Arch)
-		}
-
+		logger.Infof("Removal of %q and dependent packages completed", arg)
+		fmt.Printf("Removal of %s completed\n", arg)
 	}
-	return exitCode
+	return status
+}
+
+func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader *client.Downloader, db *googetdb.GooDB) error {
+	pi := goolib.PkgNameSplit(pkgName)
+	ps, err := db.FetchPkg(pi.Name)
+	if err != nil {
+		return err
+	}
+	if ps.PackageSpec == nil {
+		logger.Errorf("Package %q not installed, cannot remove.", pkgName)
+		return nil
+	}
+	pi = goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch}
+	deps, dl := remove.EnumerateDeps(pi, db)
+	if settings.Confirm {
+		var b bytes.Buffer
+		fmt.Fprintln(&b, "The following packages will be removed:")
+		for _, d := range dl {
+			fmt.Fprintln(&b, "  "+d)
+		}
+		fmt.Fprintf(&b, "Do you wish to remove %s and all dependencies?", pi.Name)
+		if !cli.Confirmation(b.String()) {
+			fmt.Println("canceling removal...")
+			return nil
+		}
+	}
+	fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
+	return remove.All(ctx, pi, deps, cmd.dbOnly, downloader, db)
 }

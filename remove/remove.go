@@ -168,7 +168,10 @@ func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string)
 // All removes a package and all dependent packages. Packages with no dependent packages
 // will be removed first.
 func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
-	for len(deps) > 1 {
+	// deps includes an entry for pi itself, but we don't need to iterate over it
+	// because pi is always uninstalled at the end.
+	delete(deps, pi.Name+"."+pi.Arch)
+	for len(deps) > 0 {
 		for dep := range deps {
 			if len(deps[dep]) == 0 {
 				di := goolib.PkgNameSplit(dep)
