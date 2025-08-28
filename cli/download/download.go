@@ -56,15 +56,18 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 	}
 	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize repos: %v", err)
+		return subcommands.ExitFailure
 	}
 	if repos == nil {
-		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
+		logger.Error("No repos defined, create a .repo file or pass using the -sources flag.")
+		return subcommands.ExitFailure
 	}
 
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize downloader: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
@@ -74,7 +77,8 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 	if dir == "" {
 		dir, err = os.Getwd()
 		if err != nil {
-			logger.Fatal(err)
+			logger.Errorf("Failed to get current directory and -download_dir not specified: %v", err)
+			return subcommands.ExitFailure
 		}
 	}
 

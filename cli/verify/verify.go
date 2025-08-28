@@ -59,12 +59,14 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize downloader: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	for _, arg := range flags.Args() {

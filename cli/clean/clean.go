@@ -50,18 +50,23 @@ func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if cmd.all {
 		fmt.Println("Removing all files and directories in cachedir.")
-		cleanDirectory(nil)
+		if err := cleanDirectory(nil); err != nil {
+			logger.Error(err)
+			return subcommands.ExitFailure
+		}
 		return subcommands.ExitSuccess
 	}
 
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	state, err := db.FetchPkgs("")
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed fetching installed packages: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	if cmd.packages != "" {
@@ -76,7 +81,10 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 	}
 
 	fmt.Println("Removing all files and directories in cachedir that don't correspond to a currently installed package.")
-	cleanUninstalled(state)
+	if err := cleanUninstalled(state); err != nil {
+		logger.Error(err)
+		return subcommands.ExitFailure
+	}
 	return subcommands.ExitSuccess
 }
 
@@ -95,10 +103,10 @@ func cleanInstalled(state client.GooGetState, included map[string]bool) {
 
 // cleanDirectory deletes all files in the cache directory except those whose path
 // appears in the excluded map.
-func cleanDirectory(excluded map[string]bool) {
+func cleanDirectory(excluded map[string]bool) error {
 	files, err := filepath.Glob(filepath.Join(settings.CacheDir(), "*"))
 	if err != nil {
-		logger.Fatal(err)
+		return err
 	}
 	for _, file := range files {
 		if excluded[file] {
@@ -108,14 +116,15 @@ func cleanDirectory(excluded map[string]bool) {
 			logger.Error(err)
 		}
 	}
+	return nil
 }
 
 // cleanUninstalled deletes all files in the cache directory except those that
 // correspond to an installed package in state.
-func cleanUninstalled(state client.GooGetState) {
+func cleanUninstalled(state client.GooGetState) error {
 	excluded := make(map[string]bool)
 	for _, pkg := range state {
 		excluded[pkg.LocalPath] = true
 	}
-	cleanDirectory(excluded)
+	return cleanDirectory(excluded)
 }

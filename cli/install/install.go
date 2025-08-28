@@ -69,13 +69,15 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize downloader: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	i := &installer{
@@ -93,10 +95,12 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 	if !allFileGoos(flag.Args()) {
 		repos, err := repo.BuildSources(cmd.sources)
 		if err != nil {
-			logger.Fatal(err)
+			logger.Errorf("Failed to initialize repos: %v", err)
+			return subcommands.ExitFailure
 		}
 		if repos == nil {
-			logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
+			logger.Error("No repos defined, create a .repo file or pass using the -sources flag.")
+			return subcommands.ExitFailure
 		}
 		i.repoMap = i.downloader.AvailableVersions(ctx, repos, i.cache, settings.CacheLife)
 	}

@@ -59,20 +59,24 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 	cache := settings.CacheDir()
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	state, err := db.FetchPkgs("")
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed fetching installed packages: %v", err)
+		return subcommands.ExitFailure
 	}
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize downloader: %v", err)
+		return subcommands.ExitFailure
 	}
 	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize repos: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)

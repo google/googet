@@ -55,13 +55,15 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	cache := settings.CacheDir()
 	state, err := db.FetchPkgs("")
 	if err != nil {
-		logger.Fatalf("Unable to fetch installed packges: %v", err)
+		logger.Errorf("Failed fetching installed packages: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	if len(state) == 0 {
@@ -71,15 +73,18 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 
 	repos, err := repo.BuildSources(cmd.sources)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize repos: %v", err)
+		return subcommands.ExitFailure
 	}
 	if repos == nil {
-		logger.Fatal("No repos defined, create a .repo file or pass using the -sources flag.")
+		logger.Error("No repos defined, create a .repo file or pass using the -sources flag.")
+		return subcommands.ExitFailure
 	}
 
 	downloader, err := client.NewDownloader(settings.ProxyServer)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to initialize downloader: %v", err)
+		return subcommands.ExitFailure
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)

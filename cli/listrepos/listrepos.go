@@ -41,7 +41,8 @@ func (cmd *listReposCmd) SetFlags(f *flag.FlagSet) {}
 func (cmd *listReposCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	rfs, err := repo.ConfigFiles(settings.RepoDir())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to read repo configs: %v", err)
+		return subcommands.ExitFailure
 	}
 	for _, rf := range rfs {
 		fmt.Println(rf.Path + ":")

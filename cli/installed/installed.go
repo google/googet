@@ -62,20 +62,23 @@ func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interf
 	var displayText string
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
-		logger.Fatal(err)
+		logger.Errorf("Failed to open database: %v", err)
+		return subcommands.ExitFailure
 	}
 	defer db.Close()
 	switch f.NArg() {
 	case 0:
 		state, err = db.FetchPkgs("")
 		if err != nil {
-			logger.Fatalf("Unable to fetch installed packages: %v", err)
+			logger.Errorf("Failed fetching installed packages: %v", err)
+			return subcommands.ExitFailure
 		}
 		displayText = "Installed packages:"
 	case 1:
 		state, err = db.FetchPkgs(f.Arg(0))
 		if err != nil {
-			logger.Fatalf("Unable to fetch installed packges: %v", err)
+			logger.Errorf("Failed fetching installed packages: %v", err)
+			return subcommands.ExitFailure
 		}
 		displayText = fmt.Sprintf("Installed packages matching %q:", f.Arg(0))
 		if len(state) == 0 {
@@ -140,7 +143,8 @@ func (cmd *installedCmd) formatSimple(state client.GooGetState, displayText stri
 func (cmd *installedCmd) formatJSON(state client.GooGetState) subcommands.ExitStatus {
 	marshaled, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		logger.Fatalf("marshaling error: %s", err)
+		logger.Errorf("marshaling error: %s", err)
+		return subcommands.ExitFailure
 	}
 	if string(marshaled) != "null" {
 		fmt.Println(string(marshaled))
