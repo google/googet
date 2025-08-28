@@ -22,9 +22,12 @@ import (
 )
 
 // genGoo creates a name.noarch.version.goo package file in directory dir for
-// the package with given pkgspec. Returns a RepoSpec for the goo package.
+// the package with given pkgspec. When installed name.goo writes a file having
+// same name as the package to the dst directory. The contents of this file is
+// "name.noarch.version". Returns a RepoSpec for the goo package.
 func genGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 	t.Helper()
+	ps.Files = map[string]string{ps.Name: filepath.Join(dst, ps.Name)}
 	b, err := json.Marshal(ps)
 	if err != nil {
 		t.Fatal(err)
@@ -38,12 +41,19 @@ func genGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 	gw := gzip.NewWriter(io.MultiWriter(h, f))
 	tw := tar.NewWriter(gw)
 	modTime := time.Now()
-	name := ps.Name + ".pkgspec"
-	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(b)), ModTime: modTime}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write(b); err != nil {
-		t.Fatal(err)
+	for _, x := range []struct {
+		name    string
+		content []byte
+	}{
+		{ps.Name, []byte(ps.String())},
+		{ps.Name + ".pkgspec", b},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: x.name, Mode: 0644, Size: int64(len(x.content)), ModTime: modTime}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(x.content); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tw.Close()
 	gw.Close()
@@ -119,6 +129,7 @@ func TestRemoveOne(t *testing.T) {
 			gooDir, logDir := t.TempDir(), t.TempDir()
 			for i, ps := range tc.state {
 				rs := genGoo(t, gooDir, logDir, *ps.PackageSpec)
+				ps.PackageSpec = rs.PackageSpec // fixes Files
 				ps.LocalPath = filepath.Join(gooDir, ps.PackageSpec.String()+".goo")
 				ps.Checksum = rs.Checksum
 				tc.state[i] = ps
