@@ -83,7 +83,10 @@ func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader 
 		return nil
 	}
 	pi = goolib.PackageInfo{Name: ps.PackageSpec.Name, Arch: ps.PackageSpec.Arch}
-	deps, dl := remove.EnumerateDeps(pi, db)
+	deps, dl, err := remove.EnumerateDeps(pi, db)
+	if err != nil {
+		return err
+	}
 	if settings.Confirm {
 		var b bytes.Buffer
 		fmt.Fprintln(&b, "The following packages will be removed:")

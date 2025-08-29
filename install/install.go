@@ -86,7 +86,10 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, dbOnly bool, d
 		if !ins {
 			continue
 		}
-		deps, _ := remove.EnumerateDeps(pi, db)
+		deps, _, err := remove.EnumerateDeps(pi, db)
+		if err != nil {
+			return err
+		}
 		logger.Infof("%s replaces %s, removing", ps, pi)
 		if err := remove.All(ctx, pi, deps, dbOnly, downloader, db); err != nil {
 			return err

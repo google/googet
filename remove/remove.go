@@ -146,11 +146,11 @@ func (deps DepMap) build(name, arch string, state client.GooGetState) {
 }
 
 // EnumerateDeps returns a DepMap and list of dependencies for a package.
-func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string) {
+func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string, error) {
 	dm := make(DepMap)
 	state, err := db.FetchPkgs("")
 	if err != nil {
-		logger.Fatalf("Error connecting to state database while building dependency map: %v", err)
+		return nil, nil, fmt.Errorf("Error connecting to state database while building dependency map: %v", err)
 	}
 	dm.build(pi.Name, pi.Arch, state)
 	var dl []string
@@ -158,11 +158,11 @@ func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string)
 		di := goolib.PkgNameSplit(k)
 		ps, err := state.GetPackageState(di)
 		if err != nil {
-			logger.Fatalf("error finding package in state file, even though the dependancy map was just built: %v", err)
+			return nil, nil, fmt.Errorf("error finding package in state file, even though the dependancy map was just built: %v", err)
 		}
 		dl = append(dl, k+" "+ps.PackageSpec.Version)
 	}
-	return dm, dl
+	return dm, dl, nil
 }
 
 // All removes a package and all dependent packages. Packages with no dependent packages
