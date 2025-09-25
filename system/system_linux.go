@@ -18,7 +18,9 @@ package system
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
@@ -84,4 +86,16 @@ func AppAssociation(ps *goolib.PkgSpec, installSource string) (string, string) {
 // IsAdmin returns nil and is a stub of the Windows implementation
 func IsAdmin() error {
 	return nil
+}
+
+// lock obtains a lock on a file.
+func lock(f *os.File) (func(), error) {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, err
+	}
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+		os.Remove(f.Name())
+	}, nil
 }

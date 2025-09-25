@@ -25,7 +25,9 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -421,10 +423,65 @@ func InstallableArchs() ([]string, error) {
 	}
 }
 
+var (
+	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
+	procLockFileEx   = kernel32.NewProc("LockFileEx")
+	procUnlockFileEx = kernel32.NewProc("UnlockFileEx")
+)
+
+const (
+	// https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-lockfileex
+	LOCKFILE_EXCLUSIVE_LOCK   = 2
+	LOCKFILE_FAIL_IMMEDIATELY = 1
+)
+
+func lockFileEx(hFile uintptr, dwFlags, nNumberOfBytesToLockLow, nNumberOfBytesToLockHigh uint32, lpOverlapped *syscall.Overlapped) (err error) {
+	ret, _, _ := procLockFileEx.Call(
+		hFile,
+		uintptr(dwFlags),
+		0,
+		uintptr(nNumberOfBytesToLockLow),
+		uintptr(nNumberOfBytesToLockHigh),
+		uintptr(unsafe.Pointer(lpOverlapped)),
+	)
+	// If the function succeeds, the return value is nonzero.
+	if ret == 0 {
+		return errors.New("LockFileEx unable to obtain lock")
+	}
+	return nil
+}
+
+func unlockFileEx(hFile uintptr, nNumberOfBytesToLockLow, nNumberOfBytesToLockHigh uint32, lpOverlapped *syscall.Overlapped) (err error) {
+	ret, _, _ := procUnlockFileEx.Call(
+		hFile,
+		0,
+		uintptr(nNumberOfBytesToLockLow),
+		uintptr(nNumberOfBytesToLockHigh),
+		uintptr(unsafe.Pointer(lpOverlapped)),
+	)
+	// If the function succeeds, the return value is nonzero.
+	if ret == 0 {
+		return errors.New("UnlockFileEx unable to unlock")
+	}
+	return nil
+}
+
 // IsAdmin checks to see if a user is admin and in an elevated prompt.
 func IsAdmin() error {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return fmt.Errorf("must be run in an elevated (administrative) session")
 	}
 	return nil
+}
+
+// lock obtains a lock on a file.
+func lock(f *os.File) (func(), error) {
+	if err := lockFileEx(f.Fd(), LOCKFILE_EXCLUSIVE_LOCK, 1, 0, &syscall.Overlapped{}); err != nil {
+		return nil, err
+	}
+	return func() {
+		unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{})
+		f.Close()
+		os.Remove(f.Name())
+	}, nil
 }

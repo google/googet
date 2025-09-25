@@ -17,12 +17,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/settings"
@@ -75,40 +72,6 @@ func rotateLog(logPath string, ls int64) error {
 		return fmt.Errorf("error moving log file: %v", err)
 	}
 	return nil
-}
-
-func obtainLock(lockFile string) (func(), error) {
-	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.OpenFile(lockFile, os.O_RDWR|os.O_CREATE, 0600)
-	if err != nil {
-		return nil, err
-	}
-
-	var cleanup func()
-	c := make(chan error)
-	go func() {
-		cleanup, err = lock(f)
-		c <- err
-	}()
-
-	ticker := time.NewTicker(5 * time.Second)
-	// 90% of all GooGet runs happen in < 60s, we wait 70s.
-	for i := 1; i < 15; i++ {
-		select {
-		case err := <-c:
-			if err != nil {
-				return nil, err
-			}
-			return cleanup, nil
-		case <-ticker.C:
-			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
-		}
-	}
-	return nil, errors.New("timed out waiting for lock")
 }
 
 func main() {
@@ -175,7 +138,7 @@ func run(ctx context.Context) int {
 		logger.Errorf("Failed admin check: %v", err)
 		return 1
 	}
-	cleanup, err := obtainLock(settings.LockFile())
+	cleanup, err := system.ObtainLock(settings.LockFile())
 	if err != nil {
 		logger.Errorf("Failed to obtain lock: %v", err)
 		return 1

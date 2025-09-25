@@ -14,15 +14,11 @@ limitations under the License.
 package main
 
 import (
-	"errors"
-	"io/fs"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/googet/v2/oswrap"
-	"github.com/google/googet/v2/settings"
 )
 
 func TestRotateLog(t *testing.T) {
@@ -76,21 +72,4 @@ func TestRotateLog(t *testing.T) {
 	}
 }
 
-func TestObtainLock(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
-	lockFile := settings.LockFile()
-	cleanup, err := obtainLock(lockFile)
-	if err != nil {
-		t.Fatalf("obtainLock: %v", err)
-	}
-	if cleanup == nil {
-		t.Fatalf("obtainLock got nil cleanup, want non-nil")
-	}
-	if _, err := os.Stat(lockFile); errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("os.Stat(%v): lockfile does not exist", lockFile)
-	}
-	cleanup()
-	if _, err := os.Stat(lockFile); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("os.Stat(%v): lockfile still exists after cleanup", lockFile)
-	}
-}
+
