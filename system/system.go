@@ -15,7 +15,11 @@ limitations under the License.
 package system
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -40,4 +44,39 @@ func Verify(dir string, ps *goolib.PkgSpec) error {
 		}
 	}()
 	return goolib.Exec(filepath.Join(dir, v.Path), v.Args, v.ExitCodes, out)
+}
+
+// ObtainLock obtains a lock on a file path.
+func ObtainLock(lockFile string) (func(), error) {
+	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(lockFile, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, err
+	}
+
+	var cleanup func()
+	c := make(chan error)
+	go func() {
+		cleanup, err = lock(f)
+		c <- err
+	}()
+
+	ticker := time.NewTicker(5 * time.Second)
+	// 90% of all GooGet runs happen in < 60s, we wait 70s.
+	for i := 1; i < 15; i++ {
+		select {
+		case err := <-c:
+			if err != nil {
+				return nil, err
+			}
+			return cleanup, nil
+		case <-ticker.C:
+			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
+		}
+	}
+	return nil, errors.New("timed out waiting for lock")
 }
