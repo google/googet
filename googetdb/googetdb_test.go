@@ -119,6 +119,32 @@ func TestWriteStateToDBPreservesExistingTimestamps(t *testing.T) {
 	}
 }
 
+func TestFetchPkgsReturnsDistinctEntriesForDifferentArches(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%v): %v", dbFile, err)
+	}
+	defer db.Close()
+
+	want := client.GooGetState{
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test-pkg", Arch: "amd64", Version: "1"}, InstallDate: 123456789},
+		client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "test-pkg", Arch: "i386", Version: "1"}, InstallDate: 123456789},
+	}
+	if err := db.WriteStateToDB(want); err != nil {
+		t.Fatalf("db.WriteStateToDB(%v): %v", want, err)
+	}
+
+	got, err := db.FetchPkgs("")
+	if err != nil {
+		t.Fatalf("db.FetchPkgs: %v", err)
+	}
+
+	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("FetchPkgs got unexpected diff (-want +got):\n%v", diff)
+	}
+}
+
 func TestCreateIfMissing(t *testing.T) {
 	for _, tc := range []struct {
 		desc      string             // description of test case

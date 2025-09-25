@@ -186,27 +186,26 @@ func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 // FetchPkgs exports all of the current packages in the googet database
 func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
-	pkgQuery := `Select pkg_name from InstalledPackages`
+	pkgQuery := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name`
 	if pkgName != "" {
-		pkgQuery = fmt.Sprintf(`Select pkg_name from InstalledPackages where pkg_name like "%s"`, pkgName)
+		pkgQuery = fmt.Sprintf(`SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE "%s" ORDER BY pkg_name`, pkgName)
 	}
-	pkgs, err := g.db.Query(pkgQuery)
+	rows, err := g.db.Query(pkgQuery)
 	if err != nil {
 		return nil, err
 	}
-	for pkgs.Next() {
-		var pkgName string
-		err = pkgs.Scan(&pkgName)
-		if err != nil {
+	defer rows.Close()
+	for rows.Next() {
+		var jsonState string
+		if err := rows.Scan(&jsonState); err != nil {
 			return nil, err
 		}
-		pkgState, err := g.FetchPkg(pkgName)
-		if err != nil {
+		var pkgState client.PackageState
+		if err := json.Unmarshal([]byte(jsonState), &pkgState); err != nil {
 			return nil, err
 		}
 		state = append(state, pkgState)
 	}
-
 	return state, nil
 }
 
