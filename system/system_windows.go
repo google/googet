@@ -29,13 +29,12 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/logger"
 	"github.com/yusufpapurcu/wmi"
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
