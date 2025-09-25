@@ -423,6 +423,14 @@ func InstallableArchs() ([]string, error) {
 	}
 }
 
+// IsAdmin checks to see if a user is admin and in an elevated prompt.
+func IsAdmin() error {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		return fmt.Errorf("must be run in an elevated (administrative) session")
+	}
+	return nil
+}
+
 var (
 	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
 	procLockFileEx   = kernel32.NewProc("LockFileEx")
@@ -462,14 +470,6 @@ func unlockFileEx(hFile uintptr, nNumberOfBytesToLockLow, nNumberOfBytesToLockHi
 	// If the function succeeds, the return value is nonzero.
 	if ret == 0 {
 		return errors.New("UnlockFileEx unable to unlock")
-	}
-	return nil
-}
-
-// IsAdmin checks to see if a user is admin and in an elevated prompt.
-func IsAdmin() error {
-	if !windows.GetCurrentProcessToken().IsElevated() {
-		return fmt.Errorf("must be run in an elevated (administrative) session")
 	}
 	return nil
 }
