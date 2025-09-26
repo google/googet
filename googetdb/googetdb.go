@@ -138,16 +138,17 @@ func (g *GooDB) AddPkg(pkgState client.PackageState) error {
 }
 
 // RemovePkg removes a single package from the googet database
-func (g *GooDB) RemovePkg(packageName, arch string) error {
-	removeQuery := fmt.Sprintf(`BEGIN;
-	DELETE FROM InstalledPackages where pkg_name = '%v' and pkg_arch = '%v';
-	COMMIT;`, packageName, arch)
-
-	_, err := g.db.ExecContext(context.Background(), removeQuery)
+func (g *GooDB) RemovePkg(pkgName, arch string) error {
+	tx, err := g.db.Begin()
 	if err != nil {
 		return err
 	}
-	return nil
+	query := `DELETE FROM InstalledPackages where pkg_name = ? and pkg_arch = ?`
+	if _, err := tx.ExecContext(context.Background(), query, pkgName, arch); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // FetchPkg exports a single package from the googet database
@@ -186,11 +187,13 @@ func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 // FetchPkgs exports all of the current packages in the googet database
 func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
-	pkgQuery := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name`
+	query := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name`
+	var args []any
 	if pkgName != "" {
-		pkgQuery = fmt.Sprintf(`SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE "%s" ORDER BY pkg_name`, pkgName)
+		query = `SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE ? ORDER BY pkg_name`
+		args = []any{pkgName}
 	}
-	rows, err := g.db.Query(pkgQuery)
+	rows, err := g.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
