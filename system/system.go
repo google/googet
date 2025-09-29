@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/google/googet/v2/goolib"
@@ -80,7 +79,7 @@ func killProcess(pid int) error {
 	if err != nil {
 		return err
 	}
-	return p.Signal(syscall.SIGKILL)
+	return p.Kill()
 }
 
 // handleStaleLock checks for stale lock files. If the lock file is not stale or
