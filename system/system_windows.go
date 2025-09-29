@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -430,6 +431,26 @@ func IsAdmin() error {
 	return nil
 }
 
+// isGooGetRunning checks if the process with the given PID is running and is a googet process.
+func isGooGetRunning(pid int) (bool, error) {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION|windows.PROCESS_VM_READ, false, uint32(pid))
+	if err != nil {
+		if errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return false, nil // Process not found.
+		}
+		return false, fmt.Errorf("failed to open process %d: %v", pid, err)
+	}
+	defer windows.CloseHandle(handle)
+
+	var buf [windows.MAX_PATH]uint16
+	err = windows.GetModuleFileNameEx(handle, 0, &buf[0], windows.MAX_PATH)
+	if err != nil {
+		return false, fmt.Errorf("failed to get module file name for PID %d: %v", pid, err)
+	}
+	exePath := windows.UTF16ToString(buf[:])
+	return strings.ToLower(filepath.Base(exePath)) == "googet.exe", nil
+}
+
 var (
 	kernel32         = windows.NewLazySystemDLL("kernel32.dll")
 	procLockFileEx   = kernel32.NewProc("LockFileEx")
@@ -473,14 +494,28 @@ func unlockFileEx(hFile uintptr, nNumberOfBytesToLockLow, nNumberOfBytesToLockHi
 	return nil
 }
 
-// lock obtains a lock on a file.
+// lock attempts to obtain an exclusive lock on the provided file.
 func lock(f *os.File) (func(), error) {
-	if err := lockFileEx(f.Fd(), LOCKFILE_EXCLUSIVE_LOCK, 1, 0, &syscall.Overlapped{}); err != nil {
+	// We lock a single byte of the file at a large offset that won't interfere
+	// with reads. This allows us to read the PID from a held lock file.
+	const lockOffset = 1<<32 - 1
+	offset := &syscall.Overlapped{Offset: lockOffset}
+	if err := lockFileEx(f.Fd(), LOCKFILE_EXCLUSIVE_LOCK, 1, 0, offset); err != nil {
 		return nil, err
 	}
-	return func() {
-		unlockFileEx(f.Fd(), 1, 0, &syscall.Overlapped{})
+	cleanup := func() {
+		unlockFileEx(f.Fd(), 1, 0, offset)
 		f.Close()
 		os.Remove(f.Name())
-	}, nil
+	}
+
+	if err := f.Truncate(0); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to truncate lockfile: %v", err)
+	}
+	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to write PID to lockfile: %v", err)
+	}
+	return cleanup, nil
 }

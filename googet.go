@@ -138,7 +138,7 @@ func run(ctx context.Context) int {
 		logger.Errorf("Failed admin check: %v", err)
 		return 1
 	}
-	cleanup, err := system.ObtainLock(settings.LockFile())
+	cleanup, err := system.ObtainLock(settings.LockFile(), settings.LockFileMaxAge)
 	if err != nil {
 		logger.Errorf("Failed to obtain lock: %v", err)
 		return 1

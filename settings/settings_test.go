@@ -16,7 +16,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nallowunsafeurl: true")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1h\nallowunsafeurl: true")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -37,6 +37,10 @@ func TestInitialize(t *testing.T) {
 
 	if got, want := settings.CacheLife, 10*time.Minute; got != want {
 		t.Errorf("settings.CacheLife got: %v, want: %v", got, want)
+	}
+
+	if got, want := settings.LockFileMaxAge, 1*time.Hour; got != want {
+		t.Errorf("settings.LockfileMaxAge got: %v, want: %v", got, want)
 	}
 
 	if got, want := settings.AllowUnsafeURL, true; got != want {

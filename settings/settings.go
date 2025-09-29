@@ -20,6 +20,8 @@ var (
 	// CacheLife is how long cached indexes are considered valid.
 	// The default value can be overridden by googet.conf.
 	CacheLife = 3 * time.Minute
+	// LockFileMaxAge is the maximum age of a lock file before it's considered stale.
+	LockFileMaxAge = 24 * time.Hour
 	// Archs is the list of valid arches for the system.
 	// Taken from googet.conf, or else derived from runtime.GOARCH.
 	Archs []string
@@ -76,6 +78,7 @@ func RepoDir() string {
 type conf struct {
 	Archs          []string
 	CacheLife      string
+	LockFileMaxAge string
 	ProxyServer    string
 	AllowUnsafeURL bool
 }
@@ -114,6 +117,13 @@ func readConf(filename string) {
 
 	if gc.CacheLife != "" {
 		CacheLife, err = time.ParseDuration(gc.CacheLife)
+		if err != nil {
+			logger.Error(err)
+		}
+	}
+
+	if gc.LockFileMaxAge != "" {
+		LockFileMaxAge, err = time.ParseDuration(gc.LockFileMaxAge)
 		if err != nil {
 			logger.Error(err)
 		}

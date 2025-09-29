@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/google/googet/v2/goolib"
@@ -46,12 +48,91 @@ func Verify(dir string, ps *goolib.PkgSpec) error {
 	return goolib.Exec(filepath.Join(dir, v.Path), v.Args, v.ExitCodes, out)
 }
 
-// ObtainLock obtains a lock on a file path.
-func ObtainLock(lockFile string) (func(), error) {
-	err := os.MkdirAll(filepath.Dir(lockFile), 0755)
+// isLockFileStale checks if the lock file is older than maxAge.
+// It returns false if the file does not exist.
+func isLockFileStale(lockFile string, maxAge time.Duration) (bool, error) {
+	fi, err := os.Stat(lockFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return time.Since(fi.ModTime()) > maxAge, nil
+}
+
+// readPID reads the PID from the lock file.
+func readPID(lockFile string) (int, error) {
+	data, err := os.ReadFile(lockFile)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(string(data))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse PID from lockfile: %v", err)
+	}
+	return pid, nil
+}
+
+// killProcess kills the process with the given PID.
+func killProcess(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(syscall.SIGKILL)
+}
+
+// handleStaleLock checks for stale lock files. If the lock file is not stale or
+// we can't read a valid PID from the lock file, then do nothing. If the PID in
+// the lock file represents a still-running GooGet process, then kill the
+// running GooGet. Remove the stale lock file in any case.
+func handleStaleLock(lockFile string, maxAge time.Duration) {
+	if stale, err := isLockFileStale(lockFile, maxAge); err != nil {
+		logger.Errorf("Failed to check lock file staleness: %v", err)
+		return
+	} else if !stale {
+		return
+	}
+
+	pid, err := readPID(lockFile)
+	if err != nil {
+		logger.Errorf("Failed to read PID from lock file: %v", err)
+		return
+	}
+
+	if running, err := isGooGetRunning(pid); err != nil {
+		logger.Errorf("Failed to check if PID %d is running: %v", pid, err)
+	} else if running {
+		fmt.Printf("GooGet lock held by stale process with PID %d, attempting to kill.\n", pid)
+		if err := killProcess(pid); err != nil {
+			fmt.Printf("Failed to kill process %d: %v\n", pid, err)
+			return
+		}
+		fmt.Printf("Killed stale process with PID %d.\n", pid)
+	}
+
+	fmt.Println("Removing stale lock file.")
+	var removeErr error
+	// Retry removal since the OS might take a moment to release the file handle
+	// after the process is killed.
+	for i := 0; i < 5; i++ {
+		removeErr = os.Remove(lockFile)
+		if removeErr == nil || os.IsNotExist(removeErr) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	logger.Errorf("Failed to remove stale lock file: %v", removeErr)
+}
+
+// ObtainLock attempts to obtain an exclusive lock on the provided file.
+func ObtainLock(lockFile string, maxAge time.Duration) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(lockFile), 0755); err != nil {
 		return nil, err
 	}
+
+	handleStaleLock(lockFile, maxAge)
 
 	f, err := os.OpenFile(lockFile, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
@@ -66,17 +147,21 @@ func ObtainLock(lockFile string) (func(), error) {
 	}()
 
 	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	// 90% of all GooGet runs happen in < 60s, we wait 70s.
-	for i := 1; i < 15; i++ {
+	timeout := time.After(70 * time.Second)
+
+	for {
 		select {
 		case err := <-c:
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to obtain lock: %v", err)
 			}
 			return cleanup, nil
 		case <-ticker.C:
-			fmt.Fprintln(os.Stdout, "GooGet lock already held, waiting...")
+			fmt.Println("GooGet lock already held, waiting...")
+		case <-timeout:
+			return nil, errors.New("timed out waiting for lock after 70 seconds")
 		}
 	}
-	return nil, errors.New("timed out waiting for lock")
 }

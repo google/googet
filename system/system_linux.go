@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"github.com/google/googet/v2/client"
@@ -88,14 +89,44 @@ func IsAdmin() error {
 	return nil
 }
 
-// lock obtains a lock on a file.
+// isGooGetRunning checks if the process with the given PID is running and is a googet process.
+func isGooGetRunning(pid int) (bool, error) {
+	// On Linux, we can check /proc/<pid>/exe
+	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // Process does not exist
+		}
+		return false, err
+	}
+	// Check if the executable path contains "googet"
+	return filepath.Base(exe) == "googet", nil
+}
+
+// lock attempts to obtain an exclusive lock on the provided file.
 func lock(f *os.File) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return nil, err
 	}
-	return func() {
+	cleanup := func() {
 		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
 		os.Remove(f.Name())
-	}, nil
+	}
+
+	if err := f.Truncate(0); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to truncate lockfile: %v", err)
+	}
+	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to write PID to lockfile: %v", err)
+	}
+
+	// Downgrade to shared lock so that other processes can read the PID.
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to downgrade to shared lock: %v", err)
+	}
+	return cleanup, nil
 }
