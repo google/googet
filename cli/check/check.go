@@ -41,6 +41,7 @@ func init() { subcommands.Register(&checkCmd{}, "package query") }
 type checkCmd struct {
 	sources string
 	dryRun  bool
+	dbOnly  bool
 }
 
 func (*checkCmd) Name() string     { return "check" }
@@ -51,6 +52,7 @@ func (*checkCmd) Usage() string {
 
 func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "Don't make any changes to the DB.")
+	f.BoolVar(&cmd.dbOnly, "db_only", true, "Only add package information to database. Do not reinstall packages.")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
@@ -103,7 +105,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 					Arch: p.PackageSpec.Arch,
 					Ver:  p.PackageSpec.Version,
 				}
-				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, true, downloader, db); err != nil {
+				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, cmd.dbOnly, downloader, db); err != nil {
 					logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 					exitCode = subcommands.ExitFailure
 					continue
