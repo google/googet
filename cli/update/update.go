@@ -87,7 +87,11 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		return subcommands.ExitFailure
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
+	rm, err := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
+	if err != nil {
+		logger.Errorf("Failed to download repos: %v", err)
+		return subcommands.ExitFailure
+	}
 	ud := updates(state.PackageMap(), rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")

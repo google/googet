@@ -102,7 +102,10 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 			logger.Error("No repos defined, create a .repo file or pass using the -sources flag.")
 			return subcommands.ExitFailure
 		}
-		i.repoMap = i.downloader.AvailableVersions(ctx, repos, i.cache, settings.CacheLife)
+		if i.repoMap, err = i.downloader.AvailableVersions(ctx, repos, i.cache, settings.CacheLife); err != nil {
+			logger.Errorf("Failed to download repos: %v", err)
+			return subcommands.ExitFailure
+		}
 	}
 
 	var errs error
