@@ -30,7 +30,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/storage"
-	humanize "github.com/dustin/go-humanize"
+	"github.com/dustin/go-humanize"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -76,11 +76,11 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	// Check that the server supports ranged requests and that the
 	// existing file is smaller than what we want to download.
 	logger.Infof("existing file size: %d", size)
-	ok, length, err := downloader.CanResume(url)
+	ok, length, err := downloader.CanResume(ctx, url)
 	if err != nil {
 		logger.Errorf("CanResume: %v", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := downloader.NewRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
