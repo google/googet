@@ -202,9 +202,35 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 	return d.unmarshalRepoPackagesHTTP(ctx, p, cf)
 }
 
+// NewRequest returns an http.Request, adding auth headers if the URL is
+// prefixed with "oauth-".
+func (d *Downloader) NewRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	u, useOauth := strings.CutPrefix(url, "oauth-")
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	if err != nil {
+		return nil, err
+	}
+	if useOauth {
+		creds, err := google.FindDefaultCredentials(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain creds: %v", err)
+		}
+		token, err := creds.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to obtain access token: %v", err)
+		}
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
+	}
+	return req, nil
+}
+
 // CanResume returns true if we can resume downloading the specified url.
-func (d *Downloader) CanResume(url string) (bool, int64, error) {
-	resp, err := d.HTTPClient.Head(url)
+func (d *Downloader) CanResume(ctx context.Context, url string) (bool, int64, error) {
+	req, err := d.NewRequest(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return false, 0, err
+	}
+	resp, err := d.HTTPClient.Do(req)
 	if err != nil {
 		return false, 0, err
 	}
@@ -220,22 +246,9 @@ func (d *Downloader) CanResume(url string) (bool, int64, error) {
 
 // Get gets a url using an optional proxy server, retrying once on any error.
 func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, error) {
-	useOauth := strings.HasPrefix(path, "oauth-")
-	path = strings.TrimPrefix(path, "oauth-")
-	req, err := http.NewRequest(http.MethodGet, path, nil)
+	req, err := d.NewRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
-	}
-	if useOauth {
-		creds, err := google.FindDefaultCredentials(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain creds: %v", err)
-		}
-		token, err := creds.TokenSource.Token()
-		if err != nil {
-			return nil, fmt.Errorf("failed to obtain access token: %v", err)
-		}
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token.AccessToken))
 	}
 	resp, err := d.HTTPClient.Do(req)
 	// We retry on any error once as this mitigates some
