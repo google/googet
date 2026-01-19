@@ -116,16 +116,20 @@ func readConf(filename string) {
 	}
 
 	if gc.CacheLife != "" {
-		CacheLife, err = time.ParseDuration(gc.CacheLife)
+		cl, err := time.ParseDuration(gc.CacheLife)
 		if err != nil {
 			logger.Error(err)
+		} else {
+			CacheLife = cl
 		}
 	}
 
 	if gc.LockFileMaxAge != "" {
-		LockFileMaxAge, err = time.ParseDuration(gc.LockFileMaxAge)
+		lfma, err := time.ParseDuration(gc.LockFileMaxAge)
 		if err != nil {
 			logger.Error(err)
+		} else {
+			LockFileMaxAge = lfma
 		}
 	}
 
