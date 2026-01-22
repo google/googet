@@ -35,6 +35,7 @@ import (
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
+	"go.uber.org/multierr"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 )
@@ -150,12 +151,13 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 }
 
 // AvailableVersions builds a RepoMap from a list of sources.
-func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cacheDir string, cacheLife time.Duration) RepoMap {
+func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]priority.Value, cacheDir string, cacheLife time.Duration) (RepoMap, error) {
 	rm := make(RepoMap)
+	var errs error = nil
 	for r, pri := range srcs {
 		rf, err := d.unmarshalRepoPackages(ctx, r, cacheDir, cacheLife)
 		if err != nil {
-			logger.Errorf("error reading repo %q: %v", r, err)
+			errs = multierr.Append(errs, fmt.Errorf("error reading repo %q: %w", r, err))
 			continue
 		}
 		rm[r] = Repo{
@@ -163,7 +165,10 @@ func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]prio
 			Packages: rf,
 		}
 	}
-	return rm
+	if errs != nil {
+		return nil, errs
+	}
+	return rm, nil
 }
 
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents

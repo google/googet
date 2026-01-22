@@ -87,7 +87,11 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitFailure
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	rm, err := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	if err != nil {
+		logger.Errorf("Failed to download repos: %v", err)
+		return subcommands.ExitFailure
+	}
 	v, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
 	if err != nil {
 		logger.Errorf("Failed to find package: %v", err)

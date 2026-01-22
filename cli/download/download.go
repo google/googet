@@ -70,7 +70,11 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 		return subcommands.ExitFailure
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	rm, err := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	if err != nil {
+		logger.Errorf("Failed to download repos: %v", err)
+		return subcommands.ExitFailure
+	}
 	exitCode := subcommands.ExitSuccess
 
 	dir := cmd.downloadDir

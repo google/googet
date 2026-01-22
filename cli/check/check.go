@@ -81,7 +81,11 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 		return subcommands.ExitFailure
 	}
 
-	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
+	rm, err := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
+	if err != nil {
+		logger.Errorf("Failed to download repos: %v", err)
+		return subcommands.ExitFailure
+	}
 	unmanaged := make(map[string]string)
 	installed := make(map[string]struct{})
 	for _, ps := range state {

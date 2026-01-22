@@ -86,7 +86,11 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 	}
 
 	m := make(map[string][]string)
-	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	rm, err := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
+	if err != nil {
+		logger.Errorf("Failed to download repos: %v", err)
+		return subcommands.ExitFailure
+	}
 	for u, r := range rm {
 		for _, p := range r.Packages {
 			m[u] = append(m[u], p.PackageSpec.Name+"."+p.PackageSpec.Arch+"."+p.PackageSpec.Version)
