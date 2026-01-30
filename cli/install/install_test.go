@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"context"
+	"flag"
 	"io"
 	"maps"
 	"net/url"
