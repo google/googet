@@ -12,16 +12,15 @@ import (
 	"strings"
 	"testing"
 
-	"google3/base/go/flag"
-	"google3/third_party/golang/cmp/cmp"
-	"google3/third_party/golang/cmp/cmpopts/cmpopts"
-	"google3/third_party/golang/googet/client/client"
-	"google3/third_party/golang/googet/googetdb/googetdb"
-	"google3/third_party/golang/googet/goolib/goolib"
-	"google3/third_party/golang/googet/priority/priority"
-	"google3/third_party/golang/googet/settings/settings"
-	"google3/third_party/golang/googet/testutil/testutil"
-	"google3/third_party/golang/logger/logger"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/googetdb"
+	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/settings"
+	"github.com/google/googet/v2/testutil"
+	"github.com/google/logger"
 )
 
 // checkInstalled returns true if the test package identified by ps was
