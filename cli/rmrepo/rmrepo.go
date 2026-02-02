@@ -26,19 +26,25 @@ import (
 	"github.com/google/subcommands"
 )
 
+
 func init() { subcommands.Register(&rmRepoCmd{}, "repository management") }
 
-type rmRepoCmd struct{}
+type rmRepoCmd struct {
+	dryRun bool
+}
 
 func (*rmRepoCmd) Name() string     { return "rmrepo" }
 func (*rmRepoCmd) Synopsis() string { return "remove repository" }
 func (*rmRepoCmd) Usage() string {
-	return fmt.Sprintf(`%s rmrepo <name>:
+	return fmt.Sprintf(`%s rmrepo [-dry_run] <name>:
 	Removes the named repository from GooGet's repository list.
+	The -dry_run flag will simulate removing the repo without making changes.
 `, filepath.Base(os.Args[0]))
 }
 
-func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {}
+func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {
+	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate removing the repo without making changes")
+}
 
 func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if got, want := f.NArg(), 1; got != want {
@@ -48,6 +54,12 @@ func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface
 	}
 
 	name := f.Arg(0)
+
+	if cmd.dryRun {
+		fmt.Printf("Dry run: Would remove repo entries named %q from in %q.\n", name, settings.RepoDir())
+		return subcommands.ExitSuccess
+	}
+
 	changed, err := repo.RemoveEntryFromFiles(name, settings.RepoDir())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to remove %q entries: %v\n", name, err)
