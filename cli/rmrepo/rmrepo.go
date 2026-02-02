@@ -26,7 +26,6 @@ import (
 	"github.com/google/subcommands"
 )
 
-
 func init() { subcommands.Register(&rmRepoCmd{}, "repository management") }
 
 type rmRepoCmd struct {
