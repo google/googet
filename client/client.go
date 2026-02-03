@@ -430,6 +430,130 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, 
 	return "", "", "", fmt.Errorf("no versions of package %s found in any repo", name)
 }
 
+// FindSatisfyingRepoLatest returns the latest version of a package that satisfies the package info,
+// along with its repo. It checks both direct name matches and "Provides" entries.
+// The archs are searched in order.
+func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.PkgSpec, string, error) {
+	name := pi.Name
+	if pi.Arch != "" {
+		archs = []string{pi.Arch}
+		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
+	}
+
+	for _, a := range archs {
+		psmDirect := make(map[string][]*goolib.PkgSpec)
+		psmProvides := make(map[string][]*goolib.PkgSpec)
+		
+		for u, r := range rm {
+			for _, p := range r.Packages {
+				ps := p.PackageSpec
+				if ps.Arch != a {
+					continue
+				}
+
+				// Check exact match
+				if ps.Name == pi.Name {
+					if satisfiesVersion(ps.Version, pi.Ver) {
+						psmDirect[u] = append(psmDirect[u], ps)
+					}
+					// If exact match, we don't check provides for THIS package.
+					continue
+				}
+
+				// Check provides
+				for _, prov := range ps.Provides {
+					if satisfiesProvider(prov, pi.Name, pi.Ver) {
+						psmProvides[u] = append(psmProvides[u], ps)
+						break
+					}
+				}
+			}
+		}
+
+		// If direct matches exist, use ONLY them.
+		if len(psmDirect) > 0 {
+			pkg, repo := pickBest(psmDirect, rm)
+			if pkg != nil {
+				return pkg, repo, nil
+			}
+		}
+
+		// If no direct matches, check providers.
+		// Note: This matches Arch behavior (prefer real package).
+		if len(psmProvides) > 0 {
+			pkg, repo := pickBest(psmProvides, rm)
+			if pkg != nil {
+				return pkg, repo, nil
+			}
+		}
+	}
+	
+	return nil, "", fmt.Errorf("no package found satisfying %s in any repo", name)
+}
+
+func satisfiesVersion(pkgVer, reqVer string) bool {
+	if reqVer == "" {
+		return true
+	}
+	c, err := goolib.Compare(pkgVer, reqVer)
+	if err != nil {
+		logger.Errorf("Error comparing versions %s vs %s: %v", pkgVer, reqVer, err)
+		return false
+	}
+	return c >= 0
+}
+
+func satisfiesProvider(prov, reqName, reqVer string) bool {
+	pName := prov
+	pVer := ""
+	if i := strings.Index(prov, "="); i != -1 {
+		pName = prov[:i]
+		pVer = prov[i+1:]
+	}
+	
+	if pName != reqName {
+		return false
+	}
+	
+	if reqVer == "" {
+		return true
+	}
+	
+	// If provider is unversioned, it satisfies dependency? 
+	// Arch says yes.
+	if pVer == "" {
+		return true
+	}
+	
+	return satisfiesVersion(pVer, reqVer)
+}
+
+func pickBest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (*goolib.PkgSpec, string) {
+	var bestPkg *goolib.PkgSpec
+	var repoURL string
+	var pri priority.Value
+
+	for u, pl := range psm {
+		for _, pkg := range pl {
+			q := rm[u].Priority
+			c := 1
+			if bestPkg != nil {
+				var err error
+				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, bestPkg.Version); err != nil {
+					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, bestPkg.Version, err)
+					continue
+				}
+			}
+			if c == 1 {
+				repoURL = u
+				bestPkg = pkg
+				pri = q
+			}
+		}
+	}
+	return bestPkg, repoURL
+}
+
 // WhatRepo returns what repo a package is in.
 // Name, Arch, and Ver fields of PackageInfo must be provided.
 func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {

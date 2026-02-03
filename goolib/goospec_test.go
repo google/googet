@@ -454,6 +454,7 @@ func TestMarshal(t *testing.T) {
 			Source:       "github",
 			Replaces:     []string{"foo"},
 			Conflicts:    []string{"bar"},
+			Provides:     []string{"baz"},
 			Install: ExecFile{
 				Path: "install.ps1",
 			},
@@ -478,6 +479,9 @@ func TestMarshal(t *testing.T) {
     ],
     "Conflicts": [
       "bar"
+    ],
+    "Provides": [
+      "baz"
     ],
     "Install": {
       "Path": "install.ps1"

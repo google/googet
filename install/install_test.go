@@ -28,6 +28,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 )
@@ -286,5 +287,223 @@ func TestResolveDst(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("resolveDst returned %s, want %s", got, tt.want)
 		}
+	}
+}
+
+func TestIsSatisfied(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	state := []client.PackageState{
+		{
+			PackageSpec: &goolib.PkgSpec{
+				Name:     "provider_pkg",
+				Version:  "1.0.0@1",
+				Arch:     "noarch",
+				Provides: []string{"libfoo", "libbar=1.5.0"},
+			},
+		},
+		{
+			PackageSpec: &goolib.PkgSpec{
+				Name:    "real_pkg",
+				Version: "2.0.0@1",
+				Arch:    "noarch",
+			},
+		},
+	}
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		pi   goolib.PackageInfo
+		want bool
+	}{
+		{
+			name: "Directly installed package",
+			pi:   goolib.PackageInfo{Name: "real_pkg", Arch: "noarch", Ver: "1.0.0"},
+			want: true,
+		},
+		{
+			name: "Provided package without version",
+			pi:   goolib.PackageInfo{Name: "libfoo", Arch: "noarch", Ver: "1.0.0"},
+			want: true,
+		},
+		{
+			name: "Provided package with satisfied version",
+			pi:   goolib.PackageInfo{Name: "libbar", Arch: "noarch", Ver: "1.0.0"},
+			want: true,
+		},
+		{
+			name: "Provided package with unsatisfied version",
+			pi:   goolib.PackageInfo{Name: "libbar", Arch: "noarch", Ver: "2.0.0"},
+			want: false,
+		},
+		{
+			name: "Not installed and not provided",
+			pi:   goolib.PackageInfo{Name: "missing_pkg", Arch: "noarch", Ver: "1.0.0"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := isSatisfied(tt.pi, db)
+			if err != nil {
+				t.Fatalf("isSatisfied error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("isSatisfied(%v) = %v, want %v", tt.pi, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveConflicts_Provides(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	state := []client.PackageState{
+		{
+			PackageSpec: &goolib.PkgSpec{
+				Name:     "provider_pkg",
+				Version:  "1.0.0@1",
+				Arch:     "noarch",
+				Provides: []string{"libconflict"},
+			},
+		},
+	}
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+
+	ps := &goolib.PkgSpec{
+		Name:      "conflicting_pkg",
+		Version:   "1.0.0@1",
+		Arch:      "noarch",
+		Conflicts: []string{"libconflict"},
+	}
+
+	err = resolveConflicts(ps, db)
+	if err == nil {
+		t.Error("resolveConflicts expected error, got nil")
+	} else {
+		expectedErr := "cannot install, conflict with installed package or provider: libconflict"
+		if err.Error() != expectedErr {
+			t.Errorf("resolveConflicts error = %q, want %q", err.Error(), expectedErr)
+		}
+	}
+}
+
+func TestFromRepo_SatisfiedByProvider(t *testing.T) {
+	// This is a more integration-level test to ensure installDeps uses isSatisfied.
+	// We mock the DB state and call installDeps directly or via a wrapper if accessible.
+	// installDeps is unexported, but we are in package install.
+	
+	settings.Initialize(t.TempDir(), false)
+	state := []client.PackageState{
+		{
+			PackageSpec: &goolib.PkgSpec{
+				Name:     "provider_pkg",
+				Version:  "1.0.0@1",
+				Arch:     "noarch",
+				Provides: []string{"libvirt"},
+			},
+		},
+	}
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+
+	// Package wanting libvirt
+	ps := &goolib.PkgSpec{
+		Name:            "consumer_pkg",
+		Version:         "1.0.0@1",
+		Arch:            "noarch",
+		PkgDependencies: map[string]string{"libvirt": "1.0.0"},
+	}
+
+	// We pass empty repo map and downloader because we expect it NOT to try downloading deps
+	// since they are satisfied.
+	err = installDeps(nil, ps, "", nil, nil, false, nil, db)
+	if err != nil {
+		t.Errorf("installDeps failed: %v", err)
+	}
+}
+
+func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Repo state with provider
+	rm := client.RepoMap{
+		"repo1": client.Repo{
+			Priority: priority.Value(500),
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:     "provider_pkg",
+						Version:  "1.0.0@1",
+						Arch:     "noarch",
+						Provides: []string{"libvirt"},
+					},
+				},
+			},
+		},
+	}
+
+	// Package wanting libvirt
+	ps := &goolib.PkgSpec{
+		Name:            "consumer_pkg",
+		Version:         "1.0.0@1",
+		Arch:            "noarch",
+		PkgDependencies: map[string]string{"libvirt": "1.0.0"},
+	}
+
+	// We pass a valid rm but nil downloader. 
+	// installDeps -> FindSatisfyingRepoLatest (finds provider_pkg) -> FromRepo (provider_pkg) -> download...
+	// Since downloader is nil, FromRepo might fail or panic if we go deep.
+	// But FromRepo calls client.FindRepoSpec first.
+	// We want to verify it TRIES to install provider_pkg.
+	// The best way is to catch the error and check if it's related to downloading "provider_pkg".
+	// Or define a mock downloader if possible? client.Downloader is a struct, hard to mock methods.
+	// However, FromRepo fails if downloader is nil probably.
+	
+	// We can't easily mock downloader without changing code significantly.
+	// But we can verify it fails at download stage, NOT at resolution stage.
+	
+	downloader, _ := client.NewDownloader("")
+	err = installDeps(nil, ps, "", rm, []string{"noarch"}, false, downloader, db)
+	
+	// We expect an error because download will fail (invalid URL/Source).
+	if err == nil {
+		t.Error("installDeps expected error, got nil")
+	} else {
+		// If resolution failed, it would say "cannot resolve dependency".
+		// If resolution succeeded, it proceeds to download and fails there.
+		// "unsupported protocol scheme" or "client.Get" error etc.
+		// Or "no source specified"
+		errMsg := err.Error()
+		if errMsg == "cannot resolve dependency, libvirt.noarch version 1.0.0 or greater not installed and not available in any repo" {
+			t.Errorf("installDeps failed to resolve provider: %v", err)
+		}
+		// Any other error means it TRIED to install it (provider found).
+		t.Logf("Got expected error (confirming resolution success): %v", err)
 	}
 }
