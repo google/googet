@@ -351,9 +351,12 @@ func TestInstallDryRun(t *testing.T) {
 			}
 
 			// Verify DB state hasn't changed
-			finalState, _ := db.FetchPkgs("")
+			finalState, err := db.FetchPkgs("")
+			if err != nil {
+				t.Errorf("db.FetchPkgs: %v", err)
+			}
 			ignoreInstallDate := cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")
-			if diff := cmp.Diff(finalState, initialState, cmpopts.SortSlices(packageStateLess), cmpopts.EquateEmpty(), ignoreInstallDate); diff != "" {
+			if diff := cmp.Diff(finalState, initialState, cmpopts.EquateEmpty(), ignoreInstallDate); diff != "" {
 				t.Errorf("DB state changed unexpectedly in dry_run (-got +want):\n%s", diff)
 			}
 		})
