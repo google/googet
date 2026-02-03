@@ -90,13 +90,9 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
-	ud := updates(state.PackageMap(), rm, cmd.dryRun)
+	ud := updates(state.PackageMap(), rm)
 	if ud == nil {
-		if cmd.dryRun {
-			fmt.Println("Dry run: No updates available for any installed packages.")
-		} else {
-			fmt.Println("No updates available for any installed packages.")
-		}
+		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
 	}
 
@@ -128,12 +124,8 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	return exitCode
 }
 
-func updates(pm client.PackageMap, rm client.RepoMap, dryRun bool) []goolib.PackageInfo {
-	if dryRun {
-		fmt.Println("Dry run: Searching for available updates...")
-	} else {
-		fmt.Println("Searching for available updates...")
-	}
+func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
+	fmt.Println("Searching for available updates...")
 	var ud []goolib.PackageInfo
 	for p, ver := range pm {
 		pi := goolib.PkgNameSplit(p)

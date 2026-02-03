@@ -30,12 +30,10 @@ func captureStdout(f func()) string {
 
 func TestUpdates(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		pm       client.PackageMap
-		rm       client.RepoMap
-		dryRun   bool
-		want     []goolib.PackageInfo
-		wantStrs []string
+		name string
+		pm   client.PackageMap
+		rm   client.RepoMap
+		want []goolib.PackageInfo
 	}{
 		{
 			name: "upgrade to later version",
@@ -100,25 +98,7 @@ func TestUpdates(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "dry run with updates",
-			pm:   client.PackageMap{"foo.x86_32": "1.0"},
-			rm: client.RepoMap{
-				"stable": client.Repo{
-					Priority: priority.Default,
-					Packages: []goolib.RepoSpec{
-						{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "2.0", Arch: "x86_32"}},
-					},
-				},
-			},
-			dryRun: true,
-			want:   []goolib.PackageInfo{{Name: "foo", Arch: "x86_32", Ver: "2.0"}},
-			wantStrs: []string{
-				"Dry run: Searching for available updates...",
-				"  foo.x86_32, 1.0 --> 2.0 from stable",
-			},
-		},
-		{
-			name: "dry run no updates",
+			name: "no updates available",
 			pm:   client.PackageMap{"foo.x86_32": "1.0"},
 			rm: client.RepoMap{
 				"stable": client.Repo{
@@ -128,11 +108,7 @@ func TestUpdates(t *testing.T) {
 					},
 				},
 			},
-			dryRun: true,
-			want:   nil,
-			wantStrs: []string{
-				"Dry run: Searching for available updates...",
-			},
+			want: nil,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,18 +116,12 @@ func TestUpdates(t *testing.T) {
 			settings.Archs = []string{"x86_32", "noarch"}
 
 			var pi []goolib.PackageInfo
-			output := captureStdout(func() {
-				pi = updates(tc.pm, tc.rm, tc.dryRun)
+			captureStdout(func() {
+				pi = updates(tc.pm, tc.rm)
 			})
 
 			if diff := cmp.Diff(pi, tc.want); diff != "" {
-				t.Errorf("updates(%v, %v, %v) got unexpected diff (-got +want):\n%v", tc.pm, tc.rm, tc.dryRun, diff)
-			}
-
-			for _, want := range tc.wantStrs {
-				if !strings.Contains(output, want) {
-					t.Errorf("Expected stdout to contain %q, got:\n%s", want, output)
-				}
+				t.Errorf("updates(%v, %v) got unexpected diff (-got +want):\n%v", tc.pm, tc.rm, diff)
 			}
 		})
 	}
