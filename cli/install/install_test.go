@@ -238,10 +238,6 @@ func captureStdout(f func()) string {
 	return buf.String()
 }
 
-func packageStateLess(a, b client.PackageState) bool {
-	return a.PackageSpec.String() < b.PackageSpec.String()
-}
-
 func TestInstallDryRun(t *testing.T) {
 	logger.Init("GooGet", true, false, io.Discard)
 	ctx := context.Background()
