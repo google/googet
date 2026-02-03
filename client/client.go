@@ -443,7 +443,7 @@ func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string)
 	for _, a := range archs {
 		psmDirect := make(map[string][]*goolib.PkgSpec)
 		psmProvides := make(map[string][]*goolib.PkgSpec)
-		
+
 		for u, r := range rm {
 			for _, p := range r.Packages {
 				ps := p.PackageSpec
@@ -487,7 +487,7 @@ func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string)
 			}
 		}
 	}
-	
+
 	return nil, "", fmt.Errorf("no package found satisfying %s in any repo", name)
 }
 
@@ -510,21 +510,21 @@ func satisfiesProvider(prov, reqName, reqVer string) bool {
 		pName = prov[:i]
 		pVer = prov[i+1:]
 	}
-	
+
 	if pName != reqName {
 		return false
 	}
-	
+
 	if reqVer == "" {
 		return true
 	}
-	
-	// If provider is unversioned, it satisfies dependency? 
+
+	// If provider is unversioned, it satisfies dependency?
 	// Arch says yes.
 	if pVer == "" {
 		return true
 	}
-	
+
 	return satisfiesVersion(pVer, reqVer)
 }
 

@@ -512,7 +512,7 @@ func TestFindSatisfyingRepoLatest_Priority(t *testing.T) {
 	// direct match: version 1.0.0
 	// provider: version 2.0.0 (provides it)
 	// direct match should win despite lower version.
-	
+
 	rm := RepoMap{
 		"repo1": Repo{
 			Priority: priority.Value(500),
@@ -537,13 +537,13 @@ func TestFindSatisfyingRepoLatest_Priority(t *testing.T) {
 			},
 		},
 	}
-	
+
 	pi := goolib.PackageInfo{Name: "real_pkg", Arch: "noarch"}
 	spec, _, err := FindSatisfyingRepoLatest(pi, rm, []string{"noarch"})
 	if err != nil {
 		t.Fatalf("FindSatisfyingRepoLatest failed: %v", err)
 	}
-	
+
 	if spec.Name != "real_pkg" {
 		t.Errorf("Expected direct match 'real_pkg', got '%s'", spec.Name)
 	}

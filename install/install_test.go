@@ -406,7 +406,7 @@ func TestFromRepo_SatisfiedByProvider(t *testing.T) {
 	// This is a more integration-level test to ensure installDeps uses isSatisfied.
 	// We mock the DB state and call installDeps directly or via a wrapper if accessible.
 	// installDeps is unexported, but we are in package install.
-	
+
 	settings.Initialize(t.TempDir(), false)
 	state := []client.PackageState{
 		{
@@ -476,7 +476,7 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 		PkgDependencies: map[string]string{"libvirt": "1.0.0"},
 	}
 
-	// We pass a valid rm but nil downloader. 
+	// We pass a valid rm but nil downloader.
 	// installDeps -> FindSatisfyingRepoLatest (finds provider_pkg) -> FromRepo (provider_pkg) -> download...
 	// Since downloader is nil, FromRepo might fail or panic if we go deep.
 	// But FromRepo calls client.FindRepoSpec first.
@@ -484,13 +484,13 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 	// The best way is to catch the error and check if it's related to downloading "provider_pkg".
 	// Or define a mock downloader if possible? client.Downloader is a struct, hard to mock methods.
 	// However, FromRepo fails if downloader is nil probably.
-	
+
 	// We can't easily mock downloader without changing code significantly.
 	// But we can verify it fails at download stage, NOT at resolution stage.
-	
+
 	downloader, _ := client.NewDownloader("")
 	err = installDeps(nil, ps, "", rm, []string{"noarch"}, false, downloader, db)
-	
+
 	// We expect an error because download will fail (invalid URL/Source).
 	if err == nil {
 		t.Error("installDeps expected error, got nil")
