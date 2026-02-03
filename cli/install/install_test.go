@@ -198,7 +198,7 @@ func TestInstall(t *testing.T) {
 			// Install everything.
 			archs := []string{"noarch"}
 			for _, arg := range tc.args {
-				if err := i.installFromRepo(t.Context(), arg, archs); err != nil {
+				if err := i.installFromRepo(context.Background(), arg, archs); err != nil {
 					t.Fatalf("installFromRepo: %v", err)
 				}
 			}
@@ -262,9 +262,9 @@ func TestInstallDryRun(t *testing.T) {
 				{Name: "A", Arch: "noarch", Version: "1.0.0"},
 			},
 			wantStrs: []string{
-				"Dry run: The following packages would be installed",
+				"The following packages will be installed:", // Changed
 				"A.noarch.1.0.0",
-				"Dry run: Would install A.noarch.1.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
 			},
 			notStrs: []string{"Installing "},
 		},
@@ -278,7 +278,7 @@ func TestInstallDryRun(t *testing.T) {
 				{Name: "A", Arch: "noarch", Version: "1.0.0"},
 			},
 			wantStrs: []string{"A.noarch.1.0.0 or a newer version is already installed"},
-			notStrs:  []string{"Dry run: The following packages would be installed"},
+			notStrs:  []string{"The following packages will be installed:"},
 		},
 		{
 			desc: "package with dependencies",
@@ -288,10 +288,10 @@ func TestInstallDryRun(t *testing.T) {
 				{Name: "B", Arch: "noarch", Version: "2.0.0"},
 			},
 			wantStrs: []string{
-				"Dry run: The following packages would be installed",
+				"The following packages will be installed:", // Changed
 				"A.noarch.1.0.0",
 				"B.noarch.2.0.0",
-				"Dry run: Would install A.noarch.1.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
 			},
 		},
 	} {
