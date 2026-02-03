@@ -39,17 +39,19 @@ func init() { subcommands.Register(&updateCmd{}, "package management") }
 type updateCmd struct {
 	dbOnly  bool
 	sources string
+	dryRun  bool
 }
 
 func (*updateCmd) Name() string     { return "update" }
 func (*updateCmd) Synopsis() string { return "update all packages to the latest version available" }
 func (*updateCmd) Usage() string {
-	return fmt.Sprintf("%s update [-sources repo1,repo2...]\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf("%s update [-sources repo1,repo2...] [-dry_run]\n", filepath.Base(os.Args[0]))
 }
 
 func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform install system actions")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
+	f.BoolVar(&cmd.dryRun, "dry_run", false, "check for updates and print them, but do not prompt to install")
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -91,6 +93,11 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	ud := updates(state.PackageMap(), rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
+		return subcommands.ExitSuccess
+	}
+
+	if cmd.dryRun {
+		fmt.Println("Dry run mode active, exiting without updating.")
 		return subcommands.ExitSuccess
 	}
 
