@@ -19,21 +19,20 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/google/googet/v2/cli"
-	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
-	"github.com/google/googet/v2/goolib"
-	"github.com/google/googet/v2/install"
-	"github.com/google/googet/v2/repo"
-	"github.com/google/googet/v2/settings"
-	"github.com/google/logger"
-	"github.com/google/subcommands"
+	"google3/base/go/flag"
+	"google3/third_party/golang/googet/cli/cli"
+	"google3/third_party/golang/googet/client/client"
+	"google3/third_party/golang/googet/googetdb/googetdb"
+	"google3/third_party/golang/googet/goolib/goolib"
+	"google3/third_party/golang/googet/install/install"
+	"google3/third_party/golang/googet/repo/repo"
+	"google3/third_party/golang/googet/settings/settings"
+	"google3/third_party/golang/logger/logger"
+	"google3/third_party/golang/subcommands/subcommands"
 )
 
 func init() { subcommands.Register(&installCmd{}, "package management") }
@@ -206,8 +205,7 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if err != nil {
 		return fmt.Errorf("error finding %s.%s.%s in repo: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
-	ni, err := install.NeedsInstallation(pi, i.db)
-	if err != nil {
+	if ni, err := install.NeedsInstallation(pi, i.db); err != nil {
 		return err
 	} else if !ni {
 		fmt.Printf("%s.%s.%s or a newer version is already installed on the system\n", pi.Name, pi.Arch, pi.Ver)
@@ -220,19 +218,14 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	}
 
 	if i.dryRun {
-		lines := strings.Split(strings.TrimSpace(b.String()), "\n")
-		for _, line := range lines {
-			fmt.Println(line)
-		}
+		fmt.Println(b.String())
 		fmt.Printf("Dry run: Would install %s.%s.%s and its dependencies if not already installed.\n", pi.Name, pi.Arch, pi.Ver)
 		return nil
 	}
 
-	if i.confirm {
-		if !cli.Confirmation(b.String()) {
-			fmt.Println("canceling install...")
-			return nil
-		}
+	if i.confirm && !cli.Confirmation(b.String()) {
+		fmt.Println("canceling install...")
+		return nil
 	}
 	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.downloader, i.db); err != nil {
 		return fmt.Errorf("installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
@@ -268,11 +261,7 @@ func (i *installer) enumerateDeps(pi goolib.PackageInfo, r string, archs []strin
 		return nil, fmt.Errorf("error listing dependencies for %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
 	var b bytes.Buffer
-	if dryRun {
-		fmt.Fprintln(&b, "Dry run: The following packages would be installed or are already present:")
-	} else {
-		fmt.Fprintln(&b, "The following packages will be installed:")
-	}
+	fmt.Fprintln(&b, "The following packages will be installed:")
 	for _, di := range dl {
 		ni, err := install.NeedsInstallation(di, i.db)
 		if err != nil {
