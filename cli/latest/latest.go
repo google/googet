@@ -88,11 +88,12 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
-	v, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
+	spec, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
 	if err != nil {
 		logger.Errorf("Failed to find package: %v", err)
 		return subcommands.ExitFailure
 	}
+	v := spec.Version
 	if !cmd.compare {
 		fmt.Println(v)
 		return subcommands.ExitSuccess

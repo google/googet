@@ -236,14 +236,17 @@ func TestFindRepoLatest(t *testing.T) {
 		},
 	} {
 		t.Run(tt.desc, func(t *testing.T) {
-			gotVersion, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
+			gotSpec, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
 			if err != nil && !tt.wantErr {
 				t.Fatalf("FindRepoLatest(%v, %v, %v) failed: %v", tt.pi, tt.rm, tt.archs, err)
 			} else if err == nil && tt.wantErr {
 				t.Fatalf("FindRepoLatest(%v, %v, %v) got nil error, wanted non-nil", tt.pi, tt.rm, tt.archs)
 			}
-			if gotVersion != tt.wantVersion {
-				t.Errorf("FindRepoLatest(%v, %v, %v) got version: %q, want %q", tt.pi, tt.rm, tt.archs, gotVersion, tt.wantVersion)
+			if err != nil {
+				return
+			}
+			if gotSpec.Version != tt.wantVersion {
+				t.Errorf("FindRepoLatest(%v, %v, %v) got version: %q, want %q", tt.pi, tt.rm, tt.archs, gotSpec.Version, tt.wantVersion)
 			}
 			if gotArch != tt.wantArch {
 				t.Errorf("FindRepoLatest(%v, %v, %v) got arch: %q, want %q", tt.pi, tt.rm, tt.archs, gotArch, tt.wantArch)
@@ -411,7 +414,7 @@ func TestFindRepoSpecNoMatch(t *testing.T) {
 	}
 }
 
-func TestFindSatisfyingRepoLatest(t *testing.T) {
+func TestFindRepoLatest_Provides(t *testing.T) {
 	rm := RepoMap{
 		"repo1": Repo{
 			Priority: priority.Value(500),
@@ -487,27 +490,27 @@ func TestFindSatisfyingRepoLatest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, _, err := FindSatisfyingRepoLatest(tt.pi, rm, []string{"noarch"})
+			spec, _, _, err := FindRepoLatest(tt.pi, rm, []string{"noarch"})
 			if tt.wantError {
 				if err == nil {
-					t.Errorf("FindSatisfyingRepoLatest(%v) wanted error, got nil", tt.pi)
+					t.Errorf("FindRepoLatest(%v) wanted error, got nil", tt.pi)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("FindSatisfyingRepoLatest(%v) unexpected error: %v", tt.pi, err)
+				t.Fatalf("FindRepoLatest(%v) unexpected error: %v", tt.pi, err)
 			}
 			if spec.Name != tt.wantName {
-				t.Errorf("FindSatisfyingRepoLatest(%v) name = %q, want %q", tt.pi, spec.Name, tt.wantName)
+				t.Errorf("FindRepoLatest(%v) name = %q, want %q", tt.pi, spec.Name, tt.wantName)
 			}
 			if spec.Version != tt.wantVer { // Simplified check, assumes simple version strings in test
-				t.Errorf("FindSatisfyingRepoLatest(%v) version = %q, want %q", tt.pi, spec.Version, tt.wantVer)
+				t.Errorf("FindRepoLatest(%v) version = %q, want %q", tt.pi, spec.Version, tt.wantVer)
 			}
 		})
 	}
 }
 
-func TestFindSatisfyingRepoLatest_Priority(t *testing.T) {
+func TestFindRepoLatest_Priority(t *testing.T) {
 	// Setup repo with both direct match and provider.
 	// direct match: version 1.0.0
 	// provider: version 2.0.0 (provides it)
@@ -539,9 +542,9 @@ func TestFindSatisfyingRepoLatest_Priority(t *testing.T) {
 	}
 
 	pi := goolib.PackageInfo{Name: "real_pkg", Arch: "noarch"}
-	spec, _, err := FindSatisfyingRepoLatest(pi, rm, []string{"noarch"})
+	spec, _, _, err := FindRepoLatest(pi, rm, []string{"noarch"})
 	if err != nil {
-		t.Fatalf("FindSatisfyingRepoLatest failed: %v", err)
+		t.Fatalf("FindRepoLatest failed: %v", err)
 	}
 
 	if spec.Name != "real_pkg" {

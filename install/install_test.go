@@ -476,18 +476,8 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 		PkgDependencies: map[string]string{"libvirt": "1.0.0"},
 	}
 
-	// We pass a valid rm but nil downloader.
-	// installDeps -> FindSatisfyingRepoLatest (finds provider_pkg) -> FromRepo (provider_pkg) -> download...
-	// Since downloader is nil, FromRepo might fail or panic if we go deep.
-	// But FromRepo calls client.FindRepoSpec first.
-	// We want to verify it TRIES to install provider_pkg.
-	// The best way is to catch the error and check if it's related to downloading "provider_pkg".
-	// Or define a mock downloader if possible? client.Downloader is a struct, hard to mock methods.
-	// However, FromRepo fails if downloader is nil probably.
-
-	// We can't easily mock downloader without changing code significantly.
-	// But we can verify it fails at download stage, NOT at resolution stage.
-
+	// We pass a valid rm but nil downloader to verify that resolution succeeds (finding provider_pkg)
+	// but download fails. If resolution failed, we'd get a "cannot resolve dependency" error.
 	downloader, _ := client.NewDownloader("")
 	err = installDeps(nil, ps, "", rm, []string{"noarch"}, false, downloader, db)
 
@@ -495,10 +485,8 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 	if err == nil {
 		t.Error("installDeps expected error, got nil")
 	} else {
-		// If resolution failed, it would say "cannot resolve dependency".
-		// If resolution succeeded, it proceeds to download and fails there.
-		// "unsupported protocol scheme" or "client.Get" error etc.
-		// Or "no source specified"
+		// Verify that the error is not a resolution error.
+		// Any other error implies resolution succeeded and it failed at the download stage.
 		errMsg := err.Error()
 		if errMsg == "cannot resolve dependency, libvirt.noarch version 1.0.0 or greater not installed and not available in any repo" {
 			t.Errorf("installDeps failed to resolve provider: %v", err)

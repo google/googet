@@ -378,62 +378,38 @@ func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 	return goolib.RepoSpec{}, fmt.Errorf("no match found for package %s.%s.%s in repo", pi.Name, pi.Arch, pi.Ver)
 }
 
-// latest returns the version and repo having the greatest (priority, version) from the set of
+// latest returns the package spec and repo having the greatest (priority, version) from the set of
 // package specs in psm.
-func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
-	var ver, repoURL string
+func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (*goolib.PkgSpec, string) {
+	var bestPkg *goolib.PkgSpec
+	var repoURL string
 	var pri priority.Value
 	for u, pl := range psm {
 		for _, pkg := range pl {
 			q := rm[u].Priority
 			c := 1
-			if ver != "" {
+			if bestPkg != nil {
 				var err error
-				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, ver); err != nil {
-					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, ver, err)
+				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, bestPkg.Version); err != nil {
+					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, bestPkg.Version, err)
 					continue
 				}
 			}
 			if c == 1 {
 				repoURL = u
-				ver = pkg.Version
+				bestPkg = pkg
 				pri = q
 			}
 		}
 	}
-	return ver, repoURL
+	return bestPkg, repoURL
 }
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
+// It checks both direct name matches and "Provides" entries.
 // The archs are searched in order; if a matching package is found for any arch, it is
 // returned immediately even if a later arch might have a later version.
-func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, string, string, error) {
-	psm := make(map[string][]*goolib.PkgSpec)
-	name := pi.Name
-	if pi.Arch != "" {
-		archs = []string{pi.Arch}
-		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
-	}
-	for _, a := range archs {
-		for u, r := range rm {
-			for _, p := range r.Packages {
-				if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == a {
-					psm[u] = append(psm[u], p.PackageSpec)
-				}
-			}
-		}
-		if len(psm) != 0 {
-			v, r := latest(psm, rm)
-			return v, r, a, nil
-		}
-	}
-	return "", "", "", fmt.Errorf("no versions of package %s found in any repo", name)
-}
-
-// FindSatisfyingRepoLatest returns the latest version of a package that satisfies the package info,
-// along with its repo. It checks both direct name matches and "Provides" entries.
-// The archs are searched in order.
-func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.PkgSpec, string, error) {
+func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.PkgSpec, string, string, error) {
 	name := pi.Name
 	if pi.Arch != "" {
 		archs = []string{pi.Arch}
@@ -456,13 +432,13 @@ func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string)
 					if satisfiesVersion(ps.Version, pi.Ver) {
 						psmDirect[u] = append(psmDirect[u], ps)
 					}
-					// If exact match, we don't check provides for THIS package.
+					// Skip checking Provides if the package itself is a direct match.
 					continue
 				}
 
 				// Check provides
 				for _, prov := range ps.Provides {
-					if satisfiesProvider(prov, pi.Name, pi.Ver) {
+					if SatisfiesProvider(prov, pi.Name, pi.Ver) {
 						psmProvides[u] = append(psmProvides[u], ps)
 						break
 					}
@@ -470,25 +446,24 @@ func FindSatisfyingRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string)
 			}
 		}
 
-		// If direct matches exist, use ONLY them.
+		// Prioritize direct package matches over virtual package providers.
 		if len(psmDirect) > 0 {
-			pkg, repo := pickBest(psmDirect, rm)
+			pkg, repo := latest(psmDirect, rm)
 			if pkg != nil {
-				return pkg, repo, nil
+				return pkg, repo, a, nil
 			}
 		}
 
 		// If no direct matches, check providers.
 		// Note: This matches Arch behavior (prefer real package).
 		if len(psmProvides) > 0 {
-			pkg, repo := pickBest(psmProvides, rm)
+			pkg, repo := latest(psmProvides, rm)
 			if pkg != nil {
-				return pkg, repo, nil
+				return pkg, repo, a, nil
 			}
 		}
 	}
-
-	return nil, "", fmt.Errorf("no package found satisfying %s in any repo", name)
+	return nil, "", "", fmt.Errorf("no package found satisfying %s in any repo", name)
 }
 
 func satisfiesVersion(pkgVer, reqVer string) bool {
@@ -503,7 +478,8 @@ func satisfiesVersion(pkgVer, reqVer string) bool {
 	return c >= 0
 }
 
-func satisfiesProvider(prov, reqName, reqVer string) bool {
+// SatisfiesProvider checks if a provider string satisfies a requirement.
+func SatisfiesProvider(prov, reqName, reqVer string) bool {
 	pName := prov
 	pVer := ""
 	if i := strings.Index(prov, "="); i != -1 {
@@ -515,43 +491,12 @@ func satisfiesProvider(prov, reqName, reqVer string) bool {
 		return false
 	}
 
-	if reqVer == "" {
-		return true
-	}
-
-	// If provider is unversioned, it satisfies dependency?
-	// Arch says yes.
+	// Unversioned providers satisfy any version requirement.
 	if pVer == "" {
 		return true
 	}
 
 	return satisfiesVersion(pVer, reqVer)
-}
-
-func pickBest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (*goolib.PkgSpec, string) {
-	var bestPkg *goolib.PkgSpec
-	var repoURL string
-	var pri priority.Value
-
-	for u, pl := range psm {
-		for _, pkg := range pl {
-			q := rm[u].Priority
-			c := 1
-			if bestPkg != nil {
-				var err error
-				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, bestPkg.Version); err != nil {
-					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, bestPkg.Version, err)
-					continue
-				}
-			}
-			if c == 1 {
-				repoURL = u
-				bestPkg = pkg
-				pri = q
-			}
-		}
-	}
-	return bestPkg, repoURL
 }
 
 // WhatRepo returns what repo a package is in.

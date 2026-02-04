@@ -165,7 +165,7 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 			continue
 		}
 
-		spec, repo, err := client.FindSatisfyingRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs)
+		spec, repo, _, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs)
 		if err != nil {
 			return err
 		}
@@ -184,32 +184,22 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	var rs goolib.RepoSpec
 	var err error
-	// If the version is empty, we need to find the latest version.
-	// We also try FindSatisfyingRepoLatest to handle providers if finding by exact name fails or if we want latest compatible.
-	// But FromRepo is typically called with a specific version (from installDeps or user input).
-	// If called with specific version, we usually want THAT version.
-	// Users might run "googet install virtual_pkg". In that case pi.Ver might be empty.
+	// If no version is specified, resolve the latest version handling both
+	// direct matches and providers.
 	if pi.Ver == "" {
-		spec, repoURL, err := client.FindSatisfyingRepoLatest(pi, rm, archs)
+		spec, repoURL, _, err := client.FindRepoLatest(pi, rm, archs)
 		if err != nil {
 			return err
 		}
 		repo = repoURL
-		// We found a satisfying package using the new logic. Use its real name and version.
-		// NOTE: This might switch the name from a virtual one to the real one.
+		// Use the resolved real package name and version.
 		pi.Name = spec.Name
 		pi.Arch = spec.Arch
 		pi.Ver = spec.Version
 		rs, err = client.FindRepoSpec(goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, rm[repo])
 	} else {
-		// Even if name is virtual, if version is specified, we might need to resolve it?
-		// But existing FindRepoSpec relies on exact name match inside the repo object.
-		// If "googet install virtual_pkg.noarch.1.0.0", FindRepoSpec won't find it if it's virtual.
-		// So we SHOULD use FindSatisfyingRepoLatest (or similar) here too if exact match fails?
-		// For now, let's keep original behavior for explicit version invocations unless we want to support "install virtual=1.0".
-		// Actually, let's try strict match first, if fail, try satisfying logic?
-		// But FindRepoSpec takes a Repo struct, not RepoMap.
-		// Let's stick to simple flow for now (installDeps usage).
+		// When a specific version is requested, look for an exact match in the repository.
+		// Virtual package resolution is not currently supported for specific versions.
 		rs, err = client.FindRepoSpec(pi, rm[repo])
 	}
 
@@ -589,19 +579,19 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 	dl = append(dl, pi)
 	for d, v := range rs.PackageSpec.PkgDependencies {
 		di := goolib.PkgNameSplit(d)
-		ver, repo, arch, err := client.FindRepoLatest(di, rm, archs)
+		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs)
 		di.Arch = arch
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, di.Arch, di.Ver, err)
 		}
-		c, err := goolib.Compare(ver, v)
+		c, err := goolib.Compare(spec.Version, v)
 		if err != nil {
 			return nil, err
 		}
 		if c == -1 {
 			return nil, fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, pi.Arch, pi.Ver)
 		}
-		di.Ver = ver
+		di.Ver = spec.Version
 		dl, err = listDeps(di, rm, repo, dl, archs)
 		if err != nil {
 			return nil, err

@@ -122,13 +122,13 @@ func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
 	var ud []goolib.PackageInfo
 	for p, ver := range pm {
 		pi := goolib.PkgNameSplit(p)
-		v, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
+		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.ComparePriorityVersion(rm[r].Priority, v, priority.Default, ver)
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, ver)
 		if err != nil {
 			logger.Error(err)
 			continue
@@ -139,7 +139,7 @@ func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
 		}
 		// The versions might actually be the same even though the priorities are different,
 		// so do another check to skip reinstall of the same version.
-		c, err = goolib.Compare(v, ver)
+		c, err = goolib.Compare(spec.Version, ver)
 		if err != nil {
 			logger.Error(err)
 			continue
@@ -152,9 +152,9 @@ func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
 		if c == -1 {
 			op = "Downgrade"
 		}
-		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, v, r)
-		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, v, r)
-		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: v})
+		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, spec.Version, r)
+		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, spec.Version, r)
+		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: spec.Version})
 	}
 	return ud
 }

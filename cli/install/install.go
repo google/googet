@@ -185,9 +185,11 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 
 	if pi.Ver == "" {
 		var err error
-		if pi.Ver, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs); err != nil {
+		var spec *goolib.PkgSpec
+		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
 		}
+		pi.Ver = spec.Version
 	}
 	if _, err := goolib.ParseVersion(pi.Ver); err != nil {
 		return fmt.Errorf("invalid package version %q: %v", pi.Ver, err)

@@ -151,11 +151,11 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloa
 
 // Latest downloads the latest available version of a package.
 func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, string, error) {
-	ver, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
+	spec, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs)
 	if err != nil {
 		return "", "", err
 	}
-	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: ver}, rm[repo])
+	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: spec.Version}, rm[repo])
 	if err != nil {
 		return "", "", err
 	}
