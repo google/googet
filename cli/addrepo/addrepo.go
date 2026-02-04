@@ -33,24 +33,27 @@ func init() { subcommands.Register(&addRepoCmd{}, "repository management") }
 type addRepoCmd struct {
 	file     string
 	priority string
+	dryRun   bool
 }
 
 func (*addRepoCmd) Name() string     { return "addrepo" }
 func (*addRepoCmd) Synopsis() string { return "add repository" }
 func (*addRepoCmd) Usage() string {
-	return fmt.Sprintf(`%s addrepo [-file <repofile>] [-priority <value>] <name> <url>:
+	return fmt.Sprintf(`%s addrepo [-file <repofile>] [-priority <value>] [-dry_run] <name> <url>:
 	Add repository to GooGet's repository list.
 	If -file is not set 'name.repo' will be used for the file name
 	overwriting any existing file with that name.
 	If -file is set the specified repo will be appended to that repo file,
 	creating it if it does not exist.
 	If -priority is specified, the repo will be configured with this priority level.
+	The -dry_run flag will simulate adding the repo without making changes.
 `, filepath.Base(os.Args[0]))
 }
 
 func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.file, "file", "", "repo file to add this repository to")
 	f.StringVar(&cmd.priority, "priority", "", "priority level assigned to repository")
+	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate adding the repo without making changes")
 }
 
 func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -81,6 +84,15 @@ func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interfac
 	}
 
 	repoFile := filepath.Join(settings.RepoDir(), cmd.file)
+
+	if cmd.dryRun {
+		fmt.Printf("Dry run: Would add repo %q with URL %q to %q.\n", entry.Name, entry.URL, repoFile)
+		if cmd.priority != "" {
+			fmt.Printf("Dry run: Repository priority would be set to %q.\n", cmd.priority)
+		}
+		return subcommands.ExitSuccess
+	}
+
 	content, err := repo.AddEntryToFile(entry, repoFile)
 	if err != nil {
 		logger.Error(err)
