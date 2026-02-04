@@ -78,28 +78,8 @@ func isSatisfied(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
 			continue
 		}
 		for _, prov := range p.PackageSpec.Provides {
-			pName := prov
-			pVer := ""
-			// We support "name=version" format for providers.
-			if i := strings.Index(prov, "="); i != -1 {
-				pName = prov[:i]
-				pVer = prov[i+1:]
-			}
-
-			if pName == pi.Name {
-				// If we just need the name, or if the provider has no version (implies all versions),
-				// or if the provider version satisfies the requirement.
-				if pi.Ver == "" || pVer == "" {
-					return true, nil
-				}
-				c, err := goolib.Compare(pVer, pi.Ver)
-				if err != nil {
-					logger.Errorf("Error comparing versions for provider %s: %v", prov, err)
-					continue
-				}
-				if c > -1 {
-					return true, nil
-				}
+			if client.SatisfiesProvider(prov, pi.Name, pi.Ver) {
+				return true, nil
 			}
 		}
 	}

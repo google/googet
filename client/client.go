@@ -467,7 +467,7 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.
 }
 
 func satisfiesVersion(pkgVer, reqVer string) bool {
-	if reqVer == "" {
+	if reqVer == "" || pkgVer == "" {
 		return true
 	}
 	c, err := goolib.Compare(pkgVer, reqVer)
@@ -480,20 +480,10 @@ func satisfiesVersion(pkgVer, reqVer string) bool {
 
 // SatisfiesProvider checks if a provider string satisfies a requirement.
 func SatisfiesProvider(prov, reqName, reqVer string) bool {
-	pName := prov
-	pVer := ""
-	if i := strings.Index(prov, "="); i != -1 {
-		pName = prov[:i]
-		pVer = prov[i+1:]
-	}
+	pName, pVer, _ := strings.Cut(prov, "=")
 
 	if pName != reqName {
 		return false
-	}
-
-	// Unversioned providers satisfy any version requirement.
-	if pVer == "" {
-		return true
 	}
 
 	return satisfiesVersion(pVer, reqVer)
