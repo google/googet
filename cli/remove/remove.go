@@ -36,19 +36,26 @@ func init() { subcommands.Register(&removeCmd{}, "package management") }
 
 type removeCmd struct {
 	dbOnly bool
+	dryRun bool
 }
 
 func (cmd *removeCmd) Name() string     { return "remove" }
 func (cmd *removeCmd) Synopsis() string { return "uninstall a package" }
 func (cmd *removeCmd) Usage() string {
-	return fmt.Sprintf("%s remove <name>\n", os.Args[0])
+	return fmt.Sprintf("%s remove [-dry_run] <name>...\n", os.Args[0])
 }
 
 func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform uninstall system actions")
+	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be removed but do not remove")
 }
 
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if flags.NArg() == 0 {
+		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
+		return subcommands.ExitFailure
+	}
+
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Error(err)
@@ -65,9 +72,12 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		if err := cmd.removeOne(ctx, arg, downloader, db); err != nil {
 			logger.Errorf("error removing %v: %v", arg, err)
 			status = subcommands.ExitFailure
+			continue
 		}
-		logger.Infof("Removal of %q and dependent packages completed", arg)
-		fmt.Printf("Removal of %s completed\n", arg)
+		if !cmd.dryRun {
+			logger.Infof("Removal of %q and dependent packages completed", arg)
+			fmt.Printf("Removal of %s completed\n", arg)
+		}
 	}
 	return status
 }
@@ -87,6 +97,16 @@ func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader 
 	if err != nil {
 		return err
 	}
+
+	if cmd.dryRun {
+		fmt.Println("Dry run: The following packages would be removed:")
+		for _, d := range dl {
+			fmt.Println("  " + d)
+		}
+		fmt.Printf("Dry run: Would remove %s and all dependencies.\n", pi.Name)
+		return nil
+	}
+
 	if settings.Confirm {
 		var b bytes.Buffer
 		fmt.Fprintln(&b, "The following packages will be removed:")

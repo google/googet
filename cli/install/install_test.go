@@ -1,12 +1,16 @@
 package install
 
 import (
+	"bytes"
+	"context"
+	"flag"
 	"io"
 	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -194,7 +198,7 @@ func TestInstall(t *testing.T) {
 			// Install everything.
 			archs := []string{"noarch"}
 			for _, arg := range tc.args {
-				if err := i.installFromRepo(t.Context(), arg, archs); err != nil {
+				if err := i.installFromRepo(context.Background(), arg, archs); err != nil {
 					t.Fatalf("installFromRepo: %v", err)
 				}
 			}
@@ -215,6 +219,141 @@ func TestInstall(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantState, gotState, cmpopts.SortSlices(func(a, b string) bool { return a < b })); diff != "" {
 				t.Fatalf("unexpected db state (-want +got):\n%v", diff)
+			}
+		})
+	}
+}
+
+func captureStdout(f func()) string {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	f()
+
+	w.Close()
+	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestInstallDryRun(t *testing.T) {
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+	settings.Archs = []string{"noarch", "x86_64"}
+
+	for _, tc := range []struct {
+		desc     string
+		args     []string
+		state    client.GooGetState
+		packages []goolib.PkgSpec
+		wantStrs []string
+		notStrs  []string
+	}{
+		{
+			desc: "single package not installed",
+			args: []string{"A"},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1.0.0"},
+			},
+			wantStrs: []string{
+				"The following packages will be installed:", // Changed
+				"A.noarch.1.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
+			},
+			notStrs: []string{"Installing "},
+		},
+		{
+			desc: "package already installed",
+			args: []string{"A"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1.0.0"}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1.0.0"},
+			},
+			wantStrs: []string{"A.noarch.1.0.0 or a newer version is already installed"},
+			notStrs:  []string{"The following packages will be installed:"},
+		},
+		{
+			desc: "package with dependencies",
+			args: []string{"A"},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1.0.0", PkgDependencies: map[string]string{"B": "2.0.0"}},
+				{Name: "B", Arch: "noarch", Version: "2.0.0"},
+			},
+			wantStrs: []string{
+				"The following packages will be installed:", // Changed
+				"A.noarch.1.0.0",
+				"B.noarch.2.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			if err := db.WriteStateToDB(tc.state); err != nil {
+				t.Fatalf("Failed to write initial state to DB: %v", err)
+			}
+			// Read back the state to get the InstallDate values set by the DB.
+			initialState, _ := db.FetchPkgs("")
+
+			downloader, _ := client.NewDownloader("")
+			i := &installer{
+				db:         db,
+				cache:      t.TempDir(),
+				downloader: downloader,
+				dryRun:     true,
+			}
+
+			gooDir, logDir := t.TempDir(), t.TempDir()
+			srv := testutil.ServeGoo(t, gooDir)
+			defer srv.Close()
+
+			var specs []goolib.RepoSpec
+			for _, pkg := range tc.packages {
+				specs = append(specs, testutil.GenGoo(t, gooDir, logDir, pkg))
+			}
+			i.repoMap = client.RepoMap{srv.URL: client.Repo{Packages: specs}}
+
+			cmd := installCmd{dryRun: true}
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			cmd.SetFlags(fs)
+			fs.Parse(tc.args)
+
+			output := captureStdout(func() {
+				for _, arg := range tc.args {
+					if err := i.installFromRepo(ctx, arg, []string{"noarch"}); err != nil {
+						t.Errorf("installFromRepo(%q, dryRun: true) returned error: %v", arg, err)
+					}
+				}
+			})
+
+			for _, want := range tc.wantStrs {
+				if !strings.Contains(output, want) {
+					t.Errorf("Expected stdout to contain %q, got:\n%s", want, output)
+				}
+			}
+			for _, not := range tc.notStrs {
+				if strings.Contains(output, not) {
+					t.Errorf("Expected stdout NOT to contain %q, got:\n%s", not, output)
+				}
+			}
+
+			// Verify DB state hasn't changed
+			finalState, err := db.FetchPkgs("")
+			if err != nil {
+				t.Errorf("db.FetchPkgs: %v", err)
+			}
+			ignoreInstallDate := cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")
+			if diff := cmp.Diff(finalState, initialState, cmpopts.EquateEmpty(), ignoreInstallDate); diff != "" {
+				t.Errorf("DB state changed unexpectedly in dry_run (-got +want):\n%s", diff)
 			}
 		})
 	}
