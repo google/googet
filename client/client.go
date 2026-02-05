@@ -482,11 +482,7 @@ func satisfiesVersion(pkgVer, reqVer string) bool {
 func SatisfiesProvider(prov, reqName, reqVer string) bool {
 	pName, pVer, _ := strings.Cut(prov, "=")
 
-	if pName != reqName {
-		return false
-	}
-
-	return satisfiesVersion(pVer, reqVer)
+	return pName == reqName && satisfiesVersion(pVer, reqVer)
 }
 
 // WhatRepo returns what repo a package is in.

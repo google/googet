@@ -476,8 +476,8 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 		PkgDependencies: map[string]string{"libvirt": "1.0.0"},
 	}
 
-	// We pass a valid rm but nil downloader to verify that resolution succeeds (finding provider_pkg)
-	// but download fails. If resolution failed, we'd get a "cannot resolve dependency" error.
+	// Verify that dependency resolution succeeds (finding provider_pkg); the download
+	// is expected to fail due to an invalid repository URL.
 	downloader, _ := client.NewDownloader("")
 	err = installDeps(nil, ps, "", rm, []string{"noarch"}, false, downloader, db)
 
