@@ -378,56 +378,111 @@ func FindRepoSpec(pi goolib.PackageInfo, repo Repo) (goolib.RepoSpec, error) {
 	return goolib.RepoSpec{}, fmt.Errorf("no match found for package %s.%s.%s in repo", pi.Name, pi.Arch, pi.Ver)
 }
 
-// latest returns the version and repo having the greatest (priority, version) from the set of
+// latest returns the package spec and repo having the greatest (priority, version) from the set of
 // package specs in psm.
-func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (string, string) {
-	var ver, repoURL string
+func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (*goolib.PkgSpec, string) {
+	var bestPkg *goolib.PkgSpec
+	var repoURL string
 	var pri priority.Value
 	for u, pl := range psm {
 		for _, pkg := range pl {
 			q := rm[u].Priority
 			c := 1
-			if ver != "" {
+			if bestPkg != nil {
 				var err error
-				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, ver); err != nil {
-					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, ver, err)
+				if c, err = goolib.ComparePriorityVersion(q, pkg.Version, pri, bestPkg.Version); err != nil {
+					logger.Errorf("compare of %s to %s failed with error: %v", pkg.Version, bestPkg.Version, err)
 					continue
 				}
 			}
 			if c == 1 {
 				repoURL = u
-				ver = pkg.Version
+				bestPkg = pkg
 				pri = q
 			}
 		}
 	}
-	return ver, repoURL
+	return bestPkg, repoURL
 }
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
+// It checks both direct name matches and "Provides" entries.
 // The archs are searched in order; if a matching package is found for any arch, it is
 // returned immediately even if a later arch might have a later version.
-func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (string, string, string, error) {
-	psm := make(map[string][]*goolib.PkgSpec)
+func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.PkgSpec, string, string, error) {
 	name := pi.Name
 	if pi.Arch != "" {
 		archs = []string{pi.Arch}
 		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
 	}
+
 	for _, a := range archs {
+		psmDirect := make(map[string][]*goolib.PkgSpec)
+		psmProvides := make(map[string][]*goolib.PkgSpec)
+
 		for u, r := range rm {
 			for _, p := range r.Packages {
-				if p.PackageSpec.Name == pi.Name && p.PackageSpec.Arch == a {
-					psm[u] = append(psm[u], p.PackageSpec)
+				ps := p.PackageSpec
+				if ps.Arch != a {
+					continue
+				}
+
+				// Check exact match
+				if ps.Name == pi.Name {
+					if satisfiesVersion(ps.Version, pi.Ver) {
+						psmDirect[u] = append(psmDirect[u], ps)
+					}
+					// Skip checking Provides if the package itself is a direct match.
+					continue
+				}
+
+				// Check provides
+				for _, prov := range ps.Provides {
+					if SatisfiesProvider(prov, pi.Name, pi.Ver) {
+						psmProvides[u] = append(psmProvides[u], ps)
+						break
+					}
 				}
 			}
 		}
-		if len(psm) != 0 {
-			v, r := latest(psm, rm)
-			return v, r, a, nil
+
+		// Prioritize direct package matches over virtual package providers.
+		if len(psmDirect) > 0 {
+			pkg, repo := latest(psmDirect, rm)
+			if pkg != nil {
+				return pkg, repo, a, nil
+			}
+		}
+
+		// If no direct matches, check providers.
+		// Note: This matches Arch behavior (prefer real package).
+		if len(psmProvides) > 0 {
+			pkg, repo := latest(psmProvides, rm)
+			if pkg != nil {
+				return pkg, repo, a, nil
+			}
 		}
 	}
-	return "", "", "", fmt.Errorf("no versions of package %s found in any repo", name)
+	return nil, "", "", fmt.Errorf("no package found satisfying %s in any repo", name)
+}
+
+func satisfiesVersion(pkgVer, reqVer string) bool {
+	if reqVer == "" || pkgVer == "" {
+		return true
+	}
+	c, err := goolib.Compare(pkgVer, reqVer)
+	if err != nil {
+		logger.Errorf("Error comparing versions %s vs %s: %v", pkgVer, reqVer, err)
+		return false
+	}
+	return c >= 0
+}
+
+// SatisfiesProvider checks if a provider string satisfies a requirement.
+func SatisfiesProvider(prov, reqName, reqVer string) bool {
+	pName, pVer, _ := strings.Cut(prov, "=")
+
+	return pName == reqName && satisfiesVersion(pVer, reqVer)
 }
 
 // WhatRepo returns what repo a package is in.

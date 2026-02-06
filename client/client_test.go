@@ -32,6 +32,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
 )
 
@@ -235,14 +236,17 @@ func TestFindRepoLatest(t *testing.T) {
 		},
 	} {
 		t.Run(tt.desc, func(t *testing.T) {
-			gotVersion, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
+			gotSpec, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
 			if err != nil && !tt.wantErr {
 				t.Fatalf("FindRepoLatest(%v, %v, %v) failed: %v", tt.pi, tt.rm, tt.archs, err)
 			} else if err == nil && tt.wantErr {
 				t.Fatalf("FindRepoLatest(%v, %v, %v) got nil error, wanted non-nil", tt.pi, tt.rm, tt.archs)
 			}
-			if gotVersion != tt.wantVersion {
-				t.Errorf("FindRepoLatest(%v, %v, %v) got version: %q, want %q", tt.pi, tt.rm, tt.archs, gotVersion, tt.wantVersion)
+			if err != nil {
+				return
+			}
+			if gotSpec.Version != tt.wantVersion {
+				t.Errorf("FindRepoLatest(%v, %v, %v) got version: %q, want %q", tt.pi, tt.rm, tt.archs, gotSpec.Version, tt.wantVersion)
 			}
 			if gotArch != tt.wantArch {
 				t.Errorf("FindRepoLatest(%v, %v, %v) got arch: %q, want %q", tt.pi, tt.rm, tt.archs, gotArch, tt.wantArch)
@@ -407,5 +411,146 @@ func TestFindRepoSpecNoMatch(t *testing.T) {
 
 	if _, err := FindRepoSpec(goolib.PackageInfo{Name: "test", Arch: "", Ver: ""}, repo); err == nil {
 		t.Error("did not get expected error when running FindRepoSpec")
+	}
+}
+
+func TestFindRepoLatest_Provides(t *testing.T) {
+	rm := RepoMap{
+		"repo1": Repo{
+			Priority: priority.Value(500),
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "real_pkg",
+						Version: "2.0.0",
+						Arch:    "noarch",
+						Provides: []string{
+							"virtual_pkg",
+							"virtual_versioned=1.0.0",
+						},
+					},
+				},
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "real_pkg_old",
+						Version: "1.0.0",
+						Arch:    "noarch",
+						Provides: []string{
+							"virtual_pkg",
+						},
+					},
+				},
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "other_pkg",
+						Version: "1.0.0",
+						Arch:    "noarch",
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		pi        goolib.PackageInfo
+		wantName  string
+		wantVer   string
+		wantError bool
+	}{
+		{
+			name:     "Direct match",
+			pi:       goolib.PackageInfo{Name: "other_pkg", Arch: "noarch"},
+			wantName: "other_pkg",
+			wantVer:  "1.0.0",
+		},
+		{
+			name:     "Provider match unversioned",
+			pi:       goolib.PackageInfo{Name: "virtual_pkg", Arch: "noarch"},
+			wantName: "real_pkg",
+			wantVer:  "2.0.0", // latest real_pkg
+		},
+		{
+			name:     "Provider match matched version",
+			pi:       goolib.PackageInfo{Name: "virtual_versioned", Ver: "1.0.0", Arch: "noarch"},
+			wantName: "real_pkg",
+			wantVer:  "2.0.0",
+		},
+		{
+			name:      "Provider match unsatisfied version",
+			pi:        goolib.PackageInfo{Name: "virtual_versioned", Ver: "2.0.0", Arch: "noarch"},
+			wantError: true,
+		},
+		{
+			name:      "No match",
+			pi:        goolib.PackageInfo{Name: "missing_pkg", Arch: "noarch"},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, _, _, err := FindRepoLatest(tt.pi, rm, []string{"noarch"})
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("FindRepoLatest(%v) wanted error, got nil", tt.pi)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FindRepoLatest(%v) unexpected error: %v", tt.pi, err)
+			}
+			if spec.Name != tt.wantName {
+				t.Errorf("FindRepoLatest(%v) name = %q, want %q", tt.pi, spec.Name, tt.wantName)
+			}
+			if spec.Version != tt.wantVer { // Simplified check, assumes simple version strings in test
+				t.Errorf("FindRepoLatest(%v) version = %q, want %q", tt.pi, spec.Version, tt.wantVer)
+			}
+		})
+	}
+}
+
+func TestFindRepoLatest_Priority(t *testing.T) {
+	// Setup repo with both direct match and provider.
+	// direct match: version 1.0.0
+	// provider: version 2.0.0 (provides it)
+	// direct match should win despite lower version.
+
+	rm := RepoMap{
+		"repo1": Repo{
+			Priority: priority.Value(500),
+			Packages: []goolib.RepoSpec{
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "real_pkg",
+						Version: "1.0.0",
+						Arch:    "noarch",
+					},
+				},
+				{
+					PackageSpec: &goolib.PkgSpec{
+						Name:    "provider_pkg",
+						Version: "2.0.0",
+						Arch:    "noarch",
+						Provides: []string{
+							"real_pkg",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pi := goolib.PackageInfo{Name: "real_pkg", Arch: "noarch"}
+	spec, _, _, err := FindRepoLatest(pi, rm, []string{"noarch"})
+	if err != nil {
+		t.Fatalf("FindRepoLatest failed: %v", err)
+	}
+
+	if spec.Name != "real_pkg" {
+		t.Errorf("Expected direct match 'real_pkg', got '%s'", spec.Name)
+	}
+	if spec.Version != "1.0.0" {
+		t.Errorf("Expected version '1.0.0', got '%s'", spec.Version)
 	}
 }

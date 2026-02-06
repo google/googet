@@ -56,18 +56,49 @@ func minInstalled(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
 	return false, nil
 }
 
+// isSatisfied reports whether the package dependency is satisfied by an installed package
+// or a package that provides it.
+func isSatisfied(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
+	// First check if the package itself is installed.
+	ok, err := minInstalled(pi, db)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+
+	// Check if any installed package provides this dependency.
+	pkgs, err := db.FetchPkgs("")
+	if err != nil {
+		return false, err
+	}
+	for _, p := range pkgs {
+		if p.PackageSpec == nil {
+			continue
+		}
+		for _, prov := range p.PackageSpec.Provides {
+			if client.SatisfiesProvider(prov, pi.Name, pi.Ver) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 func resolveConflicts(ps *goolib.PkgSpec, db *googetdb.GooDB) error {
 	// Check for any conflicting packages.
 	// TODO(ajackura): Make sure no conflicting packages are listed as
 	// dependencies or subdependancies.
 	for _, pkg := range ps.Conflicts {
 		pi := goolib.PkgNameSplit(pkg)
-		ins, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, db)
+		// Check if the conflicting package or a provider of it is installed.
+		sat, err := isSatisfied(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, db)
 		if err != nil {
 			return err
 		}
-		if ins {
-			return fmt.Errorf("cannot install, conflict with installed package: %s", pi)
+		if sat {
+			return fmt.Errorf("cannot install, conflict with installed package or provider: %s", pi)
 		}
 	}
 	return nil
@@ -106,29 +137,23 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 	// Check for and install any dependencies.
 	for p, ver := range ps.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
-		ok, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, db)
+		ok, err := isSatisfied(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, db)
 		if err != nil {
 			return err
 		} else if ok {
-			logger.Infof("Dependency met: %s.%s with version greater than %s installed", pi.Name, pi.Arch, ver)
+			logger.Infof("Dependency met: %s.%s with version greater than %s installed or provided", pi.Name, pi.Arch, ver)
 			continue
 		}
-		v, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}, rm, archs)
+
+		spec, repo, _, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs)
 		if err != nil {
 			return err
 		}
-		c, err := goolib.Compare(v, ver)
-		if err != nil {
+
+		logger.Infof("Dependency found: %s.%s %s (provides %s) is available", spec.Name, spec.Arch, spec.Version, pi.Name)
+		if err := FromRepo(ctx, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, repo, cache, rm, archs, dbOnly, downloader, db); err != nil {
 			return err
 		}
-		if c > -1 {
-			logger.Infof("Dependency found: %s.%s %s is available", pi.Name, arch, v)
-			if err := FromRepo(ctx, goolib.PackageInfo{Name: pi.Name, Arch: arch, Ver: v}, repo, cache, rm, archs, dbOnly, downloader, db); err != nil {
-				return err
-			}
-			continue
-		}
-		return fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, arch, ver)
 	}
 	return resolveReplacements(ctx, ps, dbOnly, downloader, db)
 }
@@ -137,7 +162,27 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
-	rs, err := client.FindRepoSpec(pi, rm[repo])
+	var rs goolib.RepoSpec
+	var err error
+	// If no version is specified, resolve the latest version handling both
+	// direct matches and providers.
+	if pi.Ver == "" {
+		spec, repoURL, _, err := client.FindRepoLatest(pi, rm, archs)
+		if err != nil {
+			return err
+		}
+		repo = repoURL
+		// Use the resolved real package name and version.
+		pi.Name = spec.Name
+		pi.Arch = spec.Arch
+		pi.Ver = spec.Version
+		rs, err = client.FindRepoSpec(goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, rm[repo])
+	} else {
+		// When a specific version is requested, look for an exact match in the repository.
+		// Virtual package resolution is not currently supported for specific versions.
+		rs, err = client.FindRepoSpec(pi, rm[repo])
+	}
+
 	if err != nil {
 		return err
 	}
@@ -202,13 +247,13 @@ func FromDisk(pkgPath, cache string, dbOnly, shouldReinstall bool, db *googetdb.
 	}
 	for p, ver := range zs.PkgDependencies {
 		pi := goolib.PkgNameSplit(p)
-		if ok, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, db); err != nil {
+		if ok, err := isSatisfied(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, db); err != nil {
 			return err
 		} else if ok {
-			logger.Infof("Dependency met: %s.%s with version greater than %s installed", pi.Name, pi.Arch, ver)
+			logger.Infof("Dependency met: %s.%s with version greater than %s installed or provided", pi.Name, pi.Arch, ver)
 			continue
 		}
-		return fmt.Errorf("package dependency %s %s (min version %s) not installed", pi.Name, pi.Arch, ver)
+		return fmt.Errorf("package dependency %s %s (min version %s) not installed and not provided", pi.Name, pi.Arch, ver)
 	}
 	for _, pkg := range zs.Replaces {
 		pi := goolib.PkgNameSplit(pkg)
@@ -514,19 +559,19 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 	dl = append(dl, pi)
 	for d, v := range rs.PackageSpec.PkgDependencies {
 		di := goolib.PkgNameSplit(d)
-		ver, repo, arch, err := client.FindRepoLatest(di, rm, archs)
+		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs)
 		di.Arch = arch
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, di.Arch, di.Ver, err)
 		}
-		c, err := goolib.Compare(ver, v)
+		c, err := goolib.Compare(spec.Version, v)
 		if err != nil {
 			return nil, err
 		}
 		if c == -1 {
 			return nil, fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, pi.Arch, pi.Ver)
 		}
-		di.Ver = ver
+		di.Ver = spec.Version
 		dl, err = listDeps(di, rm, repo, dl, archs)
 		if err != nil {
 			return nil, err

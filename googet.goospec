@@ -1,4 +1,4 @@
-{{$version := "3.1.0@0" -}}
+{{$version := "3.2.0@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "3.2.0  - Add Provides functionality and field to the GooGet PkgSpec.",
     "3.1.0  - Introduce a dry_run flag for update, install, and remove subcommands.",
     "3.0.0  - Replace googet state file with sqlite database. Add json output for installed command.",
     "2.21.0 - Add arm64 arch support.",

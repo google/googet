@@ -89,6 +89,7 @@ type PkgSpec struct {
 	PkgDependencies map[string]string `json:",omitempty"`
 	Replaces        []string
 	Conflicts       []string
+	Provides        []string
 	Install         ExecFile
 	Uninstall       ExecFile
 	Verify          ExecFile
