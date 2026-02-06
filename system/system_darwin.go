@@ -90,7 +90,7 @@ func IsAdmin() error {
 }
 
 // isGooGetRunning checks if the process with the given PID is running and is a googet process.
-func isGooGetRunning() (bool, error) {
+func isGooGetRunning(_ int) (bool, error) {
 	// Stub for Darwin, assuming not running to avoid complexity with ps or sysctl
 	return false, nil
 }
