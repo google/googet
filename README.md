@@ -64,8 +64,8 @@ mkdir %GOOREPO%\packages
 go run goopack/goopack.go googet.goospec
 copy *.goo %GOOREPO%\packages
 go run server\gooserve.go -root %GOOREPO% -save_index %GOOREPO%\%REPONAME%\index
-gsutil mb --project my-project my-googet-server
-gsutil rsync -r %GOOREPO% gs://my-googet-server
+gcloud storage buckets create --project my-project gs://my-googet-server
+gcloud storage rsync --recursive %GOOREPO% gs://my-googet-server
 googet addrepo gcs gs://my-googet-server
 
 rem This command should print 'gcs: gs://my-googet-server'
