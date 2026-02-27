@@ -437,7 +437,7 @@ func TestFromRepo_SatisfiedByProvider(t *testing.T) {
 
 	// We pass empty repo map and downloader because we expect it NOT to try downloading deps
 	// since they are satisfied.
-	err = installDeps(nil, ps, "", nil, nil, false, nil, db)
+	err = installDeps(t.Context(), ps, "", nil, nil, false, nil, db)
 	if err != nil {
 		t.Errorf("installDeps failed: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 	// Verify that dependency resolution succeeds (finding provider_pkg); the download
 	// is expected to fail due to an invalid repository URL.
 	downloader, _ := client.NewDownloader("")
-	err = installDeps(nil, ps, "", rm, []string{"noarch"}, false, downloader, db)
+	err = installDeps(t.Context(), ps, "", rm, []string{"noarch"}, false, downloader, db)
 
 	// We expect an error because download will fail (invalid URL/Source).
 	if err == nil {

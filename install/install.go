@@ -163,7 +163,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	var rs goolib.RepoSpec
-	var err error
+	var rsErr error
 	// If no version is specified, resolve the latest version handling both
 	// direct matches and providers.
 	if pi.Ver == "" {
@@ -180,11 +180,11 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	} else {
 		// When a specific version is requested, look for an exact match in the repository.
 		// Virtual package resolution is not currently supported for specific versions.
-		rs, err = client.FindRepoSpec(pi, rm[repo])
+		rs, rsErr = client.FindRepoSpec(pi, rm[repo])
 	}
 
-	if err != nil {
-		return err
+	if rsErr != nil {
+		return rsErr
 	}
 	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, dbOnly, downloader, db); err != nil {
 		return err
