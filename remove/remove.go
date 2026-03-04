@@ -31,7 +31,7 @@ import (
 
 func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Executing removal of package %q", pi.Name)
-	ps, err := db.FetchPkg(pi.Name)
+	ps, err := db.FetchPkg(pi)
 	if err != nil {
 		return fmt.Errorf("package not found in state file: %v", err)
 	}

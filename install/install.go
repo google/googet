@@ -39,7 +39,7 @@ var toRemove []string
 
 // minInstalled reports whether the package is installed at the given version or greater.
 func minInstalled(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
-	p, err := db.FetchPkg(pi.Name)
+	p, err := db.FetchPkg(pi)
 	if err != nil {
 		return false, err
 	}
@@ -203,7 +203,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	logger.Infof("Installation of %s.%s.%s completed", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installation of %s.%s.%s and all dependencies completed\n", pi.Name, pi.Arch, pi.Ver)
 	// Clean up old version, if applicable.
-	ps, err := db.FetchPkg(pi.Name)
+	ps, err := db.FetchPkg(pi)
 	if err != nil {
 		return err
 	}
@@ -364,7 +364,7 @@ func copyPkg(src, dst string) (retErr error) {
 
 // NeedsInstallation checks if a package version needs installation.
 func NeedsInstallation(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
-	p, err := db.FetchPkg(pi.Name)
+	p, err := db.FetchPkg(pi)
 	if err != nil {
 		return true, err
 	}
@@ -485,7 +485,6 @@ func cleanOld(st client.PackageState, insFiles map[string]string, dbOnly bool) {
 	if st.UnpackDir != "" && oswrap.RemoveAll(st.UnpackDir) != nil {
 		logger.Error("Unable to remove old unpack dir")
 	}
-	return
 }
 
 func cleanOldFiles(oldState client.PackageState, insFiles map[string]string) {

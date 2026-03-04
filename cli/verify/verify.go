@@ -71,7 +71,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
-		ps, err := db.FetchPkg(pi.Name)
+		ps, err := db.FetchPkg(pi)
 		if err != nil {
 			logger.Errorf("Package %q not installed, cannot verify.", arg)
 			continue

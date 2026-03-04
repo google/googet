@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
@@ -152,7 +153,7 @@ func (g *GooDB) RemovePkg(pkgName, arch string) error {
 }
 
 // FetchPkg exports a single package from the googet database
-func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
+func (g *GooDB) FetchPkg(pi goolib.PackageInfo) (client.PackageState, error) {
 	var pkgState client.PackageState
 
 	selectSpecQuery :=
@@ -163,7 +164,7 @@ func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 		WHERE pkg_name = ?
 		ORDER BY pkg_name
 		`
-	spec, err := g.db.Query(selectSpecQuery, pkgName)
+	spec, err := g.db.Query(selectSpecQuery, pi.Name)
 	if err != nil {
 		return client.PackageState{}, nil
 	}
@@ -179,6 +180,9 @@ func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
 		err = json.Unmarshal([]byte(jsonState), &pkgState)
 		if err != nil {
 			return pkgState, err
+		}
+		if pkgState.Match(pi) {
+			return pkgState, nil
 		}
 	}
 	return pkgState, nil
