@@ -162,8 +162,8 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
-	var rs goolib.RepoSpec
-	var err error
+	// When a specific version is requested, look for an exact match in the repository.
+	// Virtual package resolution is not currently supported for specific versions.
 	// If no version is specified, resolve the latest version handling both
 	// direct matches and providers.
 	if pi.Ver == "" {
@@ -176,13 +176,9 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 		pi.Name = spec.Name
 		pi.Arch = spec.Arch
 		pi.Ver = spec.Version
-		rs, err = client.FindRepoSpec(goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, rm[repo])
-	} else {
-		// When a specific version is requested, look for an exact match in the repository.
-		// Virtual package resolution is not currently supported for specific versions.
-		rs, err = client.FindRepoSpec(pi, rm[repo])
 	}
 
+	rs, err := client.FindRepoSpec(pi, rm[repo])
 	if err != nil {
 		return err
 	}
