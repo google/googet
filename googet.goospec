@@ -16,7 +16,7 @@
   },
   "releaseNotes": [
     "3.2.2 - Refactor: Update GooDB.FetchPkg to accept goolib.PackageInfo.",
-    "3.2.1 - Remove offsets for semver to better support upgrading versions from X.X.X to Y.Y"
+    "3.2.1 - Remove offsets for semver to better support upgrading versions from X.X.X to Y.Y",
     "3.2.0  - Add Provides functionality and field to the GooGet PkgSpec.",
     "3.1.0  - Introduce a dry_run flag for update, install, and remove subcommands.",
     "3.0.0  - Replace googet state file with sqlite database. Add json output for installed command.",
