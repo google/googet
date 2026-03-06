@@ -174,7 +174,7 @@ func (i *installer) installFromFile(path string) error {
 func (i *installer) installFromRepo(ctx context.Context, name string, archs []string) error {
 	pi := goolib.PkgNameSplit(name)
 	if i.shouldReinstall {
-		ps, err := i.db.FetchPkg(pi.Name)
+		ps, err := i.db.FetchPkg(pi)
 		if err != nil {
 			return fmt.Errorf("unable to fetch %v: %v", pi.Name, err)
 		}
