@@ -162,7 +162,7 @@ func (g *GooDB) FetchPkg(pi goolib.PackageInfo) (client.PackageState, error) {
 		FROM
 			InstalledPackages
 		WHERE pkg_name = ?
-		ORDER BY pkg_name
+		ORDER BY pkg_arch
 		`
 	spec, err := g.db.Query(selectSpecQuery, pi.Name)
 	if err != nil {
