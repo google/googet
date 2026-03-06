@@ -143,6 +143,32 @@ func TestFetchPkgsReturnsDistinctEntriesForDifferentArches(t *testing.T) {
 	if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
 		t.Fatalf("FetchPkgs got unexpected diff (-want +got):\n%v", diff)
 	}
+
+	gotPkg, err := db.FetchPkg(goolib.PackageInfo{Name: "test-pkg", Arch: "x86_32"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg: %v", err)
+	}
+	if diff := cmp.Diff(want[1], gotPkg, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("FetchPkg got unexpected diff (-want +got):\n%v", diff)
+	}
+
+	// If only name is provided, arm64 should be matched first based on sort order.
+	gotPkg, err = db.FetchPkg(goolib.PackageInfo{Name: "test-pkg"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg: %v", err)
+	}
+	if diff := cmp.Diff(want[0], gotPkg, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("FetchPkg got unexpected diff (-want +got):\n%v", diff)
+	}
+
+	// If no arch matches, the last processed package (x86_64) should be returned.
+	gotPkg, err = db.FetchPkg(goolib.PackageInfo{Name: "test-pkg", Arch: "none"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg: %v", err)
+	}
+	if diff := cmp.Diff(want[2], gotPkg, cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("FetchPkg got unexpected diff (-want +got):\n%v", diff)
+	}
 }
 
 func TestCreateIfMissing(t *testing.T) {
