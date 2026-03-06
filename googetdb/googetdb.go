@@ -154,47 +154,45 @@ func (g *GooDB) RemovePkg(pkgName, arch string) error {
 
 // FetchPkg exports a single package from the googet database
 func (g *GooDB) FetchPkg(pi goolib.PackageInfo) (client.PackageState, error) {
-	var pkgState client.PackageState
-
 	selectSpecQuery :=
 		`SELECT 
 			pkg_json
 		FROM
 			InstalledPackages
 		WHERE pkg_name = ?
-		ORDER BY pkg_arch
+		ORDER BY pkg_arch, pkg_ver
 		`
 	spec, err := g.db.Query(selectSpecQuery, pi.Name)
 	if err != nil {
-		return client.PackageState{}, nil
+		return client.PackageState{}, err
 	}
 	defer spec.Close()
+
+	var lastPkgState client.PackageState
 	for spec.Next() {
 		var jsonState string
-		err = spec.Scan(
-			&jsonState,
-		)
-		if err != nil {
-			return pkgState, err
+		if err := spec.Scan(&jsonState); err != nil {
+			return client.PackageState{}, err
 		}
-		err = json.Unmarshal([]byte(jsonState), &pkgState)
-		if err != nil {
-			return pkgState, err
+		var pkgState client.PackageState
+		if err := json.Unmarshal([]byte(jsonState), &pkgState); err != nil {
+			return client.PackageState{}, err
 		}
 		if pkgState.Match(pi) {
 			return pkgState, nil
 		}
+		lastPkgState = pkgState
 	}
-	return pkgState, nil
+	return lastPkgState, nil
 }
 
 // FetchPkgs exports all of the current packages in the googet database
 func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
-	query := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name`
+	query := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name, pkg_arch`
 	var args []any
 	if pkgName != "" {
-		query = `SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE ? ORDER BY pkg_name`
+		query = `SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE ? ORDER BY pkg_name, pkg_arch`
 		args = []any{pkgName}
 	}
 	rows, err := g.db.Query(query, args...)
