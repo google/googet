@@ -43,12 +43,13 @@ type installCmd struct {
 	dbOnly     bool
 	sources    string
 	dryRun     bool
+	force      bool
 }
 
 func (*installCmd) Name() string     { return "install" }
 func (*installCmd) Synopsis() string { return "download and install a package and its dependencies" }
 func (*installCmd) Usage() string {
-	return fmt.Sprintf("%s install [-reinstall] [-sources repo1,repo2...] [-dry_run] <name>...\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf("%s install [-reinstall] [-sources repo1,repo2...] [-dry_run] [-force] <name>...\n", filepath.Base(os.Args[0]))
 }
 
 func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
@@ -57,6 +58,7 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform install system actions")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be installed but do not install")
+	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files")
 }
 
 func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...any) subcommands.ExitStatus {
@@ -91,6 +93,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 		confirm:         settings.Confirm,
 		downloader:      downloader,
 		dryRun:          cmd.dryRun,
+		force:           cmd.force,
 	}
 
 	// We only need to build sources and download indexes if there are any
@@ -151,6 +154,7 @@ type installer struct {
 	redownload      bool               // ignore cached downloads when reinstalling
 	confirm         bool               // prompt before changes
 	dryRun          bool               // show what would be done
+	force           bool               // force overwrite resulting from conflicts
 }
 
 // installFromFile installs a package from the specified file path.
@@ -164,7 +168,7 @@ func (i *installer) installFromFile(path string) error {
 		fmt.Printf("Not installing %s...\n", base)
 		return nil
 	}
-	if err := install.FromDisk(path, i.cache, i.dbOnly, i.shouldReinstall, i.db); err != nil {
+	if err := install.FromDisk(path, i.cache, i.dbOnly, i.force, i.shouldReinstall, i.db); err != nil {
 		return fmt.Errorf("installing %s: %v", path, err)
 	}
 	return nil
@@ -229,7 +233,7 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		fmt.Println("canceling install...")
 		return nil
 	}
-	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.downloader, i.db); err != nil {
+	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.force, i.downloader, i.db); err != nil {
 		return fmt.Errorf("installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
 
@@ -251,7 +255,7 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 			return nil
 		}
 	}
-	if err := install.Reinstall(ctx, ps, i.redownload, i.downloader); err != nil {
+	if err := install.Reinstall(ctx, ps, i.redownload, i.force, i.downloader, i.db); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil

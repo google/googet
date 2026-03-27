@@ -129,7 +129,7 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, dbOnly bool, d
 	return nil
 }
 
-func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []string, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm client.RepoMap, archs []string, dbOnly, force bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Resolving conflicts and dependencies for %s %s version %s", ps.Arch, ps.Name, ps.Version)
 	if err := resolveConflicts(ps, db); err != nil {
 		return err
@@ -151,7 +151,7 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 		}
 
 		logger.Infof("Dependency found: %s.%s %s (provides %s) is available", spec.Name, spec.Arch, spec.Version, pi.Name)
-		if err := FromRepo(ctx, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, repo, cache, rm, archs, dbOnly, downloader, db); err != nil {
+		if err := FromRepo(ctx, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, repo, cache, rm, archs, dbOnly, force, downloader, db); err != nil {
 			return err
 		}
 	}
@@ -159,7 +159,7 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 }
 
 // FromRepo installs a package and all dependencies from a repository.
-func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, dbOnly, force bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	// When a specific version is requested, look for an exact match in the repository.
@@ -182,7 +182,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	if err != nil {
 		return err
 	}
-	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, dbOnly, downloader, db); err != nil {
+	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, dbOnly, force, downloader, db); err != nil {
 		return err
 	}
 
@@ -191,7 +191,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 		return err
 	}
 
-	insFiles, err := installPkg(dst, rs.PackageSpec, dbOnly)
+	insFiles, err := installPkg(dst, rs.PackageSpec, dbOnly, force, db)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 }
 
 // FromDisk installs a local .goo file.
-func FromDisk(pkgPath, cache string, dbOnly, shouldReinstall bool, db *googetdb.GooDB) error {
+func FromDisk(pkgPath, cache string, dbOnly, force, shouldReinstall bool, db *googetdb.GooDB) error {
 	if _, err := oswrap.Stat(pkgPath); err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func FromDisk(pkgPath, cache string, dbOnly, shouldReinstall bool, db *googetdb.
 		return err
 	}
 
-	insFiles, err := installPkg(dst, zs, dbOnly)
+	insFiles, err := installPkg(dst, zs, dbOnly, force, db)
 	if err != nil {
 		return err
 	}
@@ -287,7 +287,7 @@ func FromDisk(pkgPath, cache string, dbOnly, shouldReinstall bool, db *googetdb.
 }
 
 // Reinstall reinstalls and optionally redownloads, a package.
-func Reinstall(ctx context.Context, ps client.PackageState, rd bool, downloader *client.Downloader) error {
+func Reinstall(ctx context.Context, ps client.PackageState, rd, force bool, downloader *client.Downloader, db *googetdb.GooDB) error {
 	spec := ps.PackageSpec
 	logger.Infof("Starting reinstall of %s.%s, version %s", spec.Name, spec.Arch, spec.Version)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", spec.Name, spec.Arch, spec.Version)
@@ -326,7 +326,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, rd bool, downloader 
 		}
 	}
 
-	if _, err := installPkg(ps.LocalPath, ps.PackageSpec, false); err != nil {
+	if _, err := installPkg(ps.LocalPath, ps.PackageSpec, false, force, db); err != nil {
 		return fmt.Errorf("error reinstalling package: %v", err)
 	}
 
@@ -394,12 +394,21 @@ func extractSpec(pkgPath string) (*goolib.PkgSpec, error) {
 	return goolib.ExtractPkgSpec(f)
 }
 
-func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly bool) func(string, os.FileInfo, error) error {
+func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, force bool, conflictMap map[string]string) func(string, os.FileInfo, error) error {
 	return func(path string, fi os.FileInfo, err error) (outerr error) {
 		if err != nil {
 			return err
 		}
 		outPath := filepath.Join(dst, strings.TrimPrefix(path, src))
+
+		if owner, ok := conflictMap[outPath]; ok && !fi.IsDir() {
+			if !force {
+				return fmt.Errorf("file conflict: %s is already owned by package %s", outPath, owner)
+			}
+			logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting due to force flag", outPath, owner)
+			fmt.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
+		}
+
 		if dbOnly {
 			if !fi.IsDir() {
 				f, err := oswrap.Open(path)
@@ -508,7 +517,26 @@ func cleanOldFiles(oldState client.PackageState, insFiles map[string]string) {
 	}
 }
 
-func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly bool) (map[string]string, error) {
+func buildConflictMap(db *googetdb.GooDB, currentPkg string) (map[string]string, error) {
+	conflictMap := make(map[string]string)
+	pkgs, err := db.FetchPkgs("")
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pkgs {
+		if p.PackageSpec == nil || p.PackageSpec.Name == currentPkg {
+			continue
+		}
+		for f, hash := range p.InstalledFiles {
+			if hash != "" {
+				conflictMap[f] = p.PackageSpec.Name
+			}
+		}
+	}
+	return conflictMap, nil
+}
+
+func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
 	dir, err := download.ExtractPkg(pkg)
 	if err != nil {
 		return nil, err
@@ -524,11 +552,16 @@ func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly bool) (map[string]string,
 		}
 	}()
 
+	conflictMap, err := buildConflictMap(db, ps.Name)
+	if err != nil {
+		return nil, err
+	}
+
 	insFiles := make(map[string]string)
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)
 		src = filepath.Join(dir, src)
-		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly)); err != nil {
+		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly, force, conflictMap)); err != nil {
 			return nil, err
 		}
 	}
