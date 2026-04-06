@@ -142,6 +142,13 @@ func TestInstallPkg(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(src)
 
+	settings.Initialize(t.TempDir(), false)
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
 	dst, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
@@ -201,7 +208,7 @@ func TestInstallPkg(t *testing.T) {
 	}
 
 	ps := goolib.PkgSpec{Files: map[string]string{"./": dst}}
-	got, err := installPkg(f.Name(), &ps, false)
+	got, err := installPkg(f.Name(), &ps, false, false, db)
 	if err != nil {
 		t.Fatalf("Error running installPkg: %v", err)
 	}
@@ -437,7 +444,7 @@ func TestFromRepo_SatisfiedByProvider(t *testing.T) {
 
 	// We pass empty repo map and downloader because we expect it NOT to try downloading deps
 	// since they are satisfied.
-	err = installDeps(t.Context(), ps, "", nil, nil, false, nil, db)
+	err = installDeps(t.Context(), ps, "", nil, nil, false, false, nil, db)
 	if err != nil {
 		t.Errorf("installDeps failed: %v", err)
 	}
@@ -479,7 +486,7 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 	// Verify that dependency resolution succeeds (finding provider_pkg); the download
 	// is expected to fail due to an invalid repository URL.
 	downloader, _ := client.NewDownloader("")
-	err = installDeps(t.Context(), ps, "", rm, []string{"noarch"}, false, downloader, db)
+	err = installDeps(t.Context(), ps, "", rm, []string{"noarch"}, false, false, downloader, db)
 
 	// We expect an error because download will fail (invalid URL/Source).
 	if err == nil {
@@ -493,5 +500,89 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 		}
 		// Any other error means it TRIED to install it (provider found).
 		t.Logf("Got expected error (confirming resolution success): %v", err)
+	}
+}
+
+func TestBuildConflictMap(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	state := []client.PackageState{
+		{
+			PackageSpec: &goolib.PkgSpec{Name: "pkgA", Version: "1.0.0@1", Arch: "noarch"},
+			InstalledFiles: map[string]string{
+				"/path/to/file1": "chksum1",
+				"/path/to/dir1":  "",
+			},
+		},
+		{
+			PackageSpec: &goolib.PkgSpec{Name: "pkgB", Version: "1.0.0@1", Arch: "noarch"},
+			InstalledFiles: map[string]string{
+				"/path/to/file2": "chksum2",
+			},
+		},
+	}
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+
+	cm, err := buildConflictMap(db, "pkgB")
+	if err != nil {
+		t.Fatalf("buildConflictMap: %v", err)
+	}
+
+	if _, ok := cm["/path/to/dir1"]; ok {
+		t.Errorf("buildConflictMap included directory /path/to/dir1")
+	}
+	if owner, ok := cm["/path/to/file1"]; !ok || owner != "pkgA" {
+		t.Errorf("expected /path/to/file1 to map to pkgA, got %v", owner)
+	}
+	if _, ok := cm["/path/to/file2"]; ok {
+		t.Errorf("buildConflictMap included file from excluded package pkgB")
+	}
+}
+
+func TestMakeInstallFunction(t *testing.T) {
+	dstDir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oswrap.RemoveAll(dstDir)
+
+	srcDir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcDir = filepath.Join(srcDir, "foo") // append subdirectory to properly test TrimPrefix
+	oswrap.MkdirAll(srcDir, 0755)
+	defer oswrap.RemoveAll(srcDir)
+
+	conflictPath := filepath.Join(dstDir, "conflicting_file")
+	cm := map[string]string{
+		conflictPath: "pkgOwner",
+	}
+
+	f, err := oswrap.Create(filepath.Join(srcDir, "conflicting_file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := f.Stat()
+	f.Close()
+
+	// Test 1: Conflict without force -> Error
+	fnBlock := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm)
+	errBlock := fnBlock(filepath.Join(srcDir, "conflicting_file"), fi, nil)
+	if errBlock == nil {
+		t.Errorf("expected conflict error, got nil")
+	}
+
+	// Test 2: Conflict with force -> Success
+	fnForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm)
+	errForce := fnForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
+	if errForce != nil {
+		t.Errorf("expected no error with force, got %v", errForce)
 	}
 }
