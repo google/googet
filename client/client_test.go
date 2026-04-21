@@ -780,8 +780,8 @@ func TestFindRepoLatest_LockArch(t *testing.T) {
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
 				}},
 			},
-			wantVersion:   "1.0.0",
-			wantArch:      "noarch",
+			wantVersion: "1.0.0",
+			wantArch:    "noarch",
 		},
 		{
 			name:          "locked, accept newer unlocked cross-arch",
@@ -794,8 +794,8 @@ func TestFindRepoLatest_LockArch(t *testing.T) {
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
 				}},
 			},
-			wantVersion:   "3.0.0",
-			wantArch:      "x86_64",
+			wantVersion: "3.0.0",
+			wantArch:    "x86_64",
 		},
 		{
 			name:          "unlocked, take newest",
@@ -807,8 +807,8 @@ func TestFindRepoLatest_LockArch(t *testing.T) {
 					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
 				}},
 			},
-			wantVersion:   "2.0.0",
-			wantArch:      "x86_64",
+			wantVersion: "2.0.0",
+			wantArch:    "x86_64",
 		},
 	}
 
