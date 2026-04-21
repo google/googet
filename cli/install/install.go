@@ -198,7 +198,14 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if pi.Ver == "" {
 		var err error
 		var spec *goolib.PkgSpec
-		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs); err != nil {
+		installedPkgs, err := i.db.FetchPkgs(pi.Name)
+		var installedArch string
+		var isLocked bool
+		if err == nil && len(installedPkgs) > 0 {
+			installedArch = installedPkgs[0].PackageSpec.Arch
+			isLocked = installedPkgs[0].PackageSpec.LockArch
+		}
+		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs, installedArch, isLocked); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
 		}
 		pi.Ver = spec.Version
@@ -262,7 +269,7 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 }
 
 func (i *installer) enumerateDeps(pi goolib.PackageInfo, r string, archs []string, dryRun bool) (*bytes.Buffer, error) {
-	dl, err := install.ListDeps(pi, i.repoMap, r, archs)
+	dl, err := install.ListDeps(pi, i.repoMap, r, archs, i.db)
 	if err != nil {
 		return nil, fmt.Errorf("error listing dependencies for %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}

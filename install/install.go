@@ -145,7 +145,14 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 			continue
 		}
 
-		spec, repo, _, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs)
+		installedPkgs, err := db.FetchPkgs(pi.Name)
+		var installedArch string
+		var isLocked bool
+		if err == nil && len(installedPkgs) > 0 {
+			installedArch = installedPkgs[0].PackageSpec.Arch
+			isLocked = installedPkgs[0].PackageSpec.LockArch
+		}
+		spec, repo, _, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs, installedArch, isLocked)
 		if err != nil {
 			return err
 		}
@@ -167,7 +174,14 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	// If no version is specified, resolve the latest version handling both
 	// direct matches and providers.
 	if pi.Ver == "" {
-		spec, repoURL, _, err := client.FindRepoLatest(pi, rm, archs)
+		installedPkgs, err := db.FetchPkgs(pi.Name)
+		var installedArch string
+		var isLocked bool
+		if err == nil && len(installedPkgs) > 0 {
+			installedArch = installedPkgs[0].PackageSpec.Arch
+			isLocked = installedPkgs[0].PackageSpec.LockArch
+		}
+		spec, repoURL, _, err := client.FindRepoLatest(pi, rm, archs, installedArch, isLocked)
 		if err != nil {
 			return err
 		}
@@ -579,7 +593,7 @@ func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb
 	return insFiles, nil
 }
 
-func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib.PackageInfo, archs []string) ([]goolib.PackageInfo, error) {
+func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib.PackageInfo, archs []string, db *googetdb.GooDB) ([]goolib.PackageInfo, error) {
 	rs, err := client.FindRepoSpec(pi, rm[repo])
 	if err != nil {
 		return nil, err
@@ -587,7 +601,14 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 	dl = append(dl, pi)
 	for d, v := range rs.PackageSpec.PkgDependencies {
 		di := goolib.PkgNameSplit(d)
-		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs)
+		installedPkgs, err := db.FetchPkgs(di.Name)
+		var installedArch string
+		var isLocked bool
+		if err == nil && len(installedPkgs) > 0 {
+			installedArch = installedPkgs[0].PackageSpec.Arch
+			isLocked = installedPkgs[0].PackageSpec.LockArch
+		}
+		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs, installedArch, isLocked)
 		di.Arch = arch
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, di.Arch, di.Ver, err)
@@ -600,7 +621,7 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 			return nil, fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, pi.Arch, pi.Ver)
 		}
 		di.Ver = spec.Version
-		dl, err = listDeps(di, rm, repo, dl, archs)
+		dl, err = listDeps(di, rm, repo, dl, archs, db)
 		if err != nil {
 			return nil, err
 		}
@@ -609,7 +630,7 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 }
 
 // ListDeps returns a list of dependencies and subdependancies for a package.
-func ListDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, archs []string) ([]goolib.PackageInfo, error) {
+func ListDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, archs []string, db *googetdb.GooDB) ([]goolib.PackageInfo, error) {
 	logger.Infof("Building dependency list for %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
-	return listDeps(pi, rm, repo, nil, archs)
+	return listDeps(pi, rm, repo, nil, archs, db)
 }

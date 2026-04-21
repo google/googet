@@ -79,6 +79,7 @@ type PkgSpec struct {
 	Name            string
 	Version         string
 	Arch            string
+	LockArch        bool              `json:",omitempty"`
 	ReleaseNotes    []string          `json:",omitempty"`
 	Description     string            `json:",omitempty"`
 	License         string            `json:",omitempty"`

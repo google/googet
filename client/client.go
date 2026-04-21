@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -357,8 +358,7 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 		return nil, err
 	}
 
-	// The .url files aren't used by googet but help developers and the
-	// curious figure out which file belongs to which repo/URL.
+	// The .url files aren't used by googet but help identify which file belongs to which repo/URL.
 	mf := fmt.Sprintf("%s.url", strings.TrimSuffix(cf, filepath.Ext(cf)))
 	if err = ioutil.WriteFile(mf, []byte(url), 0644); err != nil {
 		logger.Errorf("Failed to write '%s': %v", mf, err)
@@ -407,62 +407,101 @@ func latest(psm map[string][]*goolib.PkgSpec, rm RepoMap) (*goolib.PkgSpec, stri
 
 // FindRepoLatest returns the latest version of a package along with its repo and arch.
 // It checks both direct name matches and "Provides" entries.
-// The archs are searched in order; if a matching package is found for any arch, it is
-// returned immediately even if a later arch might have a later version.
-func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string) (*goolib.PkgSpec, string, string, error) {
+// The search order is:
+// 1. Repo Priority (High > Low)
+// 2. Version (New > Old)
+// 3. Architecture Preference (as defined by archs slice order)
+func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string, installedArch string, isLocked bool) (*goolib.PkgSpec, string, string, error) {
 	name := pi.Name
 	if pi.Arch != "" {
 		archs = []string{pi.Arch}
 		name = fmt.Sprintf("%s.%s", pi.Name, pi.Arch)
 	}
 
-	for _, a := range archs {
-		psmDirect := make(map[string][]*goolib.PkgSpec)
-		psmProvides := make(map[string][]*goolib.PkgSpec)
+	archPref := make(map[string]int)
+	for i, a := range archs {
+		archPref[a] = i
+	}
 
-		for u, r := range rm {
-			for _, p := range r.Packages {
-				ps := p.PackageSpec
-				if ps.Arch != a {
-					continue
-				}
+	type candidate struct {
+		spec     *goolib.PkgSpec
+		repo     string
+		priority priority.Value
+	}
+	var directCandidates []candidate
+	var providesCandidates []candidate
 
-				// Check exact match
-				if ps.Name == pi.Name {
-					if satisfiesVersion(ps.Version, pi.Ver) {
-						psmDirect[u] = append(psmDirect[u], ps)
-					}
-					// Skip checking Provides if the package itself is a direct match.
-					continue
-				}
+	for u, r := range rm {
+		for _, p := range r.Packages {
+			ps := p.PackageSpec
 
-				// Check provides
-				for _, prov := range ps.Provides {
-					if SatisfiesProvider(prov, pi.Name, pi.Ver) {
-						psmProvides[u] = append(psmProvides[u], ps)
-						break
-					}
-				}
+			if _, ok := archPref[ps.Arch]; !ok {
+				continue
 			}
-		}
 
-		// Prioritize direct package matches over virtual package providers.
-		if len(psmDirect) > 0 {
-			pkg, repo := latest(psmDirect, rm)
-			if pkg != nil {
-				return pkg, repo, a, nil
+			if ps.Name == pi.Name {
+				if satisfiesVersion(ps.Version, pi.Ver) {
+					directCandidates = append(directCandidates, candidate{ps, u, r.Priority})
+				}
+				continue
 			}
-		}
 
-		// If no direct matches, check providers.
-		// Note: This matches Arch behavior (prefer real package).
-		if len(psmProvides) > 0 {
-			pkg, repo := latest(psmProvides, rm)
-			if pkg != nil {
-				return pkg, repo, a, nil
+			for _, prov := range ps.Provides {
+				if SatisfiesProvider(prov, pi.Name, pi.Ver) {
+					providesCandidates = append(providesCandidates, candidate{ps, u, r.Priority})
+					break
+				}
 			}
 		}
 	}
+
+	sortFunc := func(list []candidate) func(i, j int) bool {
+		return func(i, j int) bool {
+			if list[i].priority != list[j].priority {
+				return list[i].priority > list[j].priority
+			}
+			cmp, err := goolib.Compare(list[i].spec.Version, list[j].spec.Version)
+			if err != nil {
+				logger.Errorf("Error comparing package versions: %v", err)
+				return false // maintain order in case of error
+			}
+			if cmp != 0 {
+				return cmp > 0
+			}
+			return archPref[list[i].spec.Arch] < archPref[list[j].spec.Arch]
+		}
+	}
+
+	filterAndReturn := func(list []candidate) (*goolib.PkgSpec, string, string, error) {
+		if len(list) == 0 {
+			return nil, "", "", fmt.Errorf("no package found")
+		}
+		sort.Slice(list, sortFunc(list))
+		for _, cand := range list {
+			if isLocked && cand.spec.Arch != installedArch {
+				if cand.spec.LockArch {
+					continue // Ignore this candidate
+				}
+			}
+			return cand.spec, cand.repo, cand.spec.Arch, nil
+		}
+		return nil, "", "", fmt.Errorf("no package found satisfying lock conditions")
+	}
+
+	if len(directCandidates) > 0 {
+		spec, repo, arch, err := filterAndReturn(directCandidates)
+		if err == nil {
+			return spec, repo, arch, nil
+		}
+	}
+
+	if len(providesCandidates) > 0 {
+		spec, repo, arch, err := filterAndReturn(providesCandidates)
+		if err == nil {
+			return spec, repo, arch, nil
+		}
+	}
+
 	return nil, "", "", fmt.Errorf("no package found satisfying %s in any repo", name)
 }
 
