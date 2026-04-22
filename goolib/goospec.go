@@ -34,7 +34,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/google/googet/v2/priority"
-	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/pkg/twwarp"
 )
 
 type build struct {
@@ -490,7 +490,7 @@ func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
 			return
 		}
 		for _, line := range lines {
-			sl, _ := tablewriter.WrapString(line, 76-width)
+			sl, _ := twwarp.WrapString(line, 76-width)
 			for _, l := range sl {
 				write(label, l)
 				label = ""
