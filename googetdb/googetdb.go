@@ -214,6 +214,20 @@ func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	return state, nil
 }
 
+// InstalledLockState returns the architecture, lock status, and version of the installed package.
+// If the package is not installed, it returns empty string and false.
+func (g *GooDB) InstalledLockState(pkgName string) (installedArch string, isLocked bool, ver string, pkgFound bool, err error) {
+	pkgs, err := g.FetchPkgs(pkgName)
+	if err != nil {
+		return "", false, "", false, err
+	}
+	if len(pkgs) == 0 {
+		return "", false, "", false, nil
+	}
+	// Assume only one arch is installed, or pick the first one.
+	return pkgs[0].PackageSpec.Arch, pkgs[0].PackageSpec.LockArch, pkgs[0].PackageSpec.Version, true, nil
+}
+
 // readState reads the JSON installed package state from the given path,
 // retrying with a .bak extension if the first read fails.
 //

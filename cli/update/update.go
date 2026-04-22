@@ -92,7 +92,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
-	ud := updates(state.PackageMap(), rm)
+	ud := updates(state, rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
@@ -126,43 +126,46 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	return exitCode
 }
 
-func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
+func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 	fmt.Println("Searching for available updates...")
 	var ud []goolib.PackageInfo
-	for p, ver := range pm {
-		pi := goolib.PkgNameSplit(p)
-		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
+	for _, p := range state {
+		if p.PackageSpec == nil {
+			continue
+		}
+		pi := goolib.PackageInfo{Name: p.PackageSpec.Name, Arch: p.PackageSpec.Arch}
+		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs, p.PackageSpec.Arch, p.PackageSpec.LockArch)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, ver)
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, p.PackageSpec.Version)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
 		if c < 1 {
-			logger.Infof("%s - highest priority version already installed", p)
+			logger.Infof("%s.%s - highest priority version already installed", p.PackageSpec.Name, p.PackageSpec.Arch)
 			continue
 		}
 		// The versions might actually be the same even though the priorities are different,
 		// so do another check to skip reinstall of the same version.
-		c, err = goolib.Compare(spec.Version, ver)
+		c, err = goolib.Compare(spec.Version, p.PackageSpec.Version)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
 		if c == 0 {
-			logger.Infof("%s - same version installed", p)
+			logger.Infof("%s.%s - same version installed", p.PackageSpec.Name, p.PackageSpec.Arch)
 			continue
 		}
 		op := "Upgrade"
 		if c == -1 {
 			op = "Downgrade"
 		}
-		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, spec.Version, r)
-		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, spec.Version, r)
+		fmt.Printf("  %s.%s, %s --> %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
+		logger.Infof("%s for package %s.%s, %s installed and %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
 		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: spec.Version})
 	}
 	return ud

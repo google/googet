@@ -173,8 +173,8 @@ func TestFindRepoLatest(t *testing.T) {
 					{PackageSpec: &goolib.PkgSpec{Name: "bar_pkg", Version: "2.3.0@1", Arch: "noarch"}},
 				}},
 			},
-			wantVersion: "1.2.3@4",
-			wantArch:    "noarch",
+			wantVersion: "3.0.0@1",
+			wantArch:    "arm64",
 			wantRepo:    "foo_repo",
 		},
 		{
@@ -234,9 +234,215 @@ func TestFindRepoLatest(t *testing.T) {
 			wantArch:    "noarch",
 			wantRepo:    "high_priority_repo",
 		},
+		{
+			desc:  "version priority over arch",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"noarch", "x86_64"},
+			rm: RepoMap{
+				"foo_repo": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
+				}},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "foo_repo",
+		},
+		{
+			desc:  "priority wins over version",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"noarch"},
+			rm: RepoMap{
+				"high_pri": Repo{
+					Priority: 1000,
+					Packages: []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}}},
+				},
+				"low_pri": Repo{
+					Priority: 500,
+					Packages: []goolib.RepoSpec{{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "noarch"}}},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "noarch",
+			wantRepo:    "high_pri",
+		},
+		{
+			desc:  "version wins over arch",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_64", "x86_32"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_32",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "arch wins tie",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_64", "x86_32"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "cross arch upgrade",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_32", "x86_64"}, // Prefer 32-bit
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_32"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
+					},
+				},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "complex mix",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_64", "x86_32"},
+			rm: RepoMap{
+				"high_pri": Repo{
+					Priority: 1000,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+					},
+				},
+				"med_pri": Repo{
+					Priority: 500,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "x86_64"}},
+					},
+				},
+				"low_pri": Repo{ // Should win if version was primary
+					Priority: 100,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "4.0.0@1", Arch: "x86_64"}},
+					},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "high_pri",
+		},
+		{
+			desc:  "system_windows amd64 default preference",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_64", "x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "system_windows amd64 version override",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_64", "x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_32",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "system_windows arm64 default preference",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"arm64", "x86_64", "x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "arm64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_64"}},
+					},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "arm64",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "system_windows arm64 version override",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"arm64", "x86_64", "x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "arm64"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_64"}},
+					},
+				},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_64",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "system_windows 386 default preference",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "1.0.0@1",
+			wantArch:    "x86_32",
+			wantRepo:    "repo",
+		},
+		{
+			desc:  "system_windows 386 version override",
+			pi:    goolib.PackageInfo{Name: "foo_pkg"},
+			archs: []string{"x86_32", "noarch"},
+			rm: RepoMap{
+				"repo": Repo{
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0@1", Arch: "noarch"}},
+						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0@1", Arch: "x86_32"}},
+					},
+				},
+			},
+			wantVersion: "2.0.0@1",
+			wantArch:    "x86_32",
+			wantRepo:    "repo",
+		},
 	} {
 		t.Run(tt.desc, func(t *testing.T) {
-			gotSpec, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs)
+			gotSpec, gotRepo, gotArch, err := FindRepoLatest(tt.pi, tt.rm, tt.archs, "", false)
 			if err != nil && !tt.wantErr {
 				t.Fatalf("FindRepoLatest(%v, %v, %v) failed: %v", tt.pi, tt.rm, tt.archs, err)
 			} else if err == nil && tt.wantErr {
@@ -490,7 +696,7 @@ func TestFindRepoLatest_Provides(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, _, _, err := FindRepoLatest(tt.pi, rm, []string{"noarch"})
+			spec, _, _, err := FindRepoLatest(tt.pi, rm, []string{"noarch"}, "", false)
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("FindRepoLatest(%v) wanted error, got nil", tt.pi)
@@ -542,7 +748,7 @@ func TestFindRepoLatest_Priority(t *testing.T) {
 	}
 
 	pi := goolib.PackageInfo{Name: "real_pkg", Arch: "noarch"}
-	spec, _, _, err := FindRepoLatest(pi, rm, []string{"noarch"})
+	spec, _, _, err := FindRepoLatest(pi, rm, []string{"noarch"}, "", false)
 	if err != nil {
 		t.Fatalf("FindRepoLatest failed: %v", err)
 	}
@@ -552,5 +758,72 @@ func TestFindRepoLatest_Priority(t *testing.T) {
 	}
 	if spec.Version != "1.0.0" {
 		t.Errorf("Expected version '1.0.0', got '%s'", spec.Version)
+	}
+}
+
+func TestFindRepoLatest_LockArch(t *testing.T) {
+	tests := []struct {
+		name          string
+		installedArch string
+		isLocked      bool
+		rm            RepoMap
+		wantVersion   string
+		wantArch      string
+	}{
+		{
+			name:          "locked, ignore newer locked cross-arch",
+			installedArch: "noarch",
+			isLocked:      true,
+			rm: RepoMap{
+				"repo1": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0", Arch: "x86_64", LockArch: true}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
+				}},
+			},
+			wantVersion: "1.0.0",
+			wantArch:    "noarch",
+		},
+		{
+			name:          "locked, accept newer unlocked cross-arch",
+			installedArch: "noarch",
+			isLocked:      true,
+			rm: RepoMap{
+				"repo1": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0", Arch: "x86_64", LockArch: true}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0", Arch: "x86_64", LockArch: false}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
+				}},
+			},
+			wantVersion: "3.0.0",
+			wantArch:    "x86_64",
+		},
+		{
+			name:          "unlocked, take newest",
+			installedArch: "noarch",
+			isLocked:      false,
+			rm: RepoMap{
+				"repo1": Repo{Packages: []goolib.RepoSpec{
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "2.0.0", Arch: "x86_64", LockArch: true}},
+					{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "1.0.0", Arch: "noarch"}},
+				}},
+			},
+			wantVersion: "2.0.0",
+			wantArch:    "x86_64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, _, _, err := FindRepoLatest(goolib.PackageInfo{Name: "foo_pkg"}, tt.rm, []string{"noarch", "x86_64"}, tt.installedArch, tt.isLocked)
+			if err != nil {
+				t.Fatalf("FindRepoLatest failed: %v", err)
+			}
+			if spec.Version != tt.wantVersion {
+				t.Errorf("got version %q, want %q", spec.Version, tt.wantVersion)
+			}
+			if spec.Arch != tt.wantArch {
+				t.Errorf("got arch %q, want %q", spec.Arch, tt.wantArch)
+			}
+		})
 	}
 }

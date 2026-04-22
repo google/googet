@@ -87,8 +87,28 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitFailure
 	}
 
+	var installedArch string
+	var isLocked bool
+	var ver string
+	var pkgFound bool
+
+	if cmd.compare {
+		db, err := googetdb.NewDB(settings.DBFile())
+		if err != nil {
+			logger.Errorf("Failed to open database: %v", err)
+			return subcommands.ExitFailure
+		}
+		defer db.Close()
+
+		installedArch, isLocked, ver, pkgFound, err = db.InstalledLockState(pi.Name)
+		if err != nil {
+			logger.Errorf("Failed fetching installed package state: %v", err)
+			return subcommands.ExitFailure
+		}
+	}
+
 	rm := downloader.AvailableVersions(ctx, repos, settings.CacheDir(), settings.CacheLife)
-	spec, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs)
+	spec, _, a, err := client.FindRepoLatest(pi, rm, settings.Archs, installedArch, isLocked)
 	if err != nil {
 		logger.Errorf("Failed to find package: %v", err)
 		return subcommands.ExitFailure
@@ -98,29 +118,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		fmt.Println(v)
 		return subcommands.ExitSuccess
 	}
-
-	db, err := googetdb.NewDB(settings.DBFile())
-	if err != nil {
-		logger.Errorf("Failed to open database: %v", err)
-		return subcommands.ExitFailure
-	}
-	defer db.Close()
-
-	state, err := db.FetchPkgs("")
-	if err != nil {
-		logger.Errorf("Failed fetching installed packages: %v", err)
-		return subcommands.ExitFailure
-	}
 	pi.Arch = a
-	var ver string
-	pkgFound := false
-	for _, p := range state {
-		if p.Match(pi) {
-			ver = p.PackageSpec.Version
-			pkgFound = true
-			break
-		}
-	}
 
 	status := packageStatus{
 		PackageName:      pi.Name,

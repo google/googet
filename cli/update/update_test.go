@@ -29,16 +29,16 @@ func captureStdout(f func()) string {
 
 func TestUpdates(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		pm   client.PackageMap
-		rm   client.RepoMap
-		want []goolib.PackageInfo
+		name  string
+		state client.GooGetState
+		rm    client.RepoMap
+		want  []goolib.PackageInfo
 	}{
 		{
 			name: "upgrade to later version",
-			pm: client.PackageMap{
-				"foo.x86_32": "1.0",
-				"bar.x86_32": "2.0",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "2.0", Arch: "x86_32"}},
 			},
 			rm: client.RepoMap{
 				"stable": client.Repo{
@@ -53,9 +53,9 @@ func TestUpdates(t *testing.T) {
 		},
 		{
 			name: "rollback to earlier version",
-			pm: client.PackageMap{
-				"foo.x86_32": "2.0",
-				"bar.x86_32": "2.0",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "2.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "2.0", Arch: "x86_32"}},
 			},
 			rm: client.RepoMap{
 				"stable": client.Repo{
@@ -76,8 +76,8 @@ func TestUpdates(t *testing.T) {
 		},
 		{
 			name: "no change if rollback version already installed",
-			pm: client.PackageMap{
-				"foo.x86_32": "1.0",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
 			},
 			rm: client.RepoMap{
 				"stable": client.Repo{
@@ -98,7 +98,9 @@ func TestUpdates(t *testing.T) {
 		},
 		{
 			name: "no updates available",
-			pm:   client.PackageMap{"foo.x86_32": "1.0"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
 			rm: client.RepoMap{
 				"stable": client.Repo{
 					Priority: priority.Default,
@@ -116,11 +118,11 @@ func TestUpdates(t *testing.T) {
 
 			var pi []goolib.PackageInfo
 			captureStdout(func() {
-				pi = updates(tc.pm, tc.rm)
+				pi = updates(tc.state, tc.rm)
 			})
 
 			if diff := cmp.Diff(pi, tc.want); diff != "" {
-				t.Errorf("updates(%v, %v) got unexpected diff (-got +want):\n%v", tc.pm, tc.rm, diff)
+				t.Errorf("updates(%v, %v) got unexpected diff (-got +want):\n%v", tc.state, tc.rm, diff)
 			}
 		})
 	}
