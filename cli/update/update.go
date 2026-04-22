@@ -133,7 +133,7 @@ func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 		if p.PackageSpec == nil {
 			continue
 		}
-		pi := goolib.PackageInfo{Name: p.PackageSpec.Name, Arch: p.PackageSpec.Arch, Ver: p.PackageSpec.Version}
+		pi := goolib.PackageInfo{Name: p.PackageSpec.Name, Arch: p.PackageSpec.Arch}
 		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs, p.PackageSpec.Arch, p.PackageSpec.LockArch)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
