@@ -397,7 +397,8 @@ func width() (int, error) {
 	return int(p[0].AddressWidth), nil
 }
 
-// InstallableArchs returns a slice of archs supported by this machine.
+// InstallableArchs returns a slice of archs supported by this machine,
+// ordered by preference (native architecture first, followed by compatible architectures, and lastly "noarch").
 // WMI errors are logged but not returned.
 func InstallableArchs() ([]string, error) {
 	switch {

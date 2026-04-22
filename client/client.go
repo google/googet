@@ -27,7 +27,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -455,48 +455,43 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string, installed
 		}
 	}
 
-	sortFunc := func(list []candidate) func(i, j int) bool {
-		return func(i, j int) bool {
-			if list[i].priority != list[j].priority {
-				return list[i].priority > list[j].priority
-			}
-			cmp, err := goolib.Compare(list[i].spec.Version, list[j].spec.Version)
-			if err != nil {
-				logger.Errorf("Error comparing package versions: %v", err)
-				return false // maintain order in case of error
-			}
-			if cmp != 0 {
-				return cmp > 0
-			}
-			return archPref[list[i].spec.Arch] < archPref[list[j].spec.Arch]
+	cmpFunc := func(a, b candidate) int {
+		c, err := goolib.ComparePriorityVersion(a.priority, a.spec.Version, b.priority, b.spec.Version)
+		if err != nil {
+			logger.Errorf("Error comparing priority/version: %v", err)
+			return 0
 		}
+		if c != 0 {
+			return -c // reverse for descending order
+		}
+		if archPref[a.spec.Arch] < archPref[b.spec.Arch] {
+			return -1
+		}
+		if archPref[a.spec.Arch] > archPref[b.spec.Arch] {
+			return 1
+		}
+		return 0
 	}
 
-	filterAndReturn := func(list []candidate) (*goolib.PkgSpec, string, string, error) {
+	bestCandidate := func(list []candidate) (*goolib.PkgSpec, string, string, error) {
 		if len(list) == 0 {
 			return nil, "", "", fmt.Errorf("no package found")
 		}
-		sort.Slice(list, sortFunc(list))
+		slices.SortFunc(list, cmpFunc)
 		for _, cand := range list {
-			if isLocked && cand.spec.Arch != installedArch {
-				if cand.spec.LockArch {
-					continue // Ignore this candidate
-				}
+			if isLocked && cand.spec.Arch != installedArch && cand.spec.LockArch {
+				continue // Ignore this candidate
 			}
 			return cand.spec, cand.repo, cand.spec.Arch, nil
 		}
 		return nil, "", "", fmt.Errorf("no package found satisfying lock conditions")
 	}
 
-	if len(directCandidates) > 0 {
-		spec, repo, arch, err := filterAndReturn(directCandidates)
-		if err == nil {
-			return spec, repo, arch, nil
+	for _, cands := range [][]candidate{directCandidates, providesCandidates} {
+		if len(cands) == 0 {
+			continue
 		}
-	}
-
-	if len(providesCandidates) > 0 {
-		spec, repo, arch, err := filterAndReturn(providesCandidates)
+		spec, repo, arch, err := bestCandidate(cands)
 		if err == nil {
 			return spec, repo, arch, nil
 		}

@@ -89,7 +89,8 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 	var installedArch string
 	var isLocked bool
-	var state client.GooGetState
+	var ver string
+	var pkgFound bool
 
 	if cmd.compare {
 		db, err := googetdb.NewDB(settings.DBFile())
@@ -99,17 +100,10 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		}
 		defer db.Close()
 
-		state, err = db.FetchPkgs("")
+		installedArch, isLocked, ver, pkgFound, err = db.InstalledLockState(pi.Name)
 		if err != nil {
-			logger.Errorf("Failed fetching installed packages: %v", err)
+			logger.Errorf("Failed fetching installed package state: %v", err)
 			return subcommands.ExitFailure
-		}
-		for _, p := range state {
-			if p.PackageSpec != nil && p.PackageSpec.Name == pi.Name {
-				installedArch = p.PackageSpec.Arch
-				isLocked = p.PackageSpec.LockArch
-				break
-			}
 		}
 	}
 
@@ -125,15 +119,6 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitSuccess
 	}
 	pi.Arch = a
-	var ver string
-	pkgFound := false
-	for _, p := range state {
-		if p.Match(pi) {
-			ver = p.PackageSpec.Version
-			pkgFound = true
-			break
-		}
-	}
 
 	status := packageStatus{
 		PackageName:      pi.Name,

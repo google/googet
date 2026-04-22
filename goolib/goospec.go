@@ -79,6 +79,8 @@ type PkgSpec struct {
 	Name            string
 	Version         string
 	Arch            string
+	// LockArch, if true, prevents upgrading an installed package to a different architecture
+	// unless the newer candidate version sets LockArch to false (or leaves it default).
 	LockArch        bool              `json:",omitempty"`
 	ReleaseNotes    []string          `json:",omitempty"`
 	Description     string            `json:",omitempty"`

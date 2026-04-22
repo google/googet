@@ -145,12 +145,9 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 			continue
 		}
 
-		installedPkgs, err := db.FetchPkgs(pi.Name)
-		var installedArch string
-		var isLocked bool
-		if err == nil && len(installedPkgs) > 0 {
-			installedArch = installedPkgs[0].PackageSpec.Arch
-			isLocked = installedPkgs[0].PackageSpec.LockArch
+		installedArch, isLocked, _, _, err := db.InstalledLockState(pi.Name)
+		if err != nil {
+			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
 		spec, repo, _, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, rm, archs, installedArch, isLocked)
 		if err != nil {
@@ -174,12 +171,9 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	// If no version is specified, resolve the latest version handling both
 	// direct matches and providers.
 	if pi.Ver == "" {
-		installedPkgs, err := db.FetchPkgs(pi.Name)
-		var installedArch string
-		var isLocked bool
-		if err == nil && len(installedPkgs) > 0 {
-			installedArch = installedPkgs[0].PackageSpec.Arch
-			isLocked = installedPkgs[0].PackageSpec.LockArch
+		installedArch, isLocked, _, _, err := db.InstalledLockState(pi.Name)
+		if err != nil {
+			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
 		spec, repoURL, _, err := client.FindRepoLatest(pi, rm, archs, installedArch, isLocked)
 		if err != nil {
@@ -601,12 +595,9 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 	dl = append(dl, pi)
 	for d, v := range rs.PackageSpec.PkgDependencies {
 		di := goolib.PkgNameSplit(d)
-		installedPkgs, err := db.FetchPkgs(di.Name)
-		var installedArch string
-		var isLocked bool
-		if err == nil && len(installedPkgs) > 0 {
-			installedArch = installedPkgs[0].PackageSpec.Arch
-			isLocked = installedPkgs[0].PackageSpec.LockArch
+		installedArch, isLocked, _, _, err := db.InstalledLockState(di.Name)
+		if err != nil {
+			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
 		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs, installedArch, isLocked)
 		di.Arch = arch

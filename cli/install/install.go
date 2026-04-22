@@ -198,12 +198,9 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if pi.Ver == "" {
 		var err error
 		var spec *goolib.PkgSpec
-		installedPkgs, err := i.db.FetchPkgs(pi.Name)
-		var installedArch string
-		var isLocked bool
-		if err == nil && len(installedPkgs) > 0 {
-			installedArch = installedPkgs[0].PackageSpec.Arch
-			isLocked = installedPkgs[0].PackageSpec.LockArch
+		installedArch, isLocked, _, _, err := i.db.InstalledLockState(pi.Name)
+		if err != nil {
+			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
 		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs, installedArch, isLocked); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
