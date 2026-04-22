@@ -76,9 +76,9 @@ var validArch = []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}
 
 // PkgSpec is an individual package specification.
 type PkgSpec struct {
-	Name            string
-	Version         string
-	Arch            string
+	Name    string
+	Version string
+	Arch    string
 	// LockArch, if true, prevents upgrading an installed package to a different architecture
 	// unless the newer candidate version sets LockArch to false (or leaves it default).
 	LockArch        bool              `json:",omitempty"`
