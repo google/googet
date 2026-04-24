@@ -1,4 +1,4 @@
-{{$version := "3.3.0@0" -}}
+{{$version := "3.3.1@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "3.3.1  - Fix: Prevent path traversal vulnerabilities in file unpacking and add workflow permissions.",
     "3.3.0  - Refactor: Update FindRepoLatest to prioritize repo priority, version, and architecture with lock support.",
     "3.3.0  - Refactor: Add file ownership conflict checks to prevent overwrites.",
     "3.2.1  - Refactor: Update GooDB.FetchPkg to accept goolib.PackageInfo.",

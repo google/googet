@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +66,16 @@ func GenGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 func ServeGoo(t *testing.T, dir string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f, err := os.Open(filepath.Join(dir, r.URL.Path))
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		absPath, err := filepath.Abs(filepath.Join(absDir, r.URL.Path))
+		if err != nil || !strings.HasPrefix(absPath, absDir) {
+			http.Error(w, "Invalid file name", http.StatusBadRequest)
+			return
+		}
+		f, err := os.Open(absPath)
 		if err != nil {
 			t.Logf("couldn't find file: %v", r.URL.Path)
 			http.Error(w, "couldn't find requested file", http.StatusNotFound)
