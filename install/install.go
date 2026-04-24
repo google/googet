@@ -31,6 +31,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/remove"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 )
@@ -410,10 +411,14 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, fo
 		outPath := filepath.Join(dst, strings.TrimPrefix(path, src))
 
 		if owner, ok := conflictMap[outPath]; ok && !fi.IsDir() {
-			if !force {
+			if settings.StrictConflicts && !force {
 				return fmt.Errorf("file conflict: %s is already owned by package %s", outPath, owner)
 			}
-			logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting due to force flag", outPath, owner)
+			if force {
+				logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting due to force flag", outPath, owner)
+			} else {
+				logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting because `StrictConflicts` is not set", outPath, owner)
+			}
 			fmt.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
 		}
 
