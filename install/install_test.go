@@ -572,11 +572,11 @@ func TestMakeInstallFunction(t *testing.T) {
 	fi, _ := f.Stat()
 	f.Close()
 
-	// Test 1: Conflict without force -> Error
+	// Test 1: Conflict without force -> Success by default
 	fnBlock := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm)
 	errBlock := fnBlock(filepath.Join(srcDir, "conflicting_file"), fi, nil)
-	if errBlock == nil {
-		t.Errorf("expected conflict error, got nil")
+	if errBlock != nil {
+		t.Errorf("expected no conflict error by default, got %v", errBlock)
 	}
 
 	// Test 2: Conflict with force -> Success
@@ -584,5 +584,21 @@ func TestMakeInstallFunction(t *testing.T) {
 	errForce := fnForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errForce != nil {
 		t.Errorf("expected no error with force, got %v", errForce)
+	}
+
+	// Test 3: Conflict without force in strict mode -> Error
+	settings.StrictConflicts = true
+	defer func() { settings.StrictConflicts = false }()
+	fnStrict := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm)
+	errStrict := fnStrict(filepath.Join(srcDir, "conflicting_file"), fi, nil)
+	if errStrict == nil {
+		t.Errorf("expected conflict error in strict mode, got nil")
+	}
+
+	// Test 4: Conflict with force in strict mode -> Success
+	fnStrictForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm)
+	errStrictForce := fnStrictForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
+	if errStrictForce != nil {
+		t.Errorf("expected no error with force in strict mode, got %v", errStrictForce)
 	}
 }

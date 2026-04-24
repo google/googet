@@ -29,6 +29,8 @@ var (
 	ProxyServer string
 	// AllowUnsafeURL allows HTTP repos; set from googet.conf.
 	AllowUnsafeURL bool
+	// StrictConflicts enables strict enforcement of file ownership conflicts.
+	StrictConflicts bool
 )
 
 // Initialize reads the initial settings.
@@ -76,11 +78,12 @@ func RepoDir() string {
 
 // conf represents a googet configuration file.
 type conf struct {
-	Archs          []string
-	CacheLife      string
-	LockFileMaxAge string
-	ProxyServer    string
-	AllowUnsafeURL bool
+	Archs           []string
+	CacheLife       string
+	LockFileMaxAge  string
+	ProxyServer     string
+	AllowUnsafeURL  bool
+	StrictConflicts bool
 }
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
@@ -138,4 +141,5 @@ func readConf(filename string) {
 	}
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
+	StrictConflicts = gc.StrictConflicts
 }
