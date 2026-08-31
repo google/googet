@@ -248,3 +248,41 @@ func TestCreateIfMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestAddPkgPreservesExecutableNamesAndInstallPath(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%v): %v", dbFile, err)
+	}
+	defer db.Close()
+
+	ps := client.PackageState{
+		PackageSpec: &goolib.PkgSpec{
+			Name:            "firefox",
+			Arch:            "x86_64",
+			Version:         "1.0.0@1",
+			ExecutableNames: []string{"firefox.exe"},
+			InstallPath:     `C:\Program Files\Mozilla Firefox`,
+		},
+		InstallDate: 123456789,
+	}
+	if err := db.AddPkg(ps); err != nil {
+		t.Fatalf("db.AddPkg(%v): %v", ps, err)
+	}
+
+	pkgs, err := db.FetchPkgs("")
+	if err != nil {
+		t.Fatalf("db.FetchPkgs: %v", err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("got %d packages, want 1", len(pkgs))
+	}
+	gotSpec := pkgs[0].PackageSpec
+	if diff := cmp.Diff(ps.PackageSpec.ExecutableNames, gotSpec.ExecutableNames); diff != "" {
+		t.Errorf("ExecutableNames mismatch (-want +got):\n%s", diff)
+	}
+	if gotSpec.InstallPath != ps.PackageSpec.InstallPath {
+		t.Errorf("InstallPath mismatch: got %q, want %q", gotSpec.InstallPath, ps.PackageSpec.InstallPath)
+	}
+}
