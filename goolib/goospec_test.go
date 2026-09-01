@@ -578,6 +578,7 @@ Description  : foo is a package with a very long description which should end
              : up being wrapped over multiple lines.
              : 
              : it also has newlines.
+InstallPath  : 
 Dependencies : bar 2.1.8
              : baz 3.1.4
              : quux 9
@@ -591,6 +592,7 @@ ReleaseNotes :
 				Version:      "7.4@300",
 				Arch:         "x86_64",
 				Description:  "zork is a text adventure game.",
+				InstallPath:  `C:\Program Files\Zork`,
 				Owners:       "infocom",
 				ReleaseNotes: []string{"1977.06.01 - initial development", "1979.11.15 - bug fixes", "1980.12.01 - published"},
 			},
@@ -604,6 +606,7 @@ Authors      :
 Owners       : infocom
 Source       : 
 Description  : zork is a text adventure game.
+InstallPath  : C:\Program Files\Zork
 Dependencies : None
 ReleaseNotes : 1977.06.01 - initial development
              : 1979.11.15 - bug fixes
@@ -619,5 +622,29 @@ ReleaseNotes : 1977.06.01 - initial development
 				t.Fatalf("PrettyPrint got unexpected diff (-want +got):\n%v", diff)
 			}
 		})
+	}
+}
+
+func TestPkgSpec_ExecutableNamesAndInstallPath(t *testing.T) {
+	ps := &PkgSpec{
+		Name:            "test_pkg",
+		Arch:            "x86_64",
+		Version:         "1.0.0@1",
+		ExecutableNames: []string{"test.exe", "helper.exe"},
+		InstallPath:     `C:\Program Files\TestVendor`,
+	}
+	data, err := MarshalPackageSpec(ps)
+	if err != nil {
+		t.Fatalf("MarshalPackageSpec failed: %v", err)
+	}
+	got, err := UnmarshalPackageSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPackageSpec failed: %v", err)
+	}
+	if diff := cmp.Diff(ps.ExecutableNames, got.ExecutableNames); diff != "" {
+		t.Errorf("ExecutableNames mismatch (-want +got):\n%s", diff)
+	}
+	if got.InstallPath != ps.InstallPath {
+		t.Errorf("InstallPath mismatch: got %q, want %q", got.InstallPath, ps.InstallPath)
 	}
 }

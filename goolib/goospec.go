@@ -99,6 +99,10 @@ type PkgSpec struct {
 	Files           map[string]string `json:",omitempty"`
 	// The Display Name of the entry in "Add/Remove programs" for matching
 	ExternalProgramName string
+	// ExecutableNames contains binary executable filenames (e.g. "excel.exe" or "chrome.exe").
+	ExecutableNames []string `json:",omitempty"`
+	// InstallPath contains default target installation directory path (e.g. "C:\Program Files\Vendor").
+	InstallPath string `json:",omitempty"`
 }
 
 func (ps PkgSpec) String() string {
@@ -473,6 +477,7 @@ func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
 		{"Owners", ps.Owners},
 		{"Source", ps.Source},
 		{"Description", ps.Description},
+		{"InstallPath", ps.InstallPath},
 		{"Dependencies", ""},
 		{"ReleaseNotes", ""},
 	}
