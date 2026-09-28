@@ -43,6 +43,7 @@ func setup(t *testing.T, on bool) (outBuf, stdoutBuf *bytes.Buffer, clock *fakeC
 	t.Helper()
 	outBuf, stdoutBuf = &bytes.Buffer{}, &bytes.Buffer{}
 	clock = &fakeClock{t: time.Now()}
+	origWidth := termWidth
 	mu.Lock()
 	enabled = on
 	out = outBuf
@@ -50,6 +51,7 @@ func setup(t *testing.T, on bool) (outBuf, stdoutBuf *bytes.Buffer, clock *fakeC
 	active = nil
 	lastLine = ""
 	now = clock.now
+	termWidth = func() int { return 0 }
 	mu.Unlock()
 	t.Cleanup(func() {
 		mu.Lock()
@@ -60,6 +62,7 @@ func setup(t *testing.T, on bool) (outBuf, stdoutBuf *bytes.Buffer, clock *fakeC
 		active = nil
 		lastLine = ""
 		now = time.Now
+		termWidth = origWidth
 	})
 	return outBuf, stdoutBuf, clock
 }
@@ -638,5 +641,46 @@ func TestElapsed(t *testing.T) {
 		if got := elapsed(start, start.Add(tc.d)); got != tc.want {
 			t.Errorf("elapsed(%v) = %q, want %q", tc.d, got, tc.want)
 		}
+	}
+}
+
+func TestFitTitle(t *testing.T) {
+	orig := termWidth
+	t.Cleanup(func() { termWidth = orig })
+	for _, tc := range []struct {
+		width int
+		title string
+		want  string
+	}{
+		{0, "unknown width keeps the title", "unknown width keeps the title"},
+		{80, "short", "short"},
+		{30, "googet-package-with-a-long-name", "googet-pack"},
+		{30, "ünïcödé-päckägé-nämé", "ünïcödé-päc"},
+		{10, "too narrow to help", "too narrow to help"},
+	} {
+		termWidth = func() int { return tc.width }
+		if got := fitTitle(tc.title); got != tc.want {
+			t.Errorf("fitTitle(%q) at width %d = %q, want %q", tc.title, tc.width, got, tc.want)
+		}
+	}
+}
+
+func TestSpinnerFitsTerminalWidth(t *testing.T) {
+	outBuf, _, _ := setup(t, true)
+	const width = 30
+	mu.Lock()
+	termWidth = func() int { return width }
+	mu.Unlock()
+
+	NewSpinner("Installing googet-package-with-a-long-name").Stop(errors.New("boom"))
+
+	got := outBuf.String()
+	for _, line := range strings.FieldsFunc(got, func(r rune) bool { return r == '\r' || r == '\n' }) {
+		if len(line) >= width {
+			t.Errorf("rendered line %q is %d columns, want fewer than %d", line, len(line), width)
+		}
+	}
+	if want := "\rInstalling... failed [00:00]\n"; !strings.HasSuffix(got, want) {
+		t.Errorf("output = %q, want suffix %q", got, want)
 	}
 }

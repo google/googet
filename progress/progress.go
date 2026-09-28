@@ -93,6 +93,30 @@ var isTerminal = func(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// termWidth returns the width of the stderr terminal in columns, or 0 if it
+// is unknown. It is a variable so tests can stub it.
+var termWidth = func() int {
+	w, _, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil {
+		return 0
+	}
+	return w
+}
+
+// spinnerSuffixLen is the widest text a spinner renders after its title.
+const spinnerSuffixLen = len("... failed [00:00]")
+
+// fitTitle cuts title so a spinner line fits within the terminal width,
+// keeping the last column free. A line that wraps cannot be redrawn with a
+// carriage return, so each frame would otherwise land on a new line.
+func fitTitle(title string) string {
+	room := termWidth() - 1 - spinnerSuffixLen
+	if r := []rune(title); room > 0 && len(r) > room {
+		return strings.TrimRight(string(r[:room]), " ")
+	}
+	return title
+}
+
 // Enabled reports whether progress output is being rendered.
 func Enabled() bool {
 	mu.Lock()
@@ -313,7 +337,7 @@ func (s *Spinner) run() {
 
 // drawLocked renders spinner frame i for time t.
 func (s *Spinner) drawLocked(i int, t time.Time) {
-	redrawLocked(fmt.Sprintf("%s... %c [%s]", s.title, frames[i%len(frames)], elapsed(s.start, t)))
+	redrawLocked(fmt.Sprintf("%s... %c [%s]", fitTitle(s.title), frames[i%len(frames)], elapsed(s.start, t)))
 }
 
 // Stop ends the spinner, writing out any unterminated child output line and
@@ -344,7 +368,7 @@ func (s *Spinner) Stop(err error) {
 	if err != nil {
 		status = "failed"
 	}
-	redrawLocked(fmt.Sprintf("%s... %s [%s]", s.title, status, elapsed(s.start, now())))
+	redrawLocked(fmt.Sprintf("%s... %s [%s]", fitTitle(s.title), status, elapsed(s.start, now())))
 	endLineLocked()
 	active = nil
 }
