@@ -1,4 +1,4 @@
-{{$version := "3.3.3@0" -}}
+{{$version := "3.4.0@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,9 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "3.4.0  - Feat: Add a download progress bar and install spinner on interactive terminals; installer output is still shown live.",
+    "       - Add the -progress flag and progress googet.conf option (default true) to disable it; -verbose also disables it.",
+    "       - Fix: Restart a resumed download from the beginning when the server ignores the Range request.",
     "3.3.3  - Feat: Add ExecutableNames and InstallPath fields to GooGet PkgSpec.",
     "3.3.2  - Feat: introduce StrictConflicts setting to optionally enforce file ownership conflict errors.",
     "3.3.1  - Fix: Prevent path traversal vulnerabilities in file unpacking and add workflow permissions.",
