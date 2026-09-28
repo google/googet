@@ -71,3 +71,26 @@ func TestRotateLog(t *testing.T) {
 		}
 	}
 }
+
+func TestWantProgress(t *testing.T) {
+	for _, tc := range []struct {
+		desc                            string
+		conf, flagSet, flagVal, verbose bool
+		want                            bool
+	}{
+		{desc: "defaults", conf: true, want: true},
+		{desc: "config off", conf: false, want: false},
+		{desc: "flag off overrides config on", conf: true, flagSet: true, flagVal: false, want: false},
+		{desc: "flag on overrides config off", conf: false, flagSet: true, flagVal: true, want: true},
+		{desc: "unset flag value is ignored", conf: false, flagSet: false, flagVal: true, want: false},
+		{desc: "verbose disables", conf: true, verbose: true, want: false},
+		{desc: "verbose beats explicit flag on", conf: true, flagSet: true, flagVal: true, verbose: true, want: false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := wantProgress(tc.conf, tc.flagSet, tc.flagVal, tc.verbose); got != tc.want {
+				t.Errorf("wantProgress(conf=%v, flagSet=%v, flagVal=%v, verbose=%v) = %v, want %v",
+					tc.conf, tc.flagSet, tc.flagVal, tc.verbose, got, tc.want)
+			}
+		})
+	}
+}

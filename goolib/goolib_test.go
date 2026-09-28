@@ -14,11 +14,16 @@ limitations under the License.
 package goolib
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 )
 
 func TestScriptInterpreter(t *testing.T) {
@@ -59,7 +64,6 @@ func randString(runes []rune, min, max int) string {
 }
 
 func TestSplitGCSUrl(t *testing.T) {
-	rand.Seed(time.Now().UnixNano())
 	const alphanum = "abcdefghijklmnopqrstuvwxyz0123456789"
 	objChars := alphanum + "ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~@%^=+"
 	bucket := randString([]rune(alphanum), 1, 1) + randString([]rune(alphanum+"-_."), 0, 61) + randString([]rune(alphanum), 1, 1)
@@ -129,5 +133,92 @@ func TestSplitGCSUrl(t *testing.T) {
 		if ok {
 			t.Logf("Successfully parsed object='%s', bucket='%s' from '%s'", obj, bkt, url)
 		}
+	}
+}
+
+// syncBuffer is a bytes.Buffer that is safe for concurrent writers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// captureStdio runs fn with os.Stdout and os.Stderr redirected to pipes and
+// returns what was written to each.
+func captureStdio(t *testing.T, fn func()) (stdout, stderr string) {
+	t.Helper()
+	capture := func(f **os.File) (restore func() string) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		orig := *f
+		*f = w
+		done := make(chan string)
+		go func() {
+			b, _ := io.ReadAll(r)
+			done <- string(b)
+		}()
+		return func() string {
+			w.Close()
+			*f = orig
+			return <-done
+		}
+	}
+	restoreOut := capture(&os.Stdout)
+	restoreErr := capture(&os.Stderr)
+	fn()
+	return restoreOut(), restoreErr()
+}
+
+func TestRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	for _, tt := range []struct {
+		name    string
+		script  string
+		ec      []int
+		wantErr bool
+	}{
+		{"success", "echo out; echo err >&2", nil, false},
+		{"accepted exit code", "echo out; echo err >&2; exit 3", []int{3}, false},
+		{"rejected exit code", "echo out; echo err >&2; exit 3", nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// Run writes stdout and stderr to w from separate goroutines, so
+			// the shared writer must be safe for concurrent use.
+			var w syncBuffer
+			var err error
+			stdout, stderr := captureStdio(t, func() {
+				err = Run(exec.Command("/bin/sh", "-c", tt.script), tt.ec, &w)
+			})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Run() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			// Without an active spinner the child's output must reach the
+			// process's own stdout and stderr unchanged, so unattended callers
+			// see exactly what they saw before progress reporting existed.
+			if stdout != "out\n" {
+				t.Errorf("stdout = %q, want %q", stdout, "out\n")
+			}
+			if stderr != "err\n" {
+				t.Errorf("stderr = %q, want %q", stderr, "err\n")
+			}
+			if got := w.String(); !strings.Contains(got, "out\n") || !strings.Contains(got, "err\n") {
+				t.Errorf("writer got %q, want both stdout and stderr lines", got)
+			}
+		})
 	}
 }

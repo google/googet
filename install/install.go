@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/progress"
 	"github.com/google/googet/v2/remove"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
@@ -419,7 +421,7 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, fo
 			} else {
 				logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting because `StrictConflicts` is not set", outPath, owner)
 			}
-			fmt.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
+			progress.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
 		}
 
 		if dbOnly {
@@ -549,7 +551,24 @@ func buildConflictMap(db *googetdb.GooDB, currentPkg string) (map[string]string,
 	return conflictMap, nil
 }
 
-func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
+// errInstallInterrupted is the spinner status error used when an install
+// unwinds without returning, such as on a panic.
+var errInstallInterrupted = errors.New("install interrupted")
+
+// installPkg extracts and installs a package, rendering a spinner on
+// interactive terminals for the duration of the install.
+func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (insFiles map[string]string, err error) {
+	sp := progress.NewSpinner(fmt.Sprintf("Installing %s.%s.%s", ps.Name, ps.Arch, ps.Version))
+	// The spinner is stopped by a deferred call so that no exit path leaves it
+	// redrawing. A normal return overwrites err before the deferred call runs;
+	// a panic leaves errInstallInterrupted in place, so it renders "failed".
+	err = errInstallInterrupted
+	defer func() { sp.Stop(err) }()
+	return installPkgInner(pkg, ps, dbOnly, force, db)
+}
+
+// installPkgInner extracts the package, copies its files and runs its install script.
+func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
 	dir, err := download.ExtractPkg(pkg)
 	if err != nil {
 		return nil, err

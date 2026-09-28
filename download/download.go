@@ -34,6 +34,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/progress"
 	"github.com/google/logger"
 )
 
@@ -84,11 +85,9 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	if err != nil {
 		return err
 	}
-	if ok && size < length {
-		logger.Infof("resuming download of %s (%d bytes remaining)", url, length-size)
-		req.Header.Add("Range", fmt.Sprintf("bytes=%d-", size))
-	} else {
-		// Get rid of the old file and download from start, resetting hash.
+	// restart discards any partial download so the response body is written
+	// from the beginning of the file.
+	restart := func() error {
 		if err := f.Truncate(0); err != nil {
 			return err
 		}
@@ -96,6 +95,14 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 			return err
 		}
 		hash.Reset()
+		size = 0
+		return nil
+	}
+	if ok && size < length {
+		logger.Infof("resuming download of %s (%d bytes remaining)", url, length-size)
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-", size))
+	} else if err := restart(); err != nil {
+		return err
 	}
 	resp, err := downloader.HTTPClient.Do(req)
 	if err != nil {
@@ -103,13 +110,30 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("downloading %s: %v", url, err)
+		return fmt.Errorf("downloading %s: unexpected status %s", url, resp.Status)
 	}
+	if resp.StatusCode == http.StatusOK && size > 0 {
+		// The server ignored the Range header and is sending the whole file;
+		// appending it to the partial download would corrupt the file and
+		// overstate the progress total.
+		logger.Infof("server ignored range request for %s, restarting download", url)
+		if err := restart(); err != nil {
+			return err
+		}
+	}
+	// The total is what is already on disk plus what the server will send.
+	total := int64(-1)
+	if resp.ContentLength >= 0 {
+		total = size + resp.ContentLength
+	}
+	bar := progress.NewBar(fmt.Sprintf("Downloading %s", filepath.Base(dst)), total, size)
 	// Continue hashing the file as we download it.
-	n, err := io.Copy(io.MultiWriter(hash, f), resp.Body)
+	n, err := io.Copy(io.MultiWriter(hash, f, bar), resp.Body)
 	if err != nil {
+		bar.Abort()
 		return fmt.Errorf("downloading %s: %v", url, err)
 	}
+	bar.Finish()
 	// Verify the checksum of the fully downloaded file.
 	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
 		os.RemoveAll(dst) // delete the bad file
@@ -134,7 +158,7 @@ func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) 
 	defer r.Close()
 
 	logger.Infof("Downloading gs://%s/%s", bucket, object)
-	return download(r, dst, chksum)
+	return download(r, r.Attrs.Size, dst, chksum)
 }
 
 // FromRepo downloads a package from a repo. It returns the path to the
@@ -162,7 +186,9 @@ func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []st
 	return FromRepo(ctx, rs, repo, dir, downloader)
 }
 
-func download(r io.Reader, dst, chksum string) (err error) {
+// download copies r to dst, verifying the SHA256 checksum, and renders a
+// progress bar when enabled.
+func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	f, err := oswrap.Create(dst)
 	if err != nil {
 		return err
@@ -173,13 +199,16 @@ func download(r io.Reader, dst, chksum string) (err error) {
 		}
 	}()
 
+	bar := progress.NewBar(fmt.Sprintf("Downloading %s", filepath.Base(dst)), size, 0)
 	hash := sha256.New()
-	tw := io.MultiWriter(f, hash)
+	tw := io.MultiWriter(f, hash, bar)
 
 	b, err := io.Copy(tw, r)
 	if err != nil {
+		bar.Abort()
 		return err
 	}
+	bar.Finish()
 
 	if hex.EncodeToString(hash.Sum(nil)) != chksum {
 		fmt.Println(hex.EncodeToString(hash.Sum(nil)), chksum)

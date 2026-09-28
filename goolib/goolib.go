@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -28,6 +27,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/google/googet/v2/progress"
 )
 
 var interpreter = map[string]string{
@@ -79,10 +80,13 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 
 // Run runs a command.
 // The process is successful if the exit code matches any of those provided or '0'.
-// stdout and stderr are sent to the writer and to this process's stdout and stderr.
+// stdout and stderr are sent to the writer and to this process's stdout and
+// stderr. While a progress spinner is active they are still shown as they are
+// produced, a line at a time after clearing the spinner line; nothing is
+// withheld or discarded.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
-	c.Stdout = io.MultiWriter(os.Stdout, w)
-	c.Stderr = io.MultiWriter(os.Stderr, w)
+	c.Stdout = io.MultiWriter(progress.Stdout(), w)
+	c.Stderr = io.MultiWriter(progress.Stderr(), w)
 	if err := c.Run(); err != nil {
 		e, ok := err.(*exec.ExitError)
 		if !ok {
