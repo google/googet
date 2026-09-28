@@ -684,3 +684,53 @@ func TestSpinnerFitsTerminalWidth(t *testing.T) {
 		t.Errorf("output = %q, want suffix %q", got, want)
 	}
 }
+
+func TestFitBarWidth(t *testing.T) {
+	orig := termWidth
+	t.Cleanup(func() { termWidth = orig })
+	for _, tc := range []struct{ width, want int }{
+		{0, barWidth},
+		{200, barWidth},
+		{72, barWidth},
+		{60, 23},
+		{47, minBarWidth},
+		{46, 0},
+		{20, 0},
+	} {
+		termWidth = func() int { return tc.width }
+		if got := fitBarWidth(); got != tc.want {
+			t.Errorf("fitBarWidth() at width %d = %d, want %d", tc.width, got, tc.want)
+		}
+	}
+}
+
+func TestBarFitsTerminalWidth(t *testing.T) {
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{60, "\r|=======================| 100%  1023 KiB / 1023 KiB [00:00]\n"},
+		{40, "\r  100%  1023 KiB / 1023 KiB [00:00]\n"},
+	} {
+		t.Run(fmt.Sprint(tc.width), func(t *testing.T) {
+			outBuf, _, _ := setup(t, true)
+			mu.Lock()
+			termWidth = func() int { return tc.width }
+			mu.Unlock()
+
+			b := NewBar("Downloading pkg", 1023<<10, 0)
+			b.Write(make([]byte, 512<<10))
+			b.Finish()
+
+			got := outBuf.String()
+			for _, line := range strings.FieldsFunc(got, func(r rune) bool { return r == '\r' || r == '\n' }) {
+				if len(line) >= tc.width {
+					t.Errorf("rendered line %q is %d columns, want fewer than %d", line, len(line), tc.width)
+				}
+			}
+			if !strings.HasSuffix(got, tc.want) {
+				t.Errorf("output = %q, want suffix %q", got, tc.want)
+			}
+		})
+	}
+}

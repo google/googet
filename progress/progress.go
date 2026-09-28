@@ -279,10 +279,35 @@ func (b *Bar) drawLocked(t time.Time) {
 		cur = b.total
 	}
 	pct := int(cur * 100 / b.total)
-	n := pct * barWidth / 100
-	redrawLocked(fmt.Sprintf("|%s%s| %3d%%  %s / %s [%s]",
-		strings.Repeat("=", n), strings.Repeat("-", barWidth-n), pct,
+	bar := "  "
+	if w := fitBarWidth(); w > 0 {
+		n := pct * w / 100
+		bar = "|" + strings.Repeat("=", n) + strings.Repeat("-", w-n) + "| "
+	}
+	redrawLocked(fmt.Sprintf("%s%3d%%  %s / %s [%s]", bar, pct,
 		humanize.IBytes(uint64(cur)), humanize.IBytes(uint64(b.total)), elapsed(b.start, t)))
+}
+
+// barTextLen is the widest text a bar line renders besides its cells.
+const barTextLen = len("|| 100%  1023 KiB / 1023 KiB [00:00]")
+
+// minBarWidth is the narrowest bar worth drawing; below it only the
+// percentage and byte counts are shown.
+const minBarWidth = 10
+
+// fitBarWidth returns how many bar cells fit within the terminal width,
+// keeping the last column free, or 0 if the bar should be omitted. An unknown
+// width gets the full barWidth.
+func fitBarWidth() int {
+	w := termWidth()
+	if w <= 0 {
+		return barWidth
+	}
+	n := min(barWidth, w-1-barTextLen)
+	if n < minBarWidth {
+		return 0
+	}
+	return n
 }
 
 // Spinner renders an indeterminate "title... /" line until Stop is called.
