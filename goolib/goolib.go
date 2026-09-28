@@ -81,8 +81,9 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 // Run runs a command.
 // The process is successful if the exit code matches any of those provided or '0'.
 // stdout and stderr are sent to the writer and to this process's stdout and
-// stderr, unless a progress spinner owns the console, in which case they are
-// captured and only shown if the command fails.
+// stderr. While a progress spinner is active they are still shown as they are
+// produced, a line at a time after clearing the spinner line; nothing is
+// withheld or discarded.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	c.Stdout = io.MultiWriter(progress.Stdout(), w)
 	c.Stderr = io.MultiWriter(progress.Stderr(), w)
