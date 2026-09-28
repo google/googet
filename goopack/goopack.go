@@ -30,11 +30,16 @@ import (
 
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/supervisor"
 )
 
 var (
 	outputDir = flag.String("output_dir", "", "where to put the built package")
 )
+
+// buildOptions disables the installer watchdogs for goospec build commands, which are
+// build steps rather than installers and may legitimately run for a long time.
+var buildOptions = supervisor.Options{Mode: supervisor.ModeOff}
 
 type fileMap map[string][]string
 
@@ -349,7 +354,7 @@ func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
 		if !filepath.IsAbs(cmd) {
 			cmd = filepath.Join(baseDir, cmd)
 		}
-		if err := goolib.Exec(cmd, gs.Build.LinuxArgs, nil, ioutil.Discard); err != nil {
+		if err := goolib.ExecWithOptions(cmd, gs.Build.LinuxArgs, nil, buildOptions, ioutil.Discard); err != nil {
 			return err
 		}
 	case gs.Build.Windows != "" && runtime.GOOS == "windows":
@@ -357,7 +362,7 @@ func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
 		if !filepath.IsAbs(cmd) {
 			cmd = filepath.Join(baseDir, cmd)
 		}
-		if err := goolib.Exec(cmd, gs.Build.WindowsArgs, nil, ioutil.Discard); err != nil {
+		if err := goolib.ExecWithOptions(cmd, gs.Build.WindowsArgs, nil, buildOptions, ioutil.Discard); err != nil {
 			return err
 		}
 	}

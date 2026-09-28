@@ -648,3 +648,15 @@ func TestPkgSpec_ExecutableNamesAndInstallPath(t *testing.T) {
 		t.Errorf("InstallPath mismatch: got %q, want %q", got.InstallPath, ps.InstallPath)
 	}
 }
+
+// TestVerifyRejectsBadOverrides verifies that malformed overrides fail spec verification.
+func TestVerifyRejectsBadOverrides(t *testing.T) {
+	ps := &PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1", Install: ExecFile{Timeout: "forever"}}
+	if err := ps.verify(); err == nil {
+		t.Error("verify() = nil for invalid install timeout, want error")
+	}
+	ps.Install.Timeout = "2h"
+	if err := ps.verify(); err != nil {
+		t.Errorf("verify() = %v for valid install timeout, want nil", err)
+	}
+}

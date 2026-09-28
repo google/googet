@@ -268,25 +268,27 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	s := filepath.Join(dir, in.Path)
 	msiLog := filepath.Join(dir, "msi_install.log")
 	ec := append(msiSuccessCodes, in.ExitCodes...)
+	opts := supervisorOptions(in)
 	switch filepath.Ext(s) {
 	case ".msi":
-		args := append([]string{"/i", s, "/qn", "/norestart", "/log", msiLog}, in.Args...)
-		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
+		args := append([]string{"/i", s, "/qn", "/norestart", "/l*v", msiLog}, in.Args...)
+		err = goolib.RunWithOptions(exec.Command("msiexec", args...), ec, opts, out)
 	case ".msp":
-		args := append([]string{"/update", s, "/qn", "/norestart", "/log", msiLog}, in.Args...)
-		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
+		args := append([]string{"/update", s, "/qn", "/norestart", "/l*v", msiLog}, in.Args...)
+		err = goolib.RunWithOptions(exec.Command("msiexec", args...), ec, opts, out)
 	case ".msu":
+		// supervisor.Run applies its servicing policy to wusa, including CBS.log progress.
 		args := append([]string{s, "/quiet", "/norestart"}, in.Args...)
-		err = goolib.Run(exec.Command("wusa", args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command("wusa", args...), ec, opts, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(s, in.Args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command(s, in.Args...), ec, opts, out)
 	case ".msix", ".msixbundle":
 		// Add-AppxProvisionedPackage will install for all users.
 		installCmd := fmt.Sprintf("Add-AppxProvisionedPackage -online -PackagePath %v -SkipLicense", s)
 		args := append([]string{installCmd}, in.Args...)
-		err = goolib.Run(exec.Command("powershell", args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command("powershell", args...), ec, opts, out)
 	default:
-		err = goolib.Exec(s, in.Args, in.ExitCodes, out)
+		err = goolib.ExecWithOptions(s, in.Args, in.ExitCodes, opts, out)
 	}
 	if err != nil {
 		return err
@@ -356,23 +358,25 @@ func Uninstall(dir string, state *client.PackageState) error {
 		filePath = filepath.Join(dir, un.Path)
 	}
 	ec := append(msiSuccessCodes, un.ExitCodes...)
+	opts := supervisorOptions(un)
 	switch filepath.Ext(filePath) {
 	case ".msi":
 		msiLog := filepath.Join(dir, "msi_uninstall.log")
-		args := append([]string{"/x", filePath, "/qn", "/norestart", "/log", msiLog}, un.Args...)
-		err = goolib.Run(exec.Command("msiexec", args...), ec, out)
+		args := append([]string{"/x", filePath, "/qn", "/norestart", "/l*v", msiLog}, un.Args...)
+		err = goolib.RunWithOptions(exec.Command("msiexec", args...), ec, opts, out)
 	case ".msu":
+		// supervisor.Run applies its servicing policy to wusa, including CBS.log progress.
 		args := append([]string{filePath, "/uninstall", "/quiet", "/norestart"}, un.Args...)
-		err = goolib.Run(exec.Command("wusa", args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command("wusa", args...), ec, opts, out)
 	case ".exe":
-		err = goolib.Run(exec.Command(filePath, un.Args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command(filePath, un.Args...), ec, opts, out)
 	case ".msix", ".msixbundle":
 		s := strings.Split(filepath.Base(filePath), "_")[0]
 		removeCmd := fmt.Sprintf(`Get-AppxProvisionedPackage -online | Where {$_.DisplayName -match "%v*"} | Remove-AppProvisionedPackage -online -AllUsers`, s)
 		args := append([]string{removeCmd}, un.Args...)
-		err = goolib.Run(exec.Command("powershell", args...), ec, out)
+		err = goolib.RunWithOptions(exec.Command("powershell", args...), ec, opts, out)
 	default:
-		err = goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
+		err = goolib.ExecWithOptions(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, opts, out)
 	}
 	if err != nil {
 		return err

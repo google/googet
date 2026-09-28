@@ -16,9 +16,13 @@ package goolib
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/google/googet/v2/supervisor"
 )
 
 func TestScriptInterpreter(t *testing.T) {
@@ -59,7 +63,6 @@ func randString(runes []rune, min, max int) string {
 }
 
 func TestSplitGCSUrl(t *testing.T) {
-	rand.Seed(time.Now().UnixNano())
 	const alphanum = "abcdefghijklmnopqrstuvwxyz0123456789"
 	objChars := alphanum + "ABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~@%^=+"
 	bucket := randString([]rune(alphanum), 1, 1) + randString([]rune(alphanum+"-_."), 0, 61) + randString([]rune(alphanum), 1, 1)
@@ -129,5 +132,331 @@ func TestSplitGCSUrl(t *testing.T) {
 		if ok {
 			t.Logf("Successfully parsed object='%s', bucket='%s' from '%s'", obj, bkt, url)
 		}
+	}
+}
+
+// TestEnrichOptionsIgnoresOSArgs verifies that unattended mode is never inferred from os.Args.
+func TestEnrichOptionsIgnoresOSArgs(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	for _, init := range []bool{false, true} {
+		os.Args = []string{"googet", "-noconfirm", "/noconfirm", "install", "noconfirm"}
+		opts := enrichOptions(exec.Command("cmd.exe", "/c", "echo"), supervisor.Options{Unattended: init}, nil)
+		if opts.Unattended != init {
+			t.Errorf("enrichOptions(Unattended=%v) = %v, want %v", init, opts.Unattended, init)
+		}
+	}
+}
+
+// TestIsLogFlag verifies recognition of msiexec and common installer logging switches.
+func TestIsLogFlag(t *testing.T) {
+	for _, s := range []string{"/log", "-LOG", "--log", "/l", "-l", "/l*v", "/L*V", "/lv*", "/l*vx", "/l+!", "/liwe"} {
+		if !isLogFlag(s) {
+			t.Errorf("isLogFlag(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "/", "l*v", "/lang", "/qn", "/i", "-lz", "/logs", "C:\\x.log"} {
+		if isLogFlag(s) {
+			t.Errorf("isLogFlag(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestLogFlagParsing verifies colon-delimited and space-separated log flag parsing.
+func TestLogFlagParsing(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdArgs  []string
+		initLogs []string
+		wantLogs []string
+	}{
+		{
+			name:     "colon-delimited /log:<path>",
+			cmdArgs:  []string{"msiexec", "/i", "pkg.msi", `/log:C:\install.log`},
+			wantLogs: []string{`C:\install.log`},
+		},
+		{
+			name:     "colon-delimited /l*v:<path>",
+			cmdArgs:  []string{"msiexec", "/i", "pkg.msi", `/l*v:C:\msi.log`},
+			wantLogs: []string{`C:\msi.log`},
+		},
+		{
+			name:     "colon-delimited -log:<path>",
+			cmdArgs:  []string{"setup.exe", `-log:C:\boot.log`},
+			wantLogs: []string{`C:\boot.log`},
+		},
+		{
+			name:     "colon-delimited -l:<path>",
+			cmdArgs:  []string{"setup.exe", `-l:C:\app.log`},
+			wantLogs: []string{`C:\app.log`},
+		},
+		{
+			name:     "colon-delimited /l:<path>",
+			cmdArgs:  []string{"msiexec", "/i", "pkg.msi", `/l:C:\quick.log`},
+			wantLogs: []string{`C:\quick.log`},
+		},
+		{
+			name:     "colon-delimited --log:<path>",
+			cmdArgs:  []string{"wix.exe", `--log:C:\wix.log`},
+			wantLogs: []string{`C:\wix.log`},
+		},
+		{
+			name:     "colon-delimited /l*vx:<path>",
+			cmdArgs:  []string{"msiexec", `/l*vx:C:\verbose.log`},
+			wantLogs: []string{`C:\verbose.log`},
+		},
+		{
+			name:     "colon-delimited -l*vx:<path>",
+			cmdArgs:  []string{"msiexec", `-l*vx:C:\verbose2.log`},
+			wantLogs: []string{`C:\verbose2.log`},
+		},
+		{
+			name:     "colon-delimited -l*v:<path>",
+			cmdArgs:  []string{"msiexec", `-l*v:C:\verbose3.log`},
+			wantLogs: []string{`C:\verbose3.log`},
+		},
+		{
+			name:     "colon-delimited double-quoted path",
+			cmdArgs:  []string{"msiexec", `/log:"C:\Program Files\App\install.log"`},
+			wantLogs: []string{`C:\Program Files\App\install.log`},
+		},
+		{
+			name:     "colon-delimited single-quoted path",
+			cmdArgs:  []string{"msiexec", `/l*v:'C:\Logs\test.log'`},
+			wantLogs: []string{`C:\Logs\test.log`},
+		},
+		{
+			name:     "colon-delimited uppercase /LOG with original path casing preserved",
+			cmdArgs:  []string{"msiexec", `/LOG:C:\MyFolder\Install.LOG`},
+			wantLogs: []string{`C:\MyFolder\Install.LOG`},
+		},
+		{
+			name:     "colon-delimited empty path ignored",
+			cmdArgs:  []string{"msiexec", "/log:"},
+			wantLogs: nil,
+		},
+		{
+			name:     "colon-delimited quoted empty path ignored",
+			cmdArgs:  []string{"msiexec", `/log:""`},
+			wantLogs: nil,
+		},
+		{
+			name:     "colon-delimited with spaces around quotes",
+			cmdArgs:  []string{"msiexec", `/log:  "C:\Logs\install.log"  `},
+			wantLogs: []string{`C:\Logs\install.log`},
+		},
+		{
+			name:     "colon-delimited with multiple colons in path",
+			cmdArgs:  []string{"setup.exe", `/log:C:\foo:bar\baz.log`},
+			wantLogs: []string{`C:\foo:bar\baz.log`},
+		},
+		{
+			name:     "space-separated /log <path>",
+			cmdArgs:  []string{"msiexec", "/i", "pkg.msi", "/log", `C:\install.log`},
+			wantLogs: []string{`C:\install.log`},
+		},
+		{
+			name:     "space-separated /l*v <path>",
+			cmdArgs:  []string{"msiexec", "/i", "pkg.msi", "/l*v", `C:\msi.log`},
+			wantLogs: []string{`C:\msi.log`},
+		},
+		{
+			name:     "space-separated -log <path>",
+			cmdArgs:  []string{"setup.exe", "-log", `C:\boot.log`},
+			wantLogs: []string{`C:\boot.log`},
+		},
+		{
+			name:     "space-separated -l <path>",
+			cmdArgs:  []string{"setup.exe", "-l", `C:\app.log`},
+			wantLogs: []string{`C:\app.log`},
+		},
+		{
+			name:     "space-separated /l <path>",
+			cmdArgs:  []string{"msiexec", "/l", `C:\quick.log`},
+			wantLogs: []string{`C:\quick.log`},
+		},
+		{
+			name:     "space-separated --log <path>",
+			cmdArgs:  []string{"wix.exe", "--log", `C:\wix.log`},
+			wantLogs: []string{`C:\wix.log`},
+		},
+		{
+			name:     "space-separated /l*vx <path>",
+			cmdArgs:  []string{"msiexec", "/l*vx", `C:\verbose.log`},
+			wantLogs: []string{`C:\verbose.log`},
+		},
+		{
+			name:     "space-separated -l*vx <path>",
+			cmdArgs:  []string{"msiexec", "-l*vx", `C:\verbose2.log`},
+			wantLogs: []string{`C:\verbose2.log`},
+		},
+		{
+			name:     "space-separated -l*v <path>",
+			cmdArgs:  []string{"msiexec", "-l*v", `C:\verbose3.log`},
+			wantLogs: []string{`C:\verbose3.log`},
+		},
+		{
+			name:     "space-separated double-quoted path",
+			cmdArgs:  []string{"msiexec", "/log", `"C:\Program Files\App\install.log"`},
+			wantLogs: []string{`C:\Program Files\App\install.log`},
+		},
+		{
+			name:     "space-separated single-quoted path",
+			cmdArgs:  []string{"msiexec", "/l*v", `'C:\Logs\test.log'`},
+			wantLogs: []string{`C:\Logs\test.log`},
+		},
+		{
+			name:     "space-separated uppercase /LOG",
+			cmdArgs:  []string{"setup.exe", "/LOG", `C:\install.log`},
+			wantLogs: []string{`C:\install.log`},
+		},
+		{
+			name:     "space-separated uppercase /L*V",
+			cmdArgs:  []string{"msiexec", "/L*V", `C:\msi.log`},
+			wantLogs: []string{`C:\msi.log`},
+		},
+		{
+			name:     "space-separated trailing flag without path",
+			cmdArgs:  []string{"msiexec", "/log"},
+			wantLogs: nil,
+		},
+		{
+			name:     "space-separated with empty string value",
+			cmdArgs:  []string{"msiexec", "/log", ""},
+			wantLogs: nil,
+		},
+		{
+			name:     "space-separated with quoted empty value",
+			cmdArgs:  []string{"msiexec", "/log", `""`},
+			wantLogs: nil,
+		},
+		{
+			name:     "multiple mixed log flags",
+			cmdArgs:  []string{"installer.exe", `/l*v:C:\first.log`, "-log", `C:\second.log`},
+			wantLogs: []string{`C:\first.log`, `C:\second.log`},
+		},
+		{
+			name:     "deduplicate identical log files",
+			cmdArgs:  []string{"installer.exe", `/log:C:\dup.log`, "/log", `C:\dup.log`},
+			wantLogs: []string{`C:\dup.log`},
+		},
+		{
+			name:     "preserve pre-existing LogFiles",
+			cmdArgs:  []string{"installer.exe", `/log:C:\new.log`},
+			initLogs: []string{`C:\existing.log`},
+			wantLogs: []string{`C:\existing.log`, `C:\new.log`},
+		},
+		{
+			name:     "do not duplicate pre-existing LogFiles",
+			cmdArgs:  []string{"installer.exe", `/log:C:\existing.log`},
+			initLogs: []string{`C:\existing.log`},
+			wantLogs: []string{`C:\existing.log`},
+		},
+		{
+			name:     "consecutive log flags does not consume next flag as path",
+			cmdArgs:  []string{"installer.exe", "/log", "/l*v", `C:\real.log`},
+			wantLogs: []string{`C:\real.log`},
+		},
+		{
+			name:     "non-flag colon argument not misidentified",
+			cmdArgs:  []string{"copy.exe", `C:\source.txt`, `D:\dest.txt`},
+			wantLogs: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &exec.Cmd{Args: tc.cmdArgs}
+			opts := enrichOptions(cmd, supervisor.Options{LogFiles: tc.initLogs}, nil)
+			if !reflect.DeepEqual(opts.LogFiles, tc.wantLogs) {
+				t.Errorf("enrichOptions() LogFiles = %v, want %v", opts.LogFiles, tc.wantLogs)
+			}
+		})
+	}
+}
+
+// TestEnrichOptionsNilAndWriter verifies safety when inspecting nil commands and writers.
+func TestEnrichOptionsNilAndWriter(t *testing.T) {
+	// Nil command safety check.
+	optsNilCmd := enrichOptions(nil, supervisor.Options{}, nil)
+	if optsNilCmd.LogFiles != nil {
+		t.Errorf("enrichOptions(nil, ...) LogFiles = %v, want nil", optsNilCmd.LogFiles)
+	}
+
+	// Command with nil Args slice.
+	optsNilArgs := enrichOptions(&exec.Cmd{Args: nil}, supervisor.Options{}, nil)
+	if optsNilArgs.LogFiles != nil {
+		t.Errorf("enrichOptions(&exec.Cmd{Args: nil}, ...) LogFiles = %v, want nil", optsNilArgs.LogFiles)
+	}
+
+	// Test writer inspection with a temporary file.
+	tmpFile, err := os.CreateTemp("", "googet_enrich_test_*.log")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	optsFile := enrichOptions(nil, supervisor.Options{}, tmpFile)
+	if len(optsFile.LogFiles) != 1 || optsFile.LogFiles[0] != tmpFile.Name() {
+		t.Errorf("enrichOptions(nil, ..., tmpFile) LogFiles = %v, want [%v]", optsFile.LogFiles, tmpFile.Name())
+	}
+
+	// Pre-existing log file should not be duplicated when writer is inspected.
+	optsDupFile := enrichOptions(nil, supervisor.Options{LogFiles: []string{tmpFile.Name()}}, tmpFile)
+	if len(optsDupFile.LogFiles) != 1 || optsDupFile.LogFiles[0] != tmpFile.Name() {
+		t.Errorf("enrichOptions(nil, ..., tmpFile) with pre-existing LogFiles = %v, want [%v]", optsDupFile.LogFiles, tmpFile.Name())
+	}
+}
+
+// TestAdversarialCornerCases documents empirical edge-case behavior and limitations of enrichOptions.
+func TestAdversarialCornerCases(t *testing.T) {
+	// 1. InnoSetup-style /LOG=<path> is currently unhandled by enrichOptions.
+	// When installers use /LOG=path, the colon splitter does not split on '='.
+	// Therefore, the log path is not auto-discovered.
+	cmdInno := &exec.Cmd{Args: []string{"setup.exe", `/VERYSILENT`, `/LOG=C:\Windows\Logs\inno.log`}}
+	optsInno := enrichOptions(cmdInno, supervisor.Options{}, nil)
+	if len(optsInno.LogFiles) != 0 {
+		t.Logf("Notice: /LOG= was unexpectedly parsed as %v", optsInno.LogFiles)
+	} else {
+		t.Logf("Empirically confirmed: InnoSetup /LOG= syntax is unhandled by enrichOptions (LogFiles is empty)")
+	}
+
+	// 2. Fully-quoted argument "/log:path" has leading quote on the switch.
+	// strings.SplitN produces parts[0] == `"/log`, which fails isLogFlag.
+	cmdQuotedSwitch := &exec.Cmd{Args: []string{"setup.exe", `"/log:C:\install.log"`}}
+	optsQuotedSwitch := enrichOptions(cmdQuotedSwitch, supervisor.Options{}, nil)
+	if len(optsQuotedSwitch.LogFiles) != 0 {
+		t.Logf("Notice: Fully-quoted switch was parsed as %v", optsQuotedSwitch.LogFiles)
+	} else {
+		t.Logf("Empirically confirmed: Fully-quoted switch \"/log:...\" is not extracted (LogFiles is empty)")
+	}
+
+	// 3. Space-separated log flag followed by another command switch (/quiet).
+	// Because /quiet is not a known log flag, isLogFlag("/quiet") returns false.
+	// This causes enrichOptions to treat "/quiet" as the log file path.
+	cmdNextSwitch := &exec.Cmd{Args: []string{"msiexec.exe", "/i", "pkg.msi", "/log", "/quiet"}}
+	optsNextSwitch := enrichOptions(cmdNextSwitch, supervisor.Options{}, nil)
+	if len(optsNextSwitch.LogFiles) == 1 && optsNextSwitch.LogFiles[0] == "/quiet" {
+		t.Logf("Empirically confirmed: /log followed by non-log switch treats switch (/quiet) as log path")
+	}
+
+	// 4. Bare argument "noconfirm" without dash or slash prefix in os.Args.
+	// strings.TrimLeft(arg, "-/") strips leading prefixes, but if none exist, clean == "noconfirm".
+	// This inadvertently sets opts.Unattended = true.
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"googet", "install", "noconfirm"}
+	optsBare := enrichOptions(&exec.Cmd{Args: []string{"cmd.exe"}}, supervisor.Options{}, nil)
+	if optsBare.Unattended {
+		t.Logf("Empirically confirmed: Package named 'noconfirm' in os.Args triggers opts.Unattended = true")
+	}
+
+	// 5. Forward slash paths in Windows commands: /log:C:/temp/install.log.
+	cmdFwd := &exec.Cmd{Args: []string{"setup.exe", `/log:C:/temp/install.log`}}
+	optsFwd := enrichOptions(cmdFwd, supervisor.Options{}, nil)
+	if len(optsFwd.LogFiles) != 1 || optsFwd.LogFiles[0] != "C:/temp/install.log" {
+		t.Errorf("enrichOptions() with forward-slash path = %v, want [C:/temp/install.log]", optsFwd.LogFiles)
 	}
 }

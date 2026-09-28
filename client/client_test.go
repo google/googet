@@ -19,9 +19,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -301,7 +303,7 @@ func TestFindRepoLatest(t *testing.T) {
 		{
 			desc:  "cross arch upgrade",
 			pi:    goolib.PackageInfo{Name: "foo_pkg"},
-			archs: []string{"x86_32", "x86_64"}, // Prefer 32-bit
+			archs: []string{"x86_32", "x86_64"}, // Prefer 32-bit.
 			rm: RepoMap{
 				"repo": Repo{
 					Packages: []goolib.RepoSpec{
@@ -331,7 +333,7 @@ func TestFindRepoLatest(t *testing.T) {
 						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "3.0.0@1", Arch: "x86_64"}},
 					},
 				},
-				"low_pri": Repo{ // Should win if version was primary
+				"low_pri": Repo{ // Should win if version was primary.
 					Priority: 100,
 					Packages: []goolib.RepoSpec{
 						{PackageSpec: &goolib.PkgSpec{Name: "foo_pkg", Version: "4.0.0@1", Arch: "x86_64"}},
@@ -674,7 +676,7 @@ func TestFindRepoLatest_Provides(t *testing.T) {
 			name:     "Provider match unversioned",
 			pi:       goolib.PackageInfo{Name: "virtual_pkg", Arch: "noarch"},
 			wantName: "real_pkg",
-			wantVer:  "2.0.0", // latest real_pkg
+			wantVer:  "2.0.0", // Latest real_pkg.
 		},
 		{
 			name:     "Provider match matched version",
@@ -709,7 +711,7 @@ func TestFindRepoLatest_Provides(t *testing.T) {
 			if spec.Name != tt.wantName {
 				t.Errorf("FindRepoLatest(%v) name = %q, want %q", tt.pi, spec.Name, tt.wantName)
 			}
-			if spec.Version != tt.wantVer { // Simplified check, assumes simple version strings in test
+			if spec.Version != tt.wantVer { // Simplified check; assumes simple version strings in test.
 				t.Errorf("FindRepoLatest(%v) version = %q, want %q", tt.pi, spec.Version, tt.wantVer)
 			}
 		})
@@ -718,9 +720,9 @@ func TestFindRepoLatest_Provides(t *testing.T) {
 
 func TestFindRepoLatest_Priority(t *testing.T) {
 	// Setup repo with both direct match and provider.
-	// direct match: version 1.0.0
-	// provider: version 2.0.0 (provides it)
-	// direct match should win despite lower version.
+	// Direct match: version 1.0.0.
+	// Provider: version 2.0.0 (provides it).
+	// Direct match should win despite lower version.
 
 	rm := RepoMap{
 		"repo1": Repo{
@@ -825,5 +827,217 @@ func TestFindRepoLatest_LockArch(t *testing.T) {
 				t.Errorf("got arch %q, want %q", spec.Arch, tt.wantArch)
 			}
 		})
+	}
+}
+
+func TestNewDownloader_DedicatedClientAndTransportConfig(t *testing.T) {
+	// Verify that NewDownloader instantiates an isolated client and sets transport timeouts.
+	origDefaultTransport := http.DefaultClient.Transport
+
+	dl, err := NewDownloader("")
+	if err != nil {
+		t.Fatalf("NewDownloader(\"\") returned unexpected error: %v", err)
+	}
+	if dl == nil {
+		t.Fatal("NewDownloader(\"\") returned nil Downloader")
+	}
+	if dl.HTTPClient == nil {
+		t.Fatal("Downloader.HTTPClient is nil")
+	}
+
+	// Verify isolation from http.DefaultClient.
+	if dl.HTTPClient == http.DefaultClient {
+		t.Error("Downloader.HTTPClient must not be http.DefaultClient")
+	}
+	if http.DefaultClient.Transport != origDefaultTransport {
+		t.Errorf("http.DefaultClient.Transport was mutated: got %v, want %v", http.DefaultClient.Transport, origDefaultTransport)
+	}
+
+	// Verify that overall client timeout is 0 to allow streaming large downloads.
+	if dl.HTTPClient.Timeout != 0 {
+		t.Errorf("dl.HTTPClient.Timeout = %v, want 0", dl.HTTPClient.Timeout)
+	}
+
+	// Verify transport configuration.
+	tr, ok := dl.HTTPClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("dl.HTTPClient.Transport is %T, want *http.Transport", dl.HTTPClient.Transport)
+	}
+	if dl.HTTPClient.Transport == origDefaultTransport && origDefaultTransport != nil {
+		t.Error("dl.HTTPClient.Transport shares pointer with http.DefaultClient.Transport")
+	}
+
+	const wantHeaderTimeout = 30 * time.Second
+	if tr.ResponseHeaderTimeout != wantHeaderTimeout {
+		t.Errorf("tr.ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, wantHeaderTimeout)
+	}
+	const wantIdleConnTimeout = 60 * time.Second
+	if tr.IdleConnTimeout != wantIdleConnTimeout {
+		t.Errorf("tr.IdleConnTimeout = %v, want %v", tr.IdleConnTimeout, wantIdleConnTimeout)
+	}
+	const wantTLSHandshakeTimeout = 10 * time.Second
+	if tr.TLSHandshakeTimeout != wantTLSHandshakeTimeout {
+		t.Errorf("tr.TLSHandshakeTimeout = %v, want %v", tr.TLSHandshakeTimeout, wantTLSHandshakeTimeout)
+	}
+	const wantExpectContinueTimeout = 1 * time.Second
+	if tr.ExpectContinueTimeout != wantExpectContinueTimeout {
+		t.Errorf("tr.ExpectContinueTimeout = %v, want %v", tr.ExpectContinueTimeout, wantExpectContinueTimeout)
+	}
+	if tr.MaxIdleConns != 100 {
+		t.Errorf("tr.MaxIdleConns = %d, want 100", tr.MaxIdleConns)
+	}
+	if !tr.ForceAttemptHTTP2 {
+		t.Error("tr.ForceAttemptHTTP2 = false, want true")
+	}
+}
+
+func TestNewDownloader_ProxyConfiguration(t *testing.T) {
+	// Verify proxy configuration options.
+	t.Run("no proxy", func(t *testing.T) {
+		dl, err := NewDownloader("")
+		if err != nil {
+			t.Fatalf("NewDownloader(\"\") failed: %v", err)
+		}
+		if dl.UsingProxyServer {
+			t.Error("UsingProxyServer = true, want false")
+		}
+	})
+
+	t.Run("valid proxy", func(t *testing.T) {
+		proxyURL := "http://proxy.example.com:8080"
+		dl, err := NewDownloader(proxyURL)
+		if err != nil {
+			t.Fatalf("NewDownloader(%q) failed: %v", proxyURL, err)
+		}
+		if !dl.UsingProxyServer {
+			t.Error("UsingProxyServer = false, want true")
+		}
+	})
+
+	t.Run("invalid proxy", func(t *testing.T) {
+		if _, err := NewDownloader("://invalid-url"); err == nil {
+			t.Error("NewDownloader with invalid proxy expected error, got nil")
+		}
+	})
+}
+
+func TestNewDownloader_ResponseHeaderTimeoutFunctional(t *testing.T) {
+	// Verify that ResponseHeaderTimeout terminates requests when server headers stall.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Delay sending response headers well past the timeout, returning
+		// early once the client gives up.
+		select {
+		case <-time.After(10 * time.Second):
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dl, err := NewDownloader("")
+	if err != nil {
+		t.Fatalf("NewDownloader failed: %v", err)
+	}
+
+	tr, ok := dl.HTTPClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("dl.HTTPClient.Transport is %T, want *http.Transport", dl.HTTPClient.Transport)
+	}
+	// Use a short header timeout for fast unit testing.
+	tr.ResponseHeaderTimeout = 40 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = dl.Get(ctx, server.URL)
+	if err == nil {
+		t.Fatal("dl.Get() succeeded, expected timeout error")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("dl.Get() = %v after the context deadline, want ResponseHeaderTimeout to end it first", err)
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && !netErr.Timeout() {
+		t.Errorf("expected timeout net.Error, got %v", err)
+	}
+}
+
+func TestUnmarshalRepoPackagesHTTP_IndexBodyStall(t *testing.T) {
+	// Verify that a repo index whose body stalls mid-stream aborts with
+	// ErrDownloadStalled instead of hanging.
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`[{"Source": "foo"}, `))
+		w.(http.Flusher).Flush()
+		select {
+		case <-time.After(10 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer ts.Close()
+
+	d, err := NewDownloader("")
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	d.StallTimeout = 50 * time.Millisecond
+	start := time.Now()
+	_, err = d.unmarshalRepoPackages(context.Background(), ts.URL, t.TempDir(), cacheLife)
+	if !errors.Is(err, ErrDownloadStalled) {
+		t.Fatalf("unmarshalRepoPackages() = %v, want error wrapping ErrDownloadStalled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("unmarshalRepoPackages took %v, want prompt stall detection", elapsed)
+	}
+}
+
+func TestUnmarshalRepoPackagesHTTP_SlowIndexCompletes(t *testing.T) {
+	// Verify that a slowly trickling index body that keeps making progress is
+	// not aborted by the stall guard.
+	t.Parallel()
+	want := []goolib.RepoSpec{{Source: "foo"}, {Source: "bar"}}
+	j, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		for i := 0; i < len(j); i += 8 {
+			end := i + 8
+			if end > len(j) {
+				end = len(j)
+			}
+			w.Write(j[i:end])
+			w.(http.Flusher).Flush()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}))
+	defer ts.Close()
+
+	d, err := NewDownloader("")
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	// The stall timeout is 50 times the delay between chunks so that the
+	// test stays reliable on loaded machines.
+	d.StallTimeout = 250 * time.Millisecond
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, t.TempDir(), cacheLife)
+	if err != nil {
+		t.Fatalf("unmarshalRepoPackages() = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unmarshalRepoPackages() = %+v, want %+v", got, want)
 	}
 }

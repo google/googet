@@ -11,9 +11,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package update provides the update subcommand for bulk updating packages.
 package update
-
-// The update subcommand handles bulk updating of packages.
 
 import (
 	"context"
@@ -56,7 +55,7 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files (only required if StrictConflicts is enabled in config)")
 }
 
-func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...any) subcommands.ExitStatus {
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
@@ -115,6 +114,8 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		r, err := client.WhatRepo(pi, rm)
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
+			exitCode = subcommands.ExitFailure
+			continue
 		}
 		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, cmd.dbOnly, cmd.force, downloader, db); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)

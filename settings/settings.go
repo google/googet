@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/googet/v2/supervisor"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,23 @@ var (
 	AllowUnsafeURL bool
 	// StrictConflicts enables strict enforcement of file ownership conflicts.
 	StrictConflicts bool
+	// SupervisorMode is the installer watchdog mode parsed from googet.conf ("enforce",
+	// "monitor" or "off"). ModeUnset means the built-in default.
+	SupervisorMode supervisor.Mode
+	// InactivityTimeout is how long an installer may make no forward progress before it is terminated.
+	// Zero means the built-in default and a negative value disables the watchdog.
+	InactivityTimeout time.Duration
+	// InstallTimeout is the absolute runtime limit for an installer.
+	// Zero means the built-in default and a negative value disables the limit.
+	InstallTimeout time.Duration
+	// UIGracePeriod is how long an interactive dialog may persist without progress before termination.
+	// Zero means the built-in default.
+	UIGracePeriod time.Duration
+	// UIDetection enables interactive dialog detection in unattended mode.
+	UIDetection = true
+	// DownloadStallTimeout is how long a download may receive zero bytes before it is retried.
+	// Zero means the built-in default.
+	DownloadStallTimeout time.Duration
 )
 
 // Initialize reads the initial settings.
@@ -78,12 +96,18 @@ func RepoDir() string {
 
 // conf represents a googet configuration file.
 type conf struct {
-	Archs           []string
-	CacheLife       string
-	LockFileMaxAge  string
-	ProxyServer     string
-	AllowUnsafeURL  bool
-	StrictConflicts bool
+	Archs                []string
+	CacheLife            string
+	LockFileMaxAge       string
+	ProxyServer          string
+	AllowUnsafeURL       bool
+	StrictConflicts      bool
+	SupervisorMode       string
+	InactivityTimeout    string
+	InstallTimeout       string
+	UIGracePeriod        string
+	UIDetection          *bool
+	DownloadStallTimeout string
 }
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
@@ -142,4 +166,42 @@ func readConf(filename string) {
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
 	StrictConflicts = gc.StrictConflicts
+
+	SupervisorMode = parseMode(gc.SupervisorMode)
+	InactivityTimeout = parseTimeout("InactivityTimeout", gc.InactivityTimeout, true)
+	InstallTimeout = parseTimeout("InstallTimeout", gc.InstallTimeout, true)
+	UIGracePeriod = parseTimeout("UIGracePeriod", gc.UIGracePeriod, false)
+	DownloadStallTimeout = parseTimeout("DownloadStallTimeout", gc.DownloadStallTimeout, false)
+	UIDetection = gc.UIDetection == nil || *gc.UIDetection
+}
+
+// parseMode parses the googet.conf SupervisorMode. Empty or invalid values return
+// supervisor.ModeUnset (use the built-in default); invalid values are logged.
+func parseMode(s string) supervisor.Mode {
+	if s == "" {
+		return supervisor.ModeUnset
+	}
+	m, err := supervisor.ParseMode(s)
+	if err != nil {
+		logger.Errorf("Invalid SupervisorMode in googet.conf, using default: %v", err)
+		return supervisor.ModeUnset
+	}
+	return m
+}
+
+// parseTimeout parses a googet.conf duration with supervisor.ParseTimeout. Empty or
+// invalid values return zero (use the built-in default) and invalid values are logged.
+// If allowDisable is set, "0" returns a negative value meaning disabled; otherwise "0" is
+// rejected as invalid.
+func parseTimeout(name, s string, allowDisable bool) time.Duration {
+	d, err := supervisor.ParseTimeout(s)
+	switch {
+	case err != nil:
+		logger.Errorf("Invalid %s in googet.conf, using default: %v", name, err)
+		return 0
+	case d < 0 && !allowDisable:
+		logger.Errorf("Invalid %s %q in googet.conf, using default: must be positive", name, s)
+		return 0
+	}
+	return d
 }

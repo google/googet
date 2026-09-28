@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +29,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/google/googet/v2/supervisor"
 )
 
 var interpreter = map[string]string{
@@ -51,6 +54,11 @@ func scriptInterpreter(s string) (string, error) {
 // The process is successful if the exit code matches any of those provided or '0'.
 // stdout and stderr are sent to the writer.
 func Exec(s string, args []string, ec []int, w io.Writer) error {
+	return ExecWithOptions(s, args, ec, supervisor.Options{}, w)
+}
+
+// ExecWithOptions executes a script or binary with custom supervisor options.
+func ExecWithOptions(s string, args []string, ec []int, opts supervisor.Options, w io.Writer) error {
 	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
@@ -74,27 +82,111 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 	default:
 		return fmt.Errorf("OS %q is not Windows or Linux", runtime.GOOS)
 	}
-	return Run(c, ec, w)
+	return RunWithOptions(c, ec, opts, w)
+}
+
+// msiLogModifiers are the characters allowed after /l in msiexec logging switches (e.g. /l*v, /lv*x, /l+!).
+const msiLogModifiers = "iwearucmopvx+!*"
+
+// isLogFlag reports whether the given token matches a known installer logging flag.
+func isLogFlag(s string) bool {
+	ls := strings.ToLower(s)
+	switch ls {
+	case "/log", "-log", "--log":
+		return true
+	}
+	if len(ls) < 2 || (ls[0] != '/' && ls[0] != '-') || ls[1] != 'l' {
+		return false
+	}
+	for _, r := range ls[2:] {
+		if !strings.ContainsRune(msiLogModifiers, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// enrichOptions inspects command line arguments and the output writer to auto-discover
+// log files whose growth indicates forward progress. Unattended mode is configured
+// process-wide via supervisor.Configure and is not inferred here.
+func enrichOptions(c *exec.Cmd, opts supervisor.Options, w io.Writer) supervisor.Options {
+	seen := make(map[string]bool)
+	for _, f := range opts.LogFiles {
+		seen[f] = true
+	}
+	// addLog appends path to opts.LogFiles unless it is empty or already listed.
+	addLog := func(path string) {
+		if path != "" && !seen[path] {
+			opts.LogFiles = append(opts.LogFiles, path)
+			seen[path] = true
+		}
+	}
+
+	// 1. Inspect writer if it is a file.
+	if f, ok := w.(*os.File); ok && f != nil {
+		addLog(f.Name())
+	}
+
+	// 2. Inspect command arguments for log flags (space-separated or colon-delimited).
+	if c != nil {
+		for i := 0; i < len(c.Args); i++ {
+			arg := c.Args[i]
+
+			// Check for colon-delimited log flags (e.g. /log:<path>, /l*v:<path>, -log:<path>, -l:<path>).
+			if parts := strings.SplitN(arg, ":", 2); len(parts) == 2 {
+				if isLogFlag(parts[0]) {
+					addLog(strings.Trim(strings.TrimSpace(parts[1]), `"'`))
+					continue
+				}
+			}
+
+			// Check for space-separated log flags (e.g. /log <path>, /l*v <path>, -log <path>, -l <path>).
+			if isLogFlag(arg) && i+1 < len(c.Args) && !isLogFlag(c.Args[i+1]) {
+				addLog(strings.Trim(strings.TrimSpace(c.Args[i+1]), `"'`))
+				i++
+			}
+		}
+	}
+
+	return opts
 }
 
 // Run runs a command.
 // The process is successful if the exit code matches any of those provided or '0'.
 // stdout and stderr are sent to the writer and to this process's stdout and stderr.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
-	c.Stdout = io.MultiWriter(os.Stdout, w)
-	c.Stderr = io.MultiWriter(os.Stderr, w)
-	if err := c.Run(); err != nil {
-		e, ok := err.(*exec.ExitError)
-		if !ok {
-			return err
-		}
-		s, ok := e.Sys().(syscall.WaitStatus)
-		if !ok {
-			return err
-		}
-		if !slices.Contains(ec, s.ExitStatus()) {
-			return fmt.Errorf("command exited with error code %v", s.ExitStatus())
-		}
+	return RunWithOptions(c, ec, supervisor.Options{}, w)
+}
+
+// RunWithOptions runs a command supervised by the supervisor package using custom options.
+func RunWithOptions(c *exec.Cmd, ec []int, opts supervisor.Options, w io.Writer) error {
+	opts = enrichOptions(c, opts, w)
+	return checkExit(supervisor.Run(c, opts, w), ec)
+}
+
+// checkExit maps the result of supervisor.Run to the error returned by RunWithOptions.
+// A nonzero exit status listed in ec is treated as success.
+func checkExit(err error, ec []int) error {
+	if err == nil {
+		return nil
+	}
+	// Defense in depth: supervisor termination errors do not wrap an
+	// *exec.ExitError today, so errors.As below would already fail for them.
+	// This guard keeps a future termination error that does wrap one from
+	// being accepted as success because its exit code is listed in ec.
+	if errors.Is(err, supervisor.ErrTerminated) {
+		return err
+	}
+	var e *exec.ExitError
+	if !errors.As(err, &e) {
+		return err
+	}
+	s, ok := e.Sys().(syscall.WaitStatus)
+	if !ok {
+		return err
+	}
+	if !slices.Contains(ec, s.ExitStatus()) {
+		return fmt.Errorf("command exited with error code %v", s.ExitStatus())
 	}
 	return nil
 }

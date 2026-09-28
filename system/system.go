@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/supervisor"
 	"github.com/google/logger"
 )
 
@@ -44,7 +45,19 @@ func Verify(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	return goolib.Exec(filepath.Join(dir, v.Path), v.Args, v.ExitCodes, out)
+	return goolib.ExecWithOptions(filepath.Join(dir, v.Path), v.Args, v.ExitCodes, supervisorOptions(v), out)
+}
+
+// supervisorOptions returns the supervisor options declared by ef. Invalid overrides are
+// logged and ignored so that the process-wide defaults apply; VerifyPkgSpec already
+// rejects them when a package is built.
+func supervisorOptions(ef goolib.ExecFile) supervisor.Options {
+	opts, err := ef.SupervisorOptions()
+	if err != nil {
+		logger.Warningf("Ignoring invalid timeout overrides for %q: %v", ef.Path, err)
+		return supervisor.Options{}
+	}
+	return opts
 }
 
 // isLockFileStale checks if the lock file is older than maxAge.
@@ -74,6 +87,11 @@ func readPID(lockFile string) (int, error) {
 }
 
 // killProcess kills the process with the given PID.
+//
+// On Windows only the GooGet PID needs to be killed: installers run by the
+// supervisor package are assigned to a Job Object with
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE whose only handle is owned by that GooGet
+// process, so its termination also terminates any installer process tree.
 func killProcess(pid int) error {
 	p, err := os.FindProcess(pid)
 	if err != nil {

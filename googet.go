@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/settings"
+	"github.com/google/googet/v2/supervisor"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
@@ -76,6 +78,22 @@ func rotateLog(logPath string, ls int64) error {
 
 func main() {
 	os.Exit(run(context.Background()))
+}
+
+// configureWatchdogs applies googet.conf installer supervision and download stall settings.
+func configureWatchdogs() {
+	supervisor.Configure(supervisor.Options{
+		Mode:               settings.SupervisorMode,
+		InactivityTimeout:  settings.InactivityTimeout,
+		HardTimeout:        settings.InstallTimeout,
+		UIGracePeriod:      settings.UIGracePeriod,
+		DisableUIDetection: !settings.UIDetection,
+		Unattended:         !settings.Confirm,
+	})
+	client.SetDefaultStallTimeout(settings.DownloadStallTimeout)
+	d := supervisor.CurrentDefaults()
+	logger.Infof("Installer supervision: mode=%v inactivity=%v hard=%v ui_grace=%v ui_detection=%v unattended=%v",
+		d.Mode, d.InactivityTimeout, d.HardTimeout, d.UIGracePeriod, !d.DisableUIDetection, d.Unattended)
 }
 
 func run(ctx context.Context) int {
@@ -160,6 +178,8 @@ func run(ctx context.Context) int {
 	defer lf.Close()
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
+
+	configureWatchdogs()
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)

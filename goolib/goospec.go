@@ -34,6 +34,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/supervisor"
 	"github.com/olekukonko/tablewriter/pkg/twwarp"
 )
 
@@ -114,6 +115,46 @@ type ExecFile struct {
 	Path      string   `json:",omitempty"`
 	Args      []string `json:",omitempty"`
 	ExitCodes []int    `json:",omitempty"`
+	// Timeout overrides the absolute runtime limit for this command as a Go duration
+	// string (e.g. "3h"). Empty uses the configured default and "0" disables the limit.
+	Timeout string `json:",omitempty"`
+	// InactivityTimeout overrides how long this command may make no forward progress
+	// before it is terminated. Empty uses the configured default and "0" disables it.
+	InactivityTimeout string `json:",omitempty"`
+}
+
+// parseOverride converts an ExecFile duration override into a supervisor duration using
+// supervisor.ParseTimeout, where zero means "use the default" and a negative value means
+// "disabled".
+func parseOverride(field, s string) (time.Duration, error) {
+	d, err := supervisor.ParseTimeout(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", field, err)
+	}
+	return d, nil
+}
+
+// overrides returns the hard and inactivity timeout overrides for this command. A zero
+// duration means "use the default" and a negative duration means "disabled".
+func (e ExecFile) overrides() (hard, inactivity time.Duration, err error) {
+	if hard, err = parseOverride("timeout", e.Timeout); err != nil {
+		return 0, 0, err
+	}
+	if inactivity, err = parseOverride("inactivityTimeout", e.InactivityTimeout); err != nil {
+		return 0, 0, err
+	}
+	return hard, inactivity, nil
+}
+
+// SupervisorOptions returns the supervisor options declared by this command's timeout
+// overrides. Fields that are not overridden are left at their zero value so that the
+// process-wide defaults configured via supervisor.Configure apply.
+func (e ExecFile) SupervisorOptions() (supervisor.Options, error) {
+	hard, inactivity, err := e.overrides()
+	if err != nil {
+		return supervisor.Options{}, err
+	}
+	return supervisor.Options{HardTimeout: hard, InactivityTimeout: inactivity}, nil
 }
 
 // Version contains the semver version as well as the GsVer.
@@ -418,6 +459,11 @@ func (ps *PkgSpec) verify() error {
 	}
 	if filepath.IsAbs(ps.Uninstall.Path) {
 		return fmt.Errorf("%q is an absolute path, expected relative", ps.Uninstall.Path)
+	}
+	for name, ef := range map[string]ExecFile{"install": ps.Install, "uninstall": ps.Uninstall, "verify": ps.Verify} {
+		if _, err := ef.SupervisorOptions(); err != nil {
+			return fmt.Errorf("%s: %v", name, err)
+		}
 	}
 	return nil
 }
