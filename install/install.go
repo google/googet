@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -550,13 +551,20 @@ func buildConflictMap(db *googetdb.GooDB, currentPkg string) (map[string]string,
 	return conflictMap, nil
 }
 
+// errInstallInterrupted is the spinner status error used when an install
+// unwinds without returning, such as on a panic.
+var errInstallInterrupted = errors.New("install interrupted")
+
 // installPkg extracts and installs a package, rendering a spinner on
 // interactive terminals for the duration of the install.
-func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
+func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (insFiles map[string]string, err error) {
 	sp := progress.NewSpinner(fmt.Sprintf("Installing %s.%s.%s", ps.Name, ps.Arch, ps.Version))
-	insFiles, err := installPkgInner(pkg, ps, dbOnly, force, db)
-	sp.Stop(err)
-	return insFiles, err
+	// The spinner is stopped by a deferred call so that no exit path leaves it
+	// redrawing. A normal return overwrites err before the deferred call runs;
+	// a panic leaves errInstallInterrupted in place, so it renders "failed".
+	err = errInstallInterrupted
+	defer func() { sp.Stop(err) }()
+	return installPkgInner(pkg, ps, dbOnly, force, db)
 }
 
 // installPkgInner extracts the package, copies its files and runs its install script.
