@@ -178,7 +178,7 @@ type Options struct {
 const (
 	defaultMode              = ModeEnforce
 	defaultInactivityTimeout = 5 * time.Minute
-	defaultHardTimeout       = 60 * time.Minute
+	defaultHardTimeout       = 4 * time.Hour
 	defaultUIGracePeriod     = 30 * time.Second
 	defaultPollInterval      = 2 * time.Second
 	defaultProgressWindow    = 30 * time.Second

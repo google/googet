@@ -180,7 +180,7 @@ func TestSupervise_ProgressPreventsInactivity(t *testing.T) {
 // TestSupervise_HardTimeout verifies that the hard cap terminates a tree making progress.
 func TestSupervise_HardTimeout(t *testing.T) {
 	tree := &fakeTree{cpuAt: steadyCPU}
-	err := runFake(testOptions(Options{}), tree, 2*time.Second, 2*time.Hour)
+	err := runFake(testOptions(Options{}), tree, 2*time.Second, 5*time.Hour)
 	if !errors.Is(err, ErrHardTimeout) {
 		t.Fatalf("supervise got %v, want ErrHardTimeout", err)
 	}

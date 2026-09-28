@@ -15,7 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
-    "3.4.0  - Feat: Supervise installers in a Job Object; terminate hung (5m no progress), interactive (30s modal dialog without progress in unattended mode), or over-long (60m) installers. Configure via SupervisorMode/InactivityTimeout/InstallTimeout/UIGracePeriod/UIDetection in googet.conf or per package via ExecFile timeout/inactivityTimeout. Installers longer than 60m must set a timeout override.",
+    "3.4.0  - Feat: Supervise installers in a Job Object; terminate hung (5m no progress), interactive (30s modal dialog without progress in unattended mode), or over-long (4h) installers. Configure via SupervisorMode/InactivityTimeout/InstallTimeout/UIGracePeriod/UIDetection in googet.conf or per package via ExecFile timeout/inactivityTimeout. Installers that legitimately run longer than 4h must set a timeout override.",
     "3.4.0  - Change: Killing googet (e.g. an outer agent timeout) now also terminates the in-flight installer process tree (Job Object KILL_ON_JOB_CLOSE).",
     "3.4.0  - Change: .msu (wusa) installs have no hard timeout unless the package sets one; CBS.log growth counts as progress.",
     "3.4.0  - Feat: Download stall detection with automatic HTTP Range/GCS resume; header timeout for HTTP requests.",

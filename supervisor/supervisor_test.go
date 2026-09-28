@@ -742,7 +742,7 @@ func TestServicingOptions(t *testing.T) {
 		wantInactivity time.Duration
 	}{
 		{"NothingConfiguredLiftsCap", Options{LogFiles: []string{"pkg.msu.log"}}, false, windir, -1, []string{"pkg.msu.log", cbs}, 0},
-		{"AdminExplicit60mRespected", Options{}, true, windir, 0, []string{cbs}, 0},
+		{"AdminExplicitHardTimeoutRespected", Options{}, true, windir, 0, []string{cbs}, 0},
 		{"PackageTimeoutRespected", Options{HardTimeout: 2 * time.Hour, InactivityTimeout: 20 * time.Minute}, false, windir, 2 * time.Hour, []string{cbs}, 20 * time.Minute},
 		{"PackageTimeoutWinsOverAdmin", Options{HardTimeout: 2 * time.Hour}, true, windir, 2 * time.Hour, []string{cbs}, 0},
 		{"EmptyWindirFallsBack", Options{}, false, "", -1, []string{filepath.Join(`C:\Windows`, "Logs", "CBS", "CBS.log")}, 0},
