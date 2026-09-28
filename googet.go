@@ -164,16 +164,13 @@ func run(ctx context.Context) int {
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
 
-	// Progress rendering is opt-in and only for interactive terminals; -verbose
-	// interleaves INFO logs on stdout, which would corrupt a redrawn line. An
-	// explicit -progress, true or false, overrides progress in googet.conf.
-	showProgress := settings.Progress
+	progressSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "progress" {
-			showProgress = *progressFlag
+			progressSet = true
 		}
 	})
-	progress.Init(showProgress && !*verbose)
+	progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)
@@ -188,4 +185,20 @@ func run(ctx context.Context) int {
 		return 1
 	}
 	return int(cmdr.Execute(ctx))
+}
+
+// wantProgress reports whether progress output should be rendered, given the
+// progress setting from googet.conf, whether -progress was set explicitly and
+// its value, and -verbose. Progress is still subject to the terminal checks in
+// progress.Init. An explicit -progress, true or false, overrides the config;
+// -verbose always disables progress because it interleaves INFO logs on
+// stdout, which would corrupt a redrawn line.
+func wantProgress(conf, flagSet, flagVal, verbose bool) bool {
+	if verbose {
+		return false
+	}
+	if flagSet {
+		return flagVal
+	}
+	return conf
 }
