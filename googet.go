@@ -84,7 +84,7 @@ func run(ctx context.Context) int {
 	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
 	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog := flag.Bool("system_log", true, "log to Linux Syslog or Windows Event Log")
-	noProgress := flag.Bool("no_progress", false, "disable the download progress bar and install spinner; they are only shown when stderr is a terminal and never with -verbose (default from noprogress in googet.conf)")
+	progressFlag := flag.Bool("progress", true, "show a download progress bar and install spinner when stderr is a terminal (never with -verbose); overrides progress in googet.conf")
 	showVer := flag.Bool("version", false, "display GooGet version and exit")
 
 	if flagParse != nil {
@@ -104,7 +104,7 @@ func run(ctx context.Context) int {
 	cmdr.Register(cmdr.HelpCommand(), "")
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
-	cmdr.ImportantFlag("no_progress")
+	cmdr.ImportantFlag("progress")
 
 	// These commands may execute without a lock and before any initialization.
 	cmdName := flag.Arg(0) // empty string if no args
@@ -166,14 +166,14 @@ func run(ctx context.Context) int {
 
 	// Progress rendering is opt-in and only for interactive terminals; -verbose
 	// interleaves INFO logs on stdout, which would corrupt a redrawn line. An
-	// explicit -no_progress, true or false, overrides noprogress in googet.conf.
-	disableProgress := settings.NoProgress
+	// explicit -progress, true or false, overrides progress in googet.conf.
+	showProgress := settings.Progress
 	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "no_progress" {
-			disableProgress = *noProgress
+		if f.Name == "progress" {
+			showProgress = *progressFlag
 		}
 	})
-	progress.Init(!disableProgress && !*verbose)
+	progress.Init(showProgress && !*verbose)
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)

@@ -31,9 +31,10 @@ var (
 	AllowUnsafeURL bool
 	// StrictConflicts enables strict enforcement of file ownership conflicts.
 	StrictConflicts bool
-	// NoProgress disables the download progress bar and install spinner;
-	// set from googet.conf and overridden by an explicit -no_progress flag.
-	NoProgress bool
+	// Progress enables the download progress bar and install spinner on
+	// interactive terminals; set from googet.conf (default true) and
+	// overridden by an explicit -progress flag.
+	Progress = true
 )
 
 // Initialize reads the initial settings.
@@ -87,7 +88,8 @@ type conf struct {
 	ProxyServer     string
 	AllowUnsafeURL  bool
 	StrictConflicts bool
-	NoProgress      bool
+	// Progress is a pointer so an absent key keeps the default of true.
+	Progress *bool
 }
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
@@ -146,5 +148,8 @@ func readConf(filename string) {
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
 	StrictConflicts = gc.StrictConflicts
-	NoProgress = gc.NoProgress
+	Progress = true
+	if gc.Progress != nil {
+		Progress = *gc.Progress
+	}
 }
