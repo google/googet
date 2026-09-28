@@ -22,7 +22,8 @@ limitations under the License.
 // Child process output is never hidden. While a spinner is active, installer
 // output is passed through to the real stdout and stderr a complete line at a
 // time, after first clearing the spinner line, so it scrolls above the
-// spinner instead of being interleaved with it.
+// spinner instead of being interleaved with it. An unterminated line is held
+// back for at most about a second before it is written out anyway.
 package progress
 
 import (
@@ -50,6 +51,9 @@ const (
 	// maxPartialLine bounds how much of an unterminated child output line is
 	// held back before it is written out anyway.
 	maxPartialLine = 4096
+	// partialLineDelay bounds how long an unterminated child output line is
+	// held back, so a partial line followed by a long silent step still shows.
+	partialLineDelay = 500 * time.Millisecond
 )
 
 // frames are the ASCII spinner frames; ASCII keeps rendering identical on
@@ -354,6 +358,9 @@ func (s *Spinner) run() {
 			return
 		case t := <-ticker.C:
 			mu.Lock()
+			// A console write error here has nowhere better to be reported.
+			_ = s.stdout.flushStaleLocked(now())
+			_ = s.stderr.flushStaleLocked(now())
 			s.drawLocked(i, t)
 			mu.Unlock()
 		}
@@ -401,13 +408,16 @@ func (s *Spinner) Stop(err error) {
 // lineWriter passes child process output through to dst while its owning
 // spinner is active. Complete lines are written immediately after clearing
 // the spinner line; an unterminated tail is held until its newline arrives,
-// it grows past maxPartialLine, or the spinner stops, so a spinner redraw
-// never lands in the middle of an installer's line. Once the owner is no
-// longer active, writes go straight to dst.
+// it grows past maxPartialLine, it has waited partialLineDelay, or the
+// spinner stops, so a spinner redraw never lands in the middle of an
+// installer's line that is still being written. Once the owner is no longer
+// active, writes go straight to dst.
 type lineWriter struct {
 	owner   *Spinner
 	dst     io.Writer
 	pending []byte
+	// since is when the oldest byte in pending was written.
+	since time.Time
 }
 
 // Write passes p through to dst. It reports an error only if writing to dst
@@ -421,6 +431,7 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		}
 		return w.dst.Write(p)
 	}
+	fresh := len(w.pending) == 0
 	w.pending = append(w.pending, p...)
 	if i := bytes.LastIndexByte(w.pending, '\n'); i >= 0 {
 		clearLocked()
@@ -429,6 +440,10 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		w.pending = append(w.pending[:0], w.pending[i+1:]...)
+		fresh = true
+	}
+	if fresh && len(w.pending) > 0 {
+		w.since = now()
 	}
 	if len(w.pending) >= maxPartialLine {
 		if err := w.flushLocked(); err != nil {
@@ -436,6 +451,16 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// flushStaleLocked writes out a held unterminated line once it has waited
+// partialLineDelay at time t, so an installer that prints a partial line and
+// then works silently is still shown promptly.
+func (w *lineWriter) flushStaleLocked(t time.Time) error {
+	if len(w.pending) == 0 || t.Sub(w.since) < partialLineDelay {
+		return nil
+	}
+	return w.flushLocked()
 }
 
 // flushLocked writes out any held unterminated line. It then ends the

@@ -734,3 +734,47 @@ func TestBarFitsTerminalWidth(t *testing.T) {
 		})
 	}
 }
+
+func TestSpinnerFlushesStalePartialLine(t *testing.T) {
+	outBuf, _, clock := setup(t, true)
+	s := NewSpinner("Title")
+	if s == nil {
+		t.Fatal("NewSpinner() = nil, want non-nil")
+	}
+	defer s.Stop(nil)
+	childOut, _ := redirectChild(s)
+	flushStale := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if err := s.stdout.flushStaleLocked(now()); err != nil {
+			t.Errorf("flushStaleLocked() = %v, want nil", err)
+		}
+	}
+
+	io.WriteString(Stdout(), "Extracting files... ")
+	clock.advance(partialLineDelay - time.Millisecond)
+	flushStale()
+	if got := snapshot(childOut); got != "" {
+		t.Errorf("child stdout before partialLineDelay = %q, want empty", got)
+	}
+
+	// Appending more text does not restart the delay.
+	io.WriteString(Stdout(), "50%")
+	clock.advance(time.Millisecond)
+	flushStale()
+	if got, want := snapshot(childOut), "Extracting files... 50%"; got != want {
+		t.Errorf("child stdout after partialLineDelay = %q, want %q", got, want)
+	}
+	if got := currentLastLen(); got != 0 {
+		t.Errorf("lastLen after stale flush = %d, want 0 so the next frame starts a new line", got)
+	}
+
+	// The rest of the line is still passed through byte-exact.
+	io.WriteString(Stdout(), " done\n")
+	if got, want := snapshot(childOut), "Extracting files... 50% done\n"; got != want {
+		t.Errorf("child stdout after newline = %q, want %q", got, want)
+	}
+	if strings.Contains(snapshot(outBuf), "Extracting") {
+		t.Errorf("progress output = %q, want no child output on the progress stream", snapshot(outBuf))
+	}
+}
