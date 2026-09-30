@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,7 +62,7 @@ func (r *sleepRecorder) get() []time.Duration {
 }
 
 func init() {
-	logger.Init("test", true, false, ioutil.Discard)
+	logger.Init("test", true, false, io.Discard)
 	// Tests must not wait for real backoff delays.
 	sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 }
@@ -80,7 +79,7 @@ func recordSleepsForTest(t *testing.T) *sleepRecorder {
 
 func TestExtractPkg(t *testing.T) {
 	t.Parallel()
-	tempDir, err := ioutil.TempDir("", "")
+	tempDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
@@ -121,7 +120,7 @@ func TestExtractPkg(t *testing.T) {
 		t.Fatalf("error running ExtractPkg: %v", err)
 	}
 
-	cts, err := ioutil.ReadFile(filepath.Join(dst, filepath.Clean(name)))
+	cts, err := os.ReadFile(filepath.Join(dst, filepath.Clean(name)))
 	if err != nil {
 		t.Fatalf("error opening test file: %v", err)
 	}
@@ -132,7 +131,7 @@ func TestExtractPkg(t *testing.T) {
 
 func TestExtractPkgPathTraversal(t *testing.T) {
 	t.Parallel()
-	tempDir, err := ioutil.TempDir("", "")
+	tempDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
@@ -1872,25 +1871,25 @@ func (s *stallingReader) Read(p []byte) (int, error) {
 func (s *stallingReader) Close() error { return nil }
 
 // newRangeReader mimics ObjectHandle.NewRangeReader with length -1.
-func (f *fakeGCSObject) newRangeReader(ctx context.Context, offset int64) (io.ReadCloser, error) {
+func (f *fakeGCSObject) newRangeReader(ctx context.Context, offset int64) (io.ReadCloser, int64, error) {
 	f.mu.Lock()
 	f.offsets = append(f.offsets, offset)
 	call := len(f.offsets)
 	f.mu.Unlock()
 	if f.openErr != nil {
-		return nil, f.openErr
+		return nil, 0, f.openErr
 	}
 	if f.rangeErrCalls[call] {
-		return nil, &googleapi.Error{Code: http.StatusRequestedRangeNotSatisfiable, Message: "The requested range cannot be satisfied."}
+		return nil, 0, &googleapi.Error{Code: http.StatusRequestedRangeNotSatisfiable, Message: "The requested range cannot be satisfied."}
 	}
 	if f.stallCalls[call] {
 		end := int(offset) + f.chunk
 		if end > len(f.payload) {
 			end = len(f.payload)
 		}
-		return &stallingReader{ctx: ctx, data: bytes.NewReader(f.payload[offset:end])}, nil
+		return &stallingReader{ctx: ctx, data: bytes.NewReader(f.payload[offset:end])}, int64(len(f.payload)), nil
 	}
-	return io.NopCloser(bytes.NewReader(f.payload[offset:])), nil
+	return io.NopCloser(bytes.NewReader(f.payload[offset:])), int64(len(f.payload)), nil
 }
 
 func (f *fakeGCSObject) newOpener(ctx context.Context, bucket, object string) (opener, func() error, error) {
@@ -1970,11 +1969,11 @@ func TestGCSRangeOpener(t *testing.T) {
 	// errResumeRejected.
 	t.Parallel()
 	rangeErr := &googleapi.Error{Code: http.StatusRequestedRangeNotSatisfiable}
-	open := gcsRangeOpener(func(context.Context, int64) (io.ReadCloser, error) { return nil, rangeErr })
-	if _, _, err := open(context.Background(), 10); !errors.Is(err, errResumeRejected) {
+	open := gcsRangeOpener(func(context.Context, int64) (io.ReadCloser, int64, error) { return nil, 0, rangeErr })
+	if _, _, _, err := open(context.Background(), 10); !errors.Is(err, errResumeRejected) {
 		t.Errorf("open(offset 10) = %v, want error wrapping errResumeRejected", err)
 	}
-	if _, _, err := open(context.Background(), 0); errors.Is(err, errResumeRejected) || !errors.Is(err, rangeErr) {
+	if _, _, _, err := open(context.Background(), 0); errors.Is(err, errResumeRejected) || !errors.Is(err, rangeErr) {
 		t.Errorf("open(offset 0) = %v, want the original range error", err)
 	}
 }

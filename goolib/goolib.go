@@ -153,7 +153,10 @@ func enrichOptions(c *exec.Cmd, opts supervisor.Options, w io.Writer) supervisor
 
 // Run runs a command.
 // The process is successful if the exit code matches any of those provided or '0'.
-// stdout and stderr are sent to the writer and to this process's stdout and stderr.
+// stdout and stderr are sent to the writer and to this process's stdout and
+// stderr. While a progress spinner is active they are still shown as they are
+// produced, a line at a time after clearing the spinner line; nothing is
+// withheld or discarded.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	return RunWithOptions(c, ec, supervisor.Options{}, w)
 }

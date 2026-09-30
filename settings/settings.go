@@ -32,6 +32,10 @@ var (
 	AllowUnsafeURL bool
 	// StrictConflicts enables strict enforcement of file ownership conflicts.
 	StrictConflicts bool
+	// Progress enables the download progress bar and install spinner on
+	// interactive terminals; set from googet.conf (default true) and
+	// overridden by an explicit -progress flag.
+	Progress = true
 	// SupervisorMode is the installer watchdog mode parsed from googet.conf ("enforce",
 	// "monitor" or "off"). ModeUnset means the built-in default.
 	SupervisorMode supervisor.Mode
@@ -96,12 +100,14 @@ func RepoDir() string {
 
 // conf represents a googet configuration file.
 type conf struct {
-	Archs                []string
-	CacheLife            string
-	LockFileMaxAge       string
-	ProxyServer          string
-	AllowUnsafeURL       bool
-	StrictConflicts      bool
+	Archs           []string
+	CacheLife       string
+	LockFileMaxAge  string
+	ProxyServer     string
+	AllowUnsafeURL  bool
+	StrictConflicts bool
+	// Progress is a pointer so an absent key keeps the default of true.
+	Progress             *bool
 	SupervisorMode       string
 	InactivityTimeout    string
 	InstallTimeout       string
@@ -166,6 +172,10 @@ func readConf(filename string) {
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
 	StrictConflicts = gc.StrictConflicts
+	Progress = true
+	if gc.Progress != nil {
+		Progress = *gc.Progress
+	}
 
 	SupervisorMode = parseMode(gc.SupervisorMode)
 	InactivityTimeout = parseTimeout("InactivityTimeout", gc.InactivityTimeout, true)

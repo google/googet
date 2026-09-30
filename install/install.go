@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/progress"
 	"github.com/google/googet/v2/remove"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -423,7 +425,7 @@ func makeInstallFunction(src, dst string, txn *installTxn) func(string, os.FileI
 			} else {
 				logger.Infof("Warning: file conflict: %s is already owned by package %s, overwriting because `StrictConflicts` is not set", outPath, owner)
 			}
-			fmt.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
+			progress.Printf("Warning: file conflict: %s is already owned by package %s, overwriting...\n", outPath, owner)
 		}
 
 		if txn.dbOnly {
@@ -549,11 +551,27 @@ func buildConflictMap(db *googetdb.GooDB, currentPkg string) (map[string]string,
 	return conflictMap, nil
 }
 
-// installPkg extracts pkg and places its files using ops. On failure every
+// errInstallInterrupted is the spinner status error used when an install
+// unwinds without returning, such as on a panic.
+var errInstallInterrupted = errors.New("install interrupted")
+
+// installPkg extracts and installs a package, rendering a spinner on
+// interactive terminals for the duration of the install.
+func installPkg(ops installOps, pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (insFiles map[string]string, err error) {
+	sp := progress.NewSpinner(fmt.Sprintf("Installing %s.%s.%s", ps.Name, ps.Arch, ps.Version))
+	// The spinner is stopped by a deferred call so that no exit path leaves it
+	// redrawing. A normal return overwrites err before the deferred call runs;
+	// a panic leaves errInstallInterrupted in place, so it renders "failed".
+	err = errInstallInterrupted
+	defer func() { sp.Stop(err) }()
+	return installPkgInner(ops, pkg, ps, dbOnly, force, db)
+}
+
+// installPkgInner extracts pkg and places its files using ops. On failure every
 // change made to the filesystem is rolled back and the extraction directory,
 // which holds the installer logs, is preserved for diagnosis. Callers must not
-// record the package in the database unless installPkg returns a nil error.
-func installPkg(ops installOps, pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
+// record the package in the database unless installPkgInner returns a nil error.
+func installPkgInner(ops installOps, pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
 	// Build the conflict map first so that a database error leaves nothing
 	// to clean up.
 	conflictMap, err := buildConflictMap(db, ps.Name)

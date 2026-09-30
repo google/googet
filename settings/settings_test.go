@@ -17,7 +17,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -58,6 +58,33 @@ func TestInitialize(t *testing.T) {
 			t.Errorf("settings.AllowUnsafeURL got: %v, want: %v", got, wantAllowUnsafeURL)
 		}
 	})
+
+	t.Run("Parsing Progress", func(t *testing.T) {
+		if got, want := settings.Progress, false; got != want {
+			t.Errorf("settings.Progress got: %v, want: %v", got, want)
+		}
+	})
+}
+
+func TestProgressDefault(t *testing.T) {
+	rootDir := t.TempDir()
+	conf := filepath.Join(rootDir, "googet.conf")
+	if err := os.WriteFile(conf, []byte("progress: false"), 0644); err != nil {
+		t.Fatalf("error writing conf file: %v", err)
+	}
+	settings.Initialize(rootDir, true)
+	if settings.Progress {
+		t.Fatalf("settings.Progress with progress: false = true, want false")
+	}
+
+	// An absent key restores the default rather than keeping the prior value.
+	if err := os.WriteFile(conf, []byte("cachelife: 10m"), 0644); err != nil {
+		t.Fatalf("error writing conf file: %v", err)
+	}
+	settings.Initialize(rootDir, true)
+	if !settings.Progress {
+		t.Errorf("settings.Progress with no progress key = false, want true")
+	}
 }
 
 func TestInitializeSupervisorSettings(t *testing.T) {

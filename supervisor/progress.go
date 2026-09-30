@@ -22,6 +22,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/googet/v2/progress"
 	"github.com/google/logger"
 )
 
@@ -453,14 +454,14 @@ func setupStdio(c *exec.Cmd, out io.Writer) (*os.File, error) {
 	c.Stdin = devNull
 
 	if out != nil {
-		c.Stdout = io.MultiWriter(os.Stdout, out)
-		c.Stderr = io.MultiWriter(os.Stderr, out)
+		c.Stdout = io.MultiWriter(progress.Stdout(), out)
+		c.Stderr = io.MultiWriter(progress.Stderr(), out)
 	} else {
 		if c.Stdout == nil {
-			c.Stdout = os.Stdout
+			c.Stdout = progress.Stdout()
 		}
 		if c.Stderr == nil {
-			c.Stderr = os.Stderr
+			c.Stderr = progress.Stderr()
 		}
 	}
 	if c.WaitDelay == 0 {

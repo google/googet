@@ -40,6 +40,7 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/progress"
 	"github.com/google/logger"
 	"google.golang.org/api/googleapi"
 )
@@ -122,10 +123,11 @@ func backoffDelay(noProgress int) time.Duration {
 }
 
 // opener opens a stream of the object starting at offset. It returns the
-// stream and the offset the stream actually starts at, which is either offset
-// or 0 when the source ignored the resume request. It returns an error
-// wrapping errResumeRejected when the source cannot serve offset.
-type opener func(ctx context.Context, offset int64) (io.ReadCloser, int64, error)
+// stream, the offset the stream actually starts at (which is either offset or
+// 0 when the source ignored the resume request), and the total size of the
+// object in bytes (or -1 if unknown). It returns an error wrapping
+// errResumeRejected when the source cannot serve offset.
+type opener func(ctx context.Context, offset int64) (io.ReadCloser, int64, int64, error)
 
 // errResumeRejected reports that the source cannot serve the requested resume
 // offset, so the partial file must be discarded and the download restarted
@@ -353,7 +355,7 @@ func streamAttempt(ctx context.Context, f *os.File, h hash.Hash, name string, si
 	attemptCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	body, start, err := open(attemptCtx, size)
+	body, start, total, err := open(attemptCtx, size)
 	if err != nil {
 		return size, size, err
 	}
@@ -363,7 +365,13 @@ func streamAttempt(ctx context.Context, f *os.File, h hash.Hash, name string, si
 	if err := alignToStream(f, h, name, size, start); err != nil {
 		return size, size, err
 	}
-	n, err := io.Copy(io.MultiWriter(fileWriter{w: f}, h), sr)
+	bar := progress.NewBar(fmt.Sprintf("Downloading %s", filepath.Base(f.Name())), total, start)
+	n, err := io.Copy(io.MultiWriter(fileWriter{w: f}, h, bar), sr)
+	if err != nil {
+		bar.Abort()
+	} else {
+		bar.Finish()
+	}
 	return start, start + n, err
 }
 
@@ -513,7 +521,7 @@ func checkContentRange(v string, offset int64) error {
 // httpOpener returns an opener that fetches pkgURL over HTTP(S), using a Range
 // request to resume when the server supports it.
 func httpOpener(pkgURL string, downloader *client.Downloader) opener {
-	return func(ctx context.Context, offset int64) (io.ReadCloser, int64, error) {
+	return func(ctx context.Context, offset int64) (io.ReadCloser, int64, int64, error) {
 		resume := false
 		if offset > 0 {
 			ok, length, err := downloader.CanResume(ctx, pkgURL)
@@ -525,7 +533,7 @@ func httpOpener(pkgURL string, downloader *client.Downloader) opener {
 
 		req, err := downloader.NewRequest(ctx, http.MethodGet, pkgURL, nil)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		if resume {
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
@@ -533,25 +541,29 @@ func httpOpener(pkgURL string, downloader *client.Downloader) opener {
 
 		resp, err := downloader.HTTPClient.Do(req)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		switch {
 		case resp.StatusCode == http.StatusPartialContent && resume:
 			if err := checkContentRange(resp.Header.Get("Content-Range"), offset); err != nil {
 				resp.Body.Close()
-				return nil, 0, err
+				return nil, 0, 0, err
 			}
-			return resp.Body, offset, nil
+			total := int64(-1)
+			if resp.ContentLength >= 0 {
+				total = offset + resp.ContentLength
+			}
+			return resp.Body, offset, total, nil
 		case resp.StatusCode == http.StatusOK:
 			// A 200 OK means the full object is being sent from byte 0, even if a
 			// Range header was sent.
-			return resp.Body, 0, nil
+			return resp.Body, 0, resp.ContentLength, nil
 		case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && resume:
 			resp.Body.Close()
-			return nil, 0, fmt.Errorf("%w: server returned %s for offset %d", errResumeRejected, resp.Status, offset)
+			return nil, 0, 0, fmt.Errorf("%w: server returned %s for offset %d", errResumeRejected, resp.Status, offset)
 		default:
 			resp.Body.Close()
-			return nil, 0, &statusError{code: resp.StatusCode, status: resp.Status}
+			return nil, 0, 0, &statusError{code: resp.StatusCode, status: resp.Status}
 		}
 	}
 }
@@ -566,17 +578,17 @@ func packageHTTP(ctx context.Context, pkgURL, dst, chksum string, downloader *cl
 // read, which the JSON and XML APIs report as HTTP 416 when the offset is at or
 // beyond the end of the object (for example, because it was replaced), is
 // reported as an error wrapping errResumeRejected.
-func gcsRangeOpener(newRangeReader func(ctx context.Context, offset int64) (io.ReadCloser, error)) opener {
-	return func(ctx context.Context, offset int64) (io.ReadCloser, int64, error) {
-		r, err := newRangeReader(ctx, offset)
+func gcsRangeOpener(newRangeReader func(ctx context.Context, offset int64) (io.ReadCloser, int64, error)) opener {
+	return func(ctx context.Context, offset int64) (io.ReadCloser, int64, int64, error) {
+		r, total, err := newRangeReader(ctx, offset)
 		if err != nil {
 			var ge *googleapi.Error
 			if offset > 0 && errors.As(err, &ge) && ge.Code == http.StatusRequestedRangeNotSatisfiable {
-				return nil, 0, fmt.Errorf("%w: %v", errResumeRejected, err)
+				return nil, 0, 0, fmt.Errorf("%w: %v", errResumeRejected, err)
 			}
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
-		return r, offset, nil
+		return r, offset, total, nil
 	}
 }
 
@@ -589,12 +601,12 @@ var newGCSOpener = func(ctx context.Context, bucket, object string) (opener, fun
 		return nil, nil, err
 	}
 	obj := c.Bucket(bucket).Object(object)
-	open := gcsRangeOpener(func(ctx context.Context, offset int64) (io.ReadCloser, error) {
+	open := gcsRangeOpener(func(ctx context.Context, offset int64) (io.ReadCloser, int64, error) {
 		r, err := obj.NewRangeReader(ctx, offset, -1)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		return r, nil
+		return r, r.Attrs.Size, nil
 	})
 	return open, c.Close, nil
 }

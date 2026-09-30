@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
+	"github.com/google/googet/v2/progress"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/supervisor"
 	"github.com/google/googet/v2/system"
@@ -101,6 +102,7 @@ func run(ctx context.Context) int {
 	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
 	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog := flag.Bool("system_log", true, "log to Linux Syslog or Windows Event Log")
+	progressFlag := flag.Bool("progress", true, "show a download progress bar and install spinner when stderr is a terminal (never with -verbose); overrides progress in googet.conf")
 	showVer := flag.Bool("version", false, "display GooGet version and exit")
 
 	if flagParse != nil {
@@ -120,6 +122,7 @@ func run(ctx context.Context) int {
 	cmdr.Register(cmdr.HelpCommand(), "")
 	cmdr.ImportantFlag("verbose")
 	cmdr.ImportantFlag("noconfirm")
+	cmdr.ImportantFlag("progress")
 
 	// These commands may execute without a lock and before any initialization.
 	cmdName := flag.Arg(0) // empty string if no args
@@ -179,6 +182,13 @@ func run(ctx context.Context) int {
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
 
+	progressSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "progress" {
+			progressSet = true
+		}
+	})
+	progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
 	configureWatchdogs()
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
@@ -194,4 +204,20 @@ func run(ctx context.Context) int {
 		return 1
 	}
 	return int(cmdr.Execute(ctx))
+}
+
+// wantProgress reports whether progress output should be rendered, given the
+// progress setting from googet.conf, whether -progress was set explicitly and
+// its value, and -verbose. Progress is still subject to the terminal checks in
+// progress.Init. An explicit -progress, true or false, overrides the config;
+// -verbose always disables progress because it interleaves INFO logs on
+// stdout, which would corrupt a redrawn line.
+func wantProgress(conf, flagSet, flagVal, verbose bool) bool {
+	if verbose {
+		return false
+	}
+	if flagSet {
+		return flagVal
+	}
+	return conf
 }
