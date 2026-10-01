@@ -586,6 +586,45 @@ func TestPrintfClearsBar(t *testing.T) {
 	}
 }
 
+func TestInterruptClearsBar(t *testing.T) {
+	outBuf, _, _ := setup(t, true)
+
+	NewBar("Title", 100, 0)
+	n := currentLastLen()
+	if n == 0 {
+		t.Fatal("lastLen after NewBar = 0, want > 0")
+	}
+	outBuf.Reset()
+
+	ran := false
+	Interrupt(func() {
+		ran = true
+		// mu is held here, so lastLine can be read directly.
+		if lastLine != "" {
+			t.Errorf("lastLine inside Interrupt = %q, want empty", lastLine)
+		}
+		if got, want := outBuf.String(), "\r"+strings.Repeat(" ", n)+"\r"; got != want {
+			t.Errorf("out inside Interrupt = %q, want %q", got, want)
+		}
+	})
+	if !ran {
+		t.Error("Interrupt did not run fn")
+	}
+}
+
+func TestInterruptNoActiveLine(t *testing.T) {
+	outBuf, _, _ := setup(t, true)
+
+	ran := false
+	Interrupt(func() { ran = true })
+	if !ran {
+		t.Error("Interrupt did not run fn")
+	}
+	if got := outBuf.String(); got != "" {
+		t.Errorf("out after Interrupt with no active line = %q, want empty", got)
+	}
+}
+
 func TestPrintfClearsSpinner(t *testing.T) {
 	outBuf, stdoutBuf, _ := setup(t, true)
 

@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -270,6 +271,103 @@ func TestPackageHTTP_Normal(t *testing.T) {
 	}
 	if !bytes.Equal(got, payload) {
 		t.Errorf("content mismatch: got %q, want %q", string(got), string(payload))
+	}
+}
+
+// TestPackageHTTP_ResumeFromDisk ports upstream's TestPackageHTTP table. It
+// checks which GET requests are sent for a partial or complete file left on
+// disk by an earlier googet run.
+func TestPackageHTTP_ResumeFromDisk(t *testing.T) {
+	t.Parallel()
+	payload, chksum := testPayload(1000)
+	for _, tc := range []struct {
+		desc       string
+		existing   []byte // Contents written to dst before the download.
+		honorRange bool
+		wantGETs   []string
+	}{
+		{
+			// An empty destination sends no Range header.
+			desc:       "fresh download",
+			honorRange: true,
+			wantGETs:   []string{"GET "},
+		},
+		{
+			desc:       "resumed download",
+			existing:   payload[:400],
+			honorRange: true,
+			wantGETs:   []string{"GET bytes=400-"},
+		},
+		{
+			// A 200 in reply to a Range request restarts from byte zero
+			// within the same attempt.
+			desc:     "server ignores range",
+			existing: payload[:400],
+			wantGETs: []string{"GET bytes=400-"},
+		},
+		{
+			desc:       "already downloaded",
+			existing:   payload,
+			honorRange: true,
+			wantGETs:   nil,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			t.Parallel()
+			var (
+				mu   sync.Mutex
+				gets []string
+			)
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead {
+					writeHead(w, len(payload))
+					return
+				}
+				mu.Lock()
+				gets = append(gets, r.Method+" "+r.Header.Get("Range"))
+				mu.Unlock()
+				start := 0
+				if tc.honorRange {
+					start = rangeStart(t, r.Header.Get("Range"))
+				}
+				w.Header().Set("Accept-Ranges", "bytes")
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)-start))
+				if start > 0 {
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+					w.WriteHeader(http.StatusPartialContent)
+				} else {
+					w.WriteHeader(http.StatusOK)
+				}
+				w.Write(payload[start:])
+			}))
+			defer ts.Close()
+
+			downloader, err := client.NewDownloader("")
+			if err != nil {
+				t.Fatalf("client.NewDownloader failed: %v", err)
+			}
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			if tc.existing != nil {
+				if err := os.WriteFile(dst, tc.existing, 0644); err != nil {
+					t.Fatalf("os.WriteFile failed: %v", err)
+				}
+			}
+			if err := packageHTTP(context.Background(), ts.URL+"/pkg.goo", dst, chksum, downloader); err != nil {
+				t.Fatalf("packageHTTP() = %v, want nil", err)
+			}
+			got, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("os.ReadFile failed: %v", err)
+			}
+			if !bytes.Equal(got, payload) {
+				t.Errorf("downloaded %d bytes, want %d bytes matching the payload", len(got), len(payload))
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !reflect.DeepEqual(gets, tc.wantGETs) {
+				t.Errorf("GET requests = %q, want %q", gets, tc.wantGETs)
+			}
+		})
 	}
 }
 

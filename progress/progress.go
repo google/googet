@@ -162,6 +162,18 @@ func Printf(format string, a ...any) {
 	fmt.Fprintf(stdout, format, a...)
 }
 
+// Interrupt clears any active bar or spinner line and then runs fn while
+// holding the console lock, so text that fn writes directly to os.Stdout or
+// os.Stderr, such as logger.Errorf output, starts at column zero and cannot be
+// overwritten by a concurrent redraw. The bar or spinner redraws itself on its
+// next update. fn must not call any function in this package.
+func Interrupt(fn func()) {
+	mu.Lock()
+	defer mu.Unlock()
+	clearLocked()
+	fn()
+}
+
 // redrawLocked overwrites the current console line with s, blanking any
 // trailing characters left over from a longer previous line. It writes
 // nothing if s is already what is on the line.

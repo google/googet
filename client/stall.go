@@ -69,6 +69,9 @@ type StallReader struct {
 	timer   *time.Timer
 	stalled bool
 	closed  bool
+	// canceled is closed once onStall has invoked cancel, so that a Read
+	// returning ErrDownloadStalled guarantees the context is already done.
+	canceled chan struct{}
 }
 
 // NewStallReader returns a StallReader that wraps r with an idle read watchdog.
@@ -81,9 +84,10 @@ func NewStallReader(r io.Reader, timeout time.Duration, cancel context.CancelFun
 		timeout = DefaultStallTimeout
 	}
 	s := &StallReader{
-		r:       r,
-		timeout: timeout,
-		cancel:  cancel,
+		r:        r,
+		timeout:  timeout,
+		cancel:   cancel,
+		canceled: make(chan struct{}),
 	}
 	s.timer = time.AfterFunc(timeout, s.onStall)
 	return s
@@ -96,13 +100,23 @@ func (s *StallReader) onStall() {
 		s.mu.Unlock()
 		return
 	}
+	// stalled is set before cancel so that a read unblocked by the
+	// cancellation reports ErrDownloadStalled rather than context.Canceled.
 	s.stalled = true
 	s.mu.Unlock()
+	defer close(s.canceled)
 
 	// Cancel context outside the mutex to prevent deadlocks.
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// stallErr waits for onStall to finish canceling and returns
+// ErrDownloadStalled. It must be called without holding s.mu.
+func (s *StallReader) stallErr() error {
+	<-s.canceled
+	return ErrDownloadStalled
 }
 
 // isStalled reports whether the idle timer has fired.
@@ -118,7 +132,7 @@ func (s *StallReader) Read(p []byte) (int, error) {
 	s.mu.Lock()
 	if s.stalled {
 		s.mu.Unlock()
-		return 0, ErrDownloadStalled
+		return 0, s.stallErr()
 	}
 	if s.closed {
 		s.mu.Unlock()
@@ -129,15 +143,15 @@ func (s *StallReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.stalled {
+		s.mu.Unlock()
 		// If the stream finished cleanly with io.EOF, prefer EOF over stall.
 		if err == io.EOF {
 			return n, io.EOF
 		}
-		return 0, ErrDownloadStalled
+		return 0, s.stallErr()
 	}
+	defer s.mu.Unlock()
 
 	if n > 0 {
 		// Forward progress made: reset the idle timer.

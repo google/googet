@@ -501,53 +501,52 @@ func TestEnrichOptionsNilAndWriter(t *testing.T) {
 	}
 }
 
-// TestAdversarialCornerCases documents empirical edge-case behavior and limitations of enrichOptions.
-func TestAdversarialCornerCases(t *testing.T) {
-	// 1. InnoSetup-style /LOG=<path> is currently unhandled by enrichOptions.
-	// When installers use /LOG=path, the colon splitter does not split on '='.
-	// Therefore, the log path is not auto-discovered.
-	cmdInno := &exec.Cmd{Args: []string{"setup.exe", `/VERYSILENT`, `/LOG=C:\Windows\Logs\inno.log`}}
-	optsInno := enrichOptions(cmdInno, supervisor.Options{}, nil)
-	if len(optsInno.LogFiles) != 0 {
-		t.Logf("Notice: /LOG= was unexpectedly parsed as %v", optsInno.LogFiles)
-	} else {
-		t.Logf("Empirically confirmed: InnoSetup /LOG= syntax is unhandled by enrichOptions (LogFiles is empty)")
+// TestEnrichOptionsArgEdgeCases covers installer argument forms that log
+// discovery must handle or deliberately ignore.
+func TestEnrichOptionsArgEdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"InnoSetup equals", []string{"setup.exe", "/VERYSILENT", `/LOG=C:\Windows\Logs\inno.log`}, []string{`C:\Windows\Logs\inno.log`}},
+		{"InnoSetup quoted value", []string{"setup.exe", `/LOG="C:\inno.log"`}, []string{`C:\inno.log`}},
+		{"fully quoted switch", []string{"setup.exe", `"/log:C:\install.log"`}, []string{`C:\install.log`}},
+		{"forward slash path", []string{"setup.exe", "/log:C:/temp/install.log"}, []string{"C:/temp/install.log"}},
+		{"next arg is slash switch", []string{"msiexec.exe", "/i", "pkg.msi", "/log", "/quiet"}, nil},
+		{"next arg is dash switch", []string{"setup.exe", "-log", "-norestart"}, nil},
+		{"next arg is unix path", []string{"installer", "--log", "/tmp/install.log"}, []string{"/tmp/install.log"}},
+		{"flag is last arg", []string{"msiexec.exe", "/i", "pkg.msi", "/l*v"}, nil},
+		{"non-log switch with colon", []string{"setup.exe", "/dir:C:\\app"}, nil},
 	}
-
-	// 2. Fully-quoted argument "/log:path" has leading quote on the switch.
-	// strings.SplitN produces parts[0] == `"/log`, which fails isLogFlag.
-	cmdQuotedSwitch := &exec.Cmd{Args: []string{"setup.exe", `"/log:C:\install.log"`}}
-	optsQuotedSwitch := enrichOptions(cmdQuotedSwitch, supervisor.Options{}, nil)
-	if len(optsQuotedSwitch.LogFiles) != 0 {
-		t.Logf("Notice: Fully-quoted switch was parsed as %v", optsQuotedSwitch.LogFiles)
-	} else {
-		t.Logf("Empirically confirmed: Fully-quoted switch \"/log:...\" is not extracted (LogFiles is empty)")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := enrichOptions(&exec.Cmd{Args: tc.args}, supervisor.Options{}, nil).LogFiles
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("enrichOptions(%q).LogFiles = %q, want %q", tc.args, got, tc.want)
+			}
+		})
 	}
+}
 
-	// 3. Space-separated log flag followed by another command switch (/quiet).
-	// Because /quiet is not a known log flag, isLogFlag("/quiet") returns false.
-	// This causes enrichOptions to treat "/quiet" as the log file path.
-	cmdNextSwitch := &exec.Cmd{Args: []string{"msiexec.exe", "/i", "pkg.msi", "/log", "/quiet"}}
-	optsNextSwitch := enrichOptions(cmdNextSwitch, supervisor.Options{}, nil)
-	if len(optsNextSwitch.LogFiles) == 1 && optsNextSwitch.LogFiles[0] == "/quiet" {
-		t.Logf("Empirically confirmed: /log followed by non-log switch treats switch (/quiet) as log path")
+func TestLooksLikeSwitch(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"/quiet", true},
+		{"-norestart", true},
+		{"--log", true},
+		{`"/qn"`, true},
+		{"/tmp/install.log", false},
+		{`/c\install.log`, false},
+		{`C:\install.log`, false},
+		{"install.log", false},
+		{"", false},
 	}
-
-	// 4. Bare argument "noconfirm" without dash or slash prefix in os.Args.
-	// strings.TrimLeft(arg, "-/") strips leading prefixes, but if none exist, clean == "noconfirm".
-	// This inadvertently sets opts.Unattended = true.
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"googet", "install", "noconfirm"}
-	optsBare := enrichOptions(&exec.Cmd{Args: []string{"cmd.exe"}}, supervisor.Options{}, nil)
-	if optsBare.Unattended {
-		t.Logf("Empirically confirmed: Package named 'noconfirm' in os.Args triggers opts.Unattended = true")
-	}
-
-	// 5. Forward slash paths in Windows commands: /log:C:/temp/install.log.
-	cmdFwd := &exec.Cmd{Args: []string{"setup.exe", `/log:C:/temp/install.log`}}
-	optsFwd := enrichOptions(cmdFwd, supervisor.Options{}, nil)
-	if len(optsFwd.LogFiles) != 1 || optsFwd.LogFiles[0] != "C:/temp/install.log" {
-		t.Errorf("enrichOptions() with forward-slash path = %v, want [C:/temp/install.log]", optsFwd.LogFiles)
+	for _, tc := range tests {
+		if got := looksLikeSwitch(tc.in); got != tc.want {
+			t.Errorf("looksLikeSwitch(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

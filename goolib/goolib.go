@@ -106,6 +106,20 @@ func isLogFlag(s string) bool {
 	return true
 }
 
+// looksLikeSwitch reports whether s is a command line switch such as /quiet
+// or -norestart rather than a path. A leading slash followed by another path
+// separator, as in /tmp/install.log, is treated as a path.
+func looksLikeSwitch(s string) bool {
+	s = strings.Trim(s, `"'`)
+	switch {
+	case strings.HasPrefix(s, "-"):
+		return true
+	case strings.HasPrefix(s, "/"):
+		return !strings.ContainsAny(s[1:], `/\`)
+	}
+	return false
+}
+
 // enrichOptions inspects command line arguments and the output writer to auto-discover
 // log files whose growth indicates forward progress. Unattended mode is configured
 // process-wide via supervisor.Configure and is not inferred here.
@@ -127,21 +141,21 @@ func enrichOptions(c *exec.Cmd, opts supervisor.Options, w io.Writer) supervisor
 		addLog(f.Name())
 	}
 
-	// 2. Inspect command arguments for log flags (space-separated or colon-delimited).
+	// 2. Inspect command arguments for log flags (space-separated or delimited).
 	if c != nil {
 		for i := 0; i < len(c.Args); i++ {
-			arg := c.Args[i]
+			// Quoting may wrap the whole token, as in "/log:C:\install.log".
+			arg := strings.Trim(c.Args[i], `"'`)
 
-			// Check for colon-delimited log flags (e.g. /log:<path>, /l*v:<path>, -log:<path>, -l:<path>).
-			if parts := strings.SplitN(arg, ":", 2); len(parts) == 2 {
-				if isLogFlag(parts[0]) {
-					addLog(strings.Trim(strings.TrimSpace(parts[1]), `"'`))
-					continue
-				}
+			// Check for delimited log flags, e.g. /log:<path>, /l*v:<path>,
+			// -log:<path>, -l:<path>, or InnoSetup's /LOG=<path>.
+			if j := strings.IndexAny(arg, ":="); j > 0 && isLogFlag(arg[:j]) {
+				addLog(strings.Trim(strings.TrimSpace(arg[j+1:]), `"'`))
+				continue
 			}
 
 			// Check for space-separated log flags (e.g. /log <path>, /l*v <path>, -log <path>, -l <path>).
-			if isLogFlag(arg) && i+1 < len(c.Args) && !isLogFlag(c.Args[i+1]) {
+			if isLogFlag(arg) && i+1 < len(c.Args) && !looksLikeSwitch(c.Args[i+1]) {
 				addLog(strings.Trim(strings.TrimSpace(c.Args[i+1]), `"'`))
 				i++
 			}

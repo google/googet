@@ -591,7 +591,10 @@ func installPkgInner(ops installOps, pkg string, ps *goolib.PkgSpec, dbOnly, for
 	// trigger rollback.
 	success := false
 
-	defer func() {
+	// The spinner started by installPkg is still running here, and rollback
+	// and commit log errors to stderr. Run them under progress.Interrupt so
+	// the spinner cannot redraw over those lines.
+	defer progress.Interrupt(func() {
 		if !success {
 			txn.rollback()
 			logger.Errorf("install logs preserved at %s", dir)
@@ -601,7 +604,7 @@ func installPkgInner(ops installOps, pkg string, ps *goolib.PkgSpec, dbOnly, for
 		if err := oswrap.RemoveAll(dir); err != nil {
 			logger.Error(err)
 		}
-	}()
+	})
 
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)

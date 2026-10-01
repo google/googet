@@ -382,7 +382,9 @@ func (w *watchdog) shouldTerminate(d *abortDecision) bool {
 		}
 		return false
 	}
-	logger.Errorf("Terminating installer process tree: %v %s", d.reason, d.details)
+	// logger.Errorf always writes to stderr, so keep an active spinner from
+	// overwriting the most important line of a hung install.
+	progress.Interrupt(func() { logger.Errorf("Terminating installer process tree: %v %s", d.reason, d.details) })
 	return true
 }
 
@@ -488,7 +490,9 @@ func waitAfterTerminate(waitErr <-chan error, d *abortDecision) error {
 	case <-waitErr:
 		return fmt.Errorf("%w: %s", reason, details)
 	case <-time.After(killWaitTimeout):
-		logger.Errorf("Installer process tree terminated but Wait did not return within %v; its stdout/stderr pipes are likely held by a process outside the supervised tree.", killWaitTimeout)
+		progress.Interrupt(func() {
+			logger.Errorf("Installer process tree terminated but Wait did not return within %v; its stdout/stderr pipes are likely held by a process outside the supervised tree.", killWaitTimeout)
+		})
 		return fmt.Errorf("%w: %s; wait abandoned after %v because stdout/stderr pipes are held by processes outside the supervised tree", reason, details, killWaitTimeout)
 	}
 }

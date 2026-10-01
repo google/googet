@@ -16,6 +16,7 @@ package supervisor
 import (
 	"time"
 
+	"github.com/google/googet/v2/progress"
 	"github.com/google/logger"
 )
 
@@ -96,7 +97,9 @@ func waitForMSITransaction(opts Options, env msiWaitEnv) {
 		idle := now.Sub(latest(obs.lastProgress, start, obs.gateOpened))
 		if !terminated && opts.InactivityTimeout > 0 && idle >= opts.InactivityTimeout && len(obs.terminable) > 0 {
 			terminated = true
-			logger.Errorf("Windows Installer service tree observed inactive for %v; terminating processes %v created for this install. The service process is not terminated.", idle.Round(time.Second), obs.terminable)
+			progress.Interrupt(func() {
+				logger.Errorf("Windows Installer service tree observed inactive for %v; terminating processes %v created for this install. The service process is not terminated.", idle.Round(time.Second), obs.terminable)
+			})
 			env.terminate(obs.terminable)
 		}
 		if !now.Before(deadline) {
