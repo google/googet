@@ -2,7 +2,9 @@ package install
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"flag"
 	"io"
 	"maps"
@@ -22,6 +24,7 @@ import (
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
+	"github.com/google/subcommands"
 )
 
 // checkInstalled returns true if the test package identified by ps was
@@ -346,7 +349,7 @@ func TestInstallDryRun(t *testing.T) {
 				}
 			}
 
-			// Verify DB state hasn't changed
+			// Verify DB state hasn't changed.
 			finalState, err := db.FetchPkgs("")
 			if err != nil {
 				t.Errorf("db.FetchPkgs: %v", err)
@@ -356,5 +359,703 @@ func TestInstallDryRun(t *testing.T) {
 				t.Errorf("DB state changed unexpectedly in dry_run (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestBatchInstallContinuation(t *testing.T) {
+	// Verify that running googet install on multiple packages where one
+	// package fails or aborts still installs the remaining packages and
+	// latches exit code 1 (ExitFailure).
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	// Create valid package B.
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	// Write repo index and index.gz to gooDir so AvailableVersions succeeds over HTTP.
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsB})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	// "pkgA" does not exist in the repo (will fail version resolution).
+	// "pkgB" exists in the repo (must succeed).
+	args := []string{"-sources=" + srv.URL, "pkgA", "pkgB"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify pkgB was installed and recorded in googet.db.
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+	if !checkInstalled(t, logDir, pkgB) {
+		t.Errorf("pkgB file was not installed to target directory")
+	}
+
+	// Verify pkgA was NOT recorded in googet.db.
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+}
+
+func TestBatchInstallContinuation_InstallerExecutionFailure(t *testing.T) {
+	// Verifies batch continuation when package A downloads but fails installer execution.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	// Create package A with a failing installer execution path.
+	pkgA := goolib.PkgSpec{
+		Name:    "pkgA",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_binary.exe"},
+	}
+	rsA := testutil.GenGoo(t, gooDir, logDir, pkgA)
+
+	// Create package B which is completely valid.
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsA, rsB})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, "pkgA", "pkgB"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify pkgB was installed and recorded in googet.db.
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+	if !checkInstalled(t, logDir, pkgB) {
+		t.Errorf("pkgB file was not installed to target directory")
+	}
+
+	// Verify pkgA was NOT recorded in googet.db.
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+}
+
+func TestBatchInstallContinuation_OrderReversal(t *testing.T) {
+	// Verifies batch continuation when successful package precedes failing package.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	pkgA := goolib.PkgSpec{
+		Name:    "pkgA",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_binary.exe"},
+	}
+	rsA := testutil.GenGoo(t, gooDir, logDir, pkgA)
+
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsA, rsB})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	// pkgB (success) comes first, pkgA (fail) comes second.
+	args := []string{"-sources=" + srv.URL, "pkgB", "pkgA"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify pkgB was installed and recorded in googet.db.
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+	if !checkInstalled(t, logDir, pkgB) {
+		t.Errorf("pkgB file was not installed to target directory")
+	}
+
+	// Verify pkgA was NOT recorded in googet.db.
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+}
+
+func TestBatchInstallContinuation_LocalGooFiles(t *testing.T) {
+	// Verifies batch continuation when installing local .goo files where one fails.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	pkgDir, logDir := t.TempDir(), t.TempDir()
+
+	pkgA := goolib.PkgSpec{
+		Name:    "pkgA",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_binary.exe"},
+	}
+	testutil.GenGoo(t, pkgDir, logDir, pkgA)
+	fileA := filepath.Join(pkgDir, pkgA.String()+".goo")
+
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	testutil.GenGoo(t, pkgDir, logDir, pkgB)
+	fileB := filepath.Join(pkgDir, pkgB.String()+".goo")
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{fileA, fileB}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify pkgB was installed and recorded in googet.db.
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+	if !checkInstalled(t, logDir, pkgB) {
+		t.Errorf("pkgB file was not installed to target directory")
+	}
+
+	// Verify pkgA was NOT recorded in googet.db.
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+}
+
+func TestBatchInstallContinuation_MixedFileAndRepo(t *testing.T) {
+	// Verifies batch continuation when mixing local .goo files and repo packages.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	localDir, gooDir, logDir := t.TempDir(), t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	// Local file pkgA that fails installer execution.
+	pkgA := goolib.PkgSpec{
+		Name:    "pkgA",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_binary.exe"},
+	}
+	testutil.GenGoo(t, localDir, logDir, pkgA)
+	fileA := filepath.Join(localDir, pkgA.String()+".goo")
+
+	// Repo package pkgB that succeeds.
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsB})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, fileA, "pkgB"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+}
+
+func TestBatchInstall_AllSucceed(t *testing.T) {
+	// Verifies batch install returns ExitSuccess when all packages succeed.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	pkgC := goolib.PkgSpec{Name: "pkgC", Arch: "noarch", Version: "1.0.0"}
+	rsC := testutil.GenGoo(t, gooDir, logDir, pkgC)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsB, rsC})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, "pkgB", "pkgC"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitSuccess {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitSuccess (%v)", exitStatus, subcommands.ExitSuccess)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	for _, name := range []string{"pkgB", "pkgC"} {
+		ps, err := db.FetchPkg(goolib.PackageInfo{Name: name, Arch: "noarch"})
+		if err != nil {
+			t.Fatalf("db.FetchPkg(%s): %v", name, err)
+		}
+		if ps.PackageSpec == nil {
+			t.Errorf("package %s was not recorded in googet.db", name)
+		}
+	}
+}
+
+func TestBatchInstall_AllFail(t *testing.T) {
+	// Verifies batch install returns ExitFailure when all packages fail.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir := t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, "nonexistentA", "nonexistentB"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	pkgs, err := db.FetchPkgs("")
+	if err != nil {
+		t.Fatalf("db.FetchPkgs: %v", err)
+	}
+	if len(pkgs) != 0 {
+		t.Errorf("expected 0 packages in db, got %d", len(pkgs))
+	}
+}
+
+func TestBatchInstallContinuation_ThreePackages_MiddleSucceeds(t *testing.T) {
+	// Verifies batch continuation across three packages where first and third fail and middle succeeds.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	pkgA := goolib.PkgSpec{
+		Name:    "pkgA",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_a.exe"},
+	}
+	rsA := testutil.GenGoo(t, gooDir, logDir, pkgA)
+
+	pkgB := goolib.PkgSpec{Name: "pkgB", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	pkgC := goolib.PkgSpec{
+		Name:    "pkgC",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_installer_c.exe"},
+	}
+	rsC := testutil.GenGoo(t, gooDir, logDir, pkgC)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsA, rsB, rsC})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, "pkgA", "pkgB", "pkgC"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+
+	// Verify pkgB is in DB and installed.
+	psB, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgB", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgB): %v", err)
+	}
+	if psB.PackageSpec == nil {
+		t.Errorf("pkgB was not recorded in googet.db; expected successful installation")
+	}
+	if !checkInstalled(t, logDir, pkgB) {
+		t.Errorf("pkgB file was not installed to target directory")
+	}
+
+	// Verify pkgA is not in DB and placed file rolled back.
+	psA, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgA", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgA): %v", err)
+	}
+	if psA.PackageSpec != nil {
+		t.Errorf("pkgA was recorded in googet.db; expected failure")
+	}
+	if _, err := os.Stat(filepath.Join(logDir, pkgA.Name)); !os.IsNotExist(err) {
+		t.Errorf("pkgA placed file still exists on disk; expected rollback deletion")
+	}
+
+	// Verify pkgC is not in DB and placed file rolled back.
+	psC, err := db.FetchPkg(goolib.PackageInfo{Name: "pkgC", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg(pkgC): %v", err)
+	}
+	if psC.PackageSpec != nil {
+		t.Errorf("pkgC was recorded in googet.db; expected failure")
+	}
+	if _, err := os.Stat(filepath.Join(logDir, pkgC.Name)); !os.IsNotExist(err) {
+		t.Errorf("pkgC placed file still exists on disk; expected rollback deletion")
+	}
+}
+
+func TestBatchInstallContinuation_RollbackUnlinksPlacedFile(t *testing.T) {
+	// Verifies that when package installation fails, newly placed files are unlinked from disk.
+	logger.Init("GooGet", true, false, io.Discard)
+	ctx := context.Background()
+
+	settings.Initialize(t.TempDir(), false)
+	settings.Archs = []string{"noarch"}
+	if err := os.MkdirAll(settings.CacheDir(), 0755); err != nil {
+		t.Fatalf("os.MkdirAll cache: %v", err)
+	}
+
+	gooDir, logDir := t.TempDir(), t.TempDir()
+	srv := testutil.ServeGoo(t, gooDir)
+	defer srv.Close()
+
+	pkgA := goolib.PkgSpec{
+		Name:    "pkg_rollback_test",
+		Arch:    "noarch",
+		Version: "1.0.0",
+		Install: goolib.ExecFile{Path: "failing_binary.exe"},
+	}
+	rsA := testutil.GenGoo(t, gooDir, logDir, pkgA)
+
+	pkgB := goolib.PkgSpec{Name: "pkg_ok_test", Arch: "noarch", Version: "1.0.0"}
+	rsB := testutil.GenGoo(t, gooDir, logDir, pkgB)
+
+	indexBytes, err := json.Marshal([]goolib.RepoSpec{rsA, rsB})
+	if err != nil {
+		t.Fatalf("json.Marshal index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(gooDir, "index"), indexBytes, 0644); err != nil {
+		t.Fatalf("writing index: %v", err)
+	}
+	var gzBuf bytes.Buffer
+	gw := gzip.NewWriter(&gzBuf)
+	if _, err := gw.Write(indexBytes); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+	gw.Close()
+	if err := os.WriteFile(filepath.Join(gooDir, "index.gz"), gzBuf.Bytes(), 0644); err != nil {
+		t.Fatalf("writing index.gz: %v", err)
+	}
+
+	cmd := &installCmd{}
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	cmd.SetFlags(fs)
+
+	args := []string{"-sources=" + srv.URL, "pkg_rollback_test", "pkg_ok_test"}
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("fs.Parse: %v", err)
+	}
+
+	exitStatus := cmd.Execute(ctx, fs)
+	if exitStatus != subcommands.ExitFailure {
+		t.Errorf("cmd.Execute got %v, want subcommands.ExitFailure (%v)", exitStatus, subcommands.ExitFailure)
+	}
+
+	// Verify pkg_rollback_test file was deleted.
+	placedFile := filepath.Join(logDir, pkgA.Name)
+	if _, err := os.Stat(placedFile); !os.IsNotExist(err) {
+		t.Errorf("Placed file %s still exists; expected rollback removal", placedFile)
+	}
+
+	// Verify pkg_ok_test file exists.
+	okFile := filepath.Join(logDir, pkgB.Name)
+	if _, err := os.Stat(okFile); err != nil {
+		t.Errorf("Placed file %s does not exist: %v", okFile, err)
 	}
 }

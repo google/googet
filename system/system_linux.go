@@ -46,8 +46,8 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	if err := goolib.Exec(filepath.Join(dir, in.Path), in.Args, in.ExitCodes, out); err != nil {
-		return fmt.Errorf("error running install: %v", err)
+	if err := goolib.ExecWithOptions(filepath.Join(dir, in.Path), in.Args, in.ExitCodes, supervisorOptions(in), out); err != nil {
+		return fmt.Errorf("error running install: %w", err)
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func Uninstall(dir string, ps *client.PackageState) error {
 			logger.Error(err)
 		}
 	}()
-	return goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
+	return goolib.ExecWithOptions(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, supervisorOptions(un), out)
 }
 
 // InstallableArchs returns a slice of archs supported by this machine.

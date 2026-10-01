@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -40,11 +41,11 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
-// InstalledApplication describes the mapped Windows application to the package
+// InstalledApplication describes the mapped Windows application to the package.
 type InstalledApplication struct {
-	// Display Name of the installed application found in the registry
+	// Display Name of the installed application found in the registry.
 	Name string
-	// Registry key of the installed application in uninstall
+	// Registry key of the installed application in uninstall.
 	Reg string
 }
 
@@ -118,15 +119,19 @@ type Repo struct {
 // RepoMap describes each repo's packages as seen from a client.
 type RepoMap map[string]Repo
 
-// Downloader is a wrapper around http.Client
+// Downloader is a wrapper around http.Client.
 type Downloader struct {
 	HTTPClient       *http.Client
 	UsingProxyServer bool
+	// StallTimeout is how long a repo index or package download may receive
+	// zero bytes before the transfer is aborted as stalled. Transfers that keep
+	// receiving data are never aborted, however slow. Zero means
+	// DefaultStallTimeout.
+	StallTimeout time.Duration
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
 func NewDownloader(proxyServer string) (*Downloader, error) {
-	httpClient := http.DefaultClient
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -135,7 +140,7 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		}
 		proxy = http.ProxyURL(proxyURL)
 	}
-	httpClient.Transport = &http.Transport{
+	tr := &http.Transport{
 		Proxy: proxy,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -145,9 +150,17 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		MaxIdleConns:          100,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-	return &Downloader{HTTPClient: httpClient, UsingProxyServer: proxyServer != ""}, nil
+	httpClient := &http.Client{
+		Transport: tr,
+	}
+	return &Downloader{
+		HTTPClient:       httpClient,
+		UsingProxyServer: proxyServer != "",
+		StallTimeout:     currentDefaultStallTimeout(),
+	}, nil
 }
 
 // AvailableVersions builds a RepoMap from a list of sources.
@@ -261,28 +274,48 @@ func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, erro
 }
 
 func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+	// A per-fetch cancelable context lets the StallReader abort a stalled
+	// index body without canceling the caller's context.
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	indexURL := repoURL + "/index.gz"
 	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
 	ct := "application/x-gzip"
 	logger.Infof("Fetching %q", trimmedIndexURL)
-	res, err := d.Get(ctx, indexURL)
+	res, err := d.Get(reqCtx, indexURL)
 	if err != nil {
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		indexURL = repoURL + "/index"
 		trimmedIndexURL = strings.TrimPrefix(indexURL, "oauth-")
 		ct = "application/json"
 		logger.Infof("Fetching %q", trimmedIndexURL)
-		res, err = d.Get(ctx, indexURL)
+		res, err = d.Get(reqCtx, indexURL)
 		if err != nil {
 			return nil, err
 		}
 		if res.StatusCode != http.StatusOK {
+			res.Body.Close()
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}
-	return decode(res.Body, ct, repoURL, cf)
+	return decodeWithStallGuard(res.Body, cancel, d.StallTimeout, ct, repoURL, cf)
+}
+
+// decodeWithStallGuard wraps index in a StallReader that invokes cancel when
+// no bytes arrive for timeout, then decodes it. A timeout of zero or less
+// means DefaultStallTimeout. A stalled body is reported as an error wrapping
+// ErrDownloadStalled.
+func decodeWithStallGuard(index io.ReadCloser, cancel context.CancelFunc, timeout time.Duration, ct, url, cf string) ([]goolib.RepoSpec, error) {
+	sr := NewStallReader(index, timeout, cancel)
+	m, err := decode(sr, ct, url, cf)
+	if err != nil && sr.isStalled() && !errors.Is(err, ErrDownloadStalled) {
+		err = fmt.Errorf("%w: %v", ErrDownloadStalled, err)
+	}
+	return m, err
 }
 
 func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
@@ -292,10 +325,16 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 		return empty, nil
 	}
 
-	client, err := storage.NewClient(ctx)
+	// A per-fetch cancelable context lets the StallReader abort a stalled
+	// index read without canceling the caller's context.
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	client, err := storage.NewClient(reqCtx)
 	if err != nil {
 		return nil, err
 	}
+	defer client.Close()
 
 	bkt := client.Bucket(bucket)
 	if len(object) != 0 {
@@ -304,22 +343,24 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
-	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
-		return decode(r, "application/x-gzip", url, cf)
+	gzr, gzErr := bkt.Object(indexPath).NewReader(reqCtx)
+	if gzErr == nil {
+		return decodeWithStallGuard(gzr, cancel, d.StallTimeout, "application/x-gzip", url, cf)
 	}
 
-	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
-		return nil, err
+	var gErr *googleapi.Error
+	if errors.As(gzErr, &gErr) && gErr.Code != http.StatusNotFound {
+		return nil, gzErr
 	}
 
 	logger.Info("Failed to read gzipped index, trying plain JSON.")
 	indexPath = object + "index"
-	r, err := bkt.Object(indexPath).NewReader(ctx)
+	r, err := bkt.Object(indexPath).NewReader(reqCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	return decode(r, "application/json", url, cf)
+	return decodeWithStallGuard(r, cancel, d.StallTimeout, "application/json", url, cf)
 }
 
 func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {
@@ -462,7 +503,7 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string, installed
 			return 0
 		}
 		if c != 0 {
-			return -c // reverse for descending order
+			return -c // Reverse for descending order.
 		}
 		if archPref[a.spec.Arch] < archPref[b.spec.Arch] {
 			return -1
@@ -480,7 +521,7 @@ func FindRepoLatest(pi goolib.PackageInfo, rm RepoMap, archs []string, installed
 		slices.SortFunc(list, cmpFunc)
 		for _, cand := range list {
 			if isLocked && cand.spec.Arch != installedArch && cand.spec.LockArch {
-				continue // Ignore this candidate
+				continue // Ignore this candidate.
 			}
 			return cand.spec, cand.repo, cand.spec.Arch, nil
 		}
