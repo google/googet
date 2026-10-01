@@ -112,10 +112,12 @@ func TestWindows_MessageBoxAborts(t *testing.T) {
 	grace := 2 * time.Second
 	opts := Options{
 		InactivityTimeout: -1,
-		UIGracePeriod:     grace,
-		progressWindow:    time.Second,
-		pollInterval:      100 * time.Millisecond,
-		Unattended:        true,
+		// HardTimeout bounds the test if the dialog is never detected.
+		HardTimeout:    grace + 30*time.Second,
+		UIGracePeriod:  grace,
+		progressWindow: time.Second,
+		pollInterval:   100 * time.Millisecond,
+		Unattended:     true,
 	}
 	start := time.Now()
 	err := Run(cmd, opts, io.Discard)

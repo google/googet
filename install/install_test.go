@@ -1471,6 +1471,16 @@ func assertAbsent(t *testing.T, paths ...string) {
 	}
 }
 
+// statMode returns the permission bits of path, failing the test on error.
+func statMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%q): %v", path, err)
+	}
+	return fi.Mode().Perm()
+}
+
 // assertNoBackups fails the test if any backup file remains under root.
 func assertNoBackups(t *testing.T, root string) {
 	t.Helper()
@@ -1779,6 +1789,9 @@ func TestInstallPkg_BackupFallbackDeletedFileRestored(t *testing.T) {
 			if err := os.Chmod(target, 0640); err != nil {
 				t.Fatalf("Chmod: %v", err)
 			}
+			// Windows only models the read-only bit, so compare against the
+			// mode the OS actually applied rather than the requested one.
+			wantMode := statMode(t, target)
 
 			ops := failingOps()
 			if tc.succeed {
@@ -1816,12 +1829,8 @@ func TestInstallPkg_BackupFallbackDeletedFileRestored(t *testing.T) {
 			}
 			assertContents(t, map[string][]byte{target: content})
 			assertNoBackups(t, dstDir)
-			fi, err := os.Stat(target)
-			if err != nil {
-				t.Fatalf("Stat(%q): %v", target, err)
-			}
-			if got := fi.Mode().Perm(); got != 0640 {
-				t.Errorf("Mode of restored %q = %v, want %v", target, got, os.FileMode(0640))
+			if got := statMode(t, target); got != wantMode {
+				t.Errorf("Mode of restored %q = %v, want %v", target, got, wantMode)
 			}
 		})
 	}
@@ -1869,6 +1878,8 @@ func TestInstallPkg_RemovedEmptyDirRecreatedOnRollback(t *testing.T) {
 	if err := os.Chmod(emptyDir, 0750); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
+	// Windows ignores most permission bits; compare against what was applied.
+	wantDirMode := statMode(t, emptyDir)
 	other := filepath.Join(dstDir, "other.txt")
 	orig := map[string][]byte{other: []byte("original other")}
 	writeFiles(t, orig)
@@ -1893,8 +1904,8 @@ func TestInstallPkg_RemovedEmptyDirRecreatedOnRollback(t *testing.T) {
 	if !fi.IsDir() {
 		t.Fatalf("%q is not a directory after rollback: mode %v", emptyDir, fi.Mode())
 	}
-	if got := fi.Mode().Perm(); got != 0750 {
-		t.Errorf("Mode of recreated %q = %v, want %v", emptyDir, got, os.FileMode(0750))
+	if got := fi.Mode().Perm(); got != wantDirMode {
+		t.Errorf("Mode of recreated %q = %v, want %v", emptyDir, got, wantDirMode)
 	}
 	entries, err := os.ReadDir(emptyDir)
 	if err != nil {
@@ -1964,6 +1975,9 @@ func TestCopyToBackup(t *testing.T) {
 	if err := os.Chmod(path, 0604); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
+	// Windows only models the read-only bit, so compare against the mode the
+	// OS actually applied rather than the requested one.
+	wantMode := statMode(t, path)
 	seen := make(map[string]bool)
 	for i := 0; i < 3; i++ {
 		bak, err := copyToBackup(path)
@@ -1978,12 +1992,8 @@ func TestCopyToBackup(t *testing.T) {
 		}
 		seen[bak] = true
 		assertContents(t, map[string][]byte{path: content, bak: content})
-		fi, err := os.Stat(bak)
-		if err != nil {
-			t.Fatalf("Stat(%q): %v", bak, err)
-		}
-		if got := fi.Mode().Perm(); got != 0604 {
-			t.Errorf("Mode of %q = %v, want %v", bak, got, os.FileMode(0604))
+		if got := statMode(t, bak); got != wantMode {
+			t.Errorf("Mode of %q = %v, want %v", bak, got, wantMode)
 		}
 	}
 }

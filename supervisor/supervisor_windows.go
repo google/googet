@@ -31,12 +31,14 @@ import (
 )
 
 var (
-	user32              = windows.NewLazySystemDLL("user32.dll")
-	procEnumWindows     = user32.NewProc("EnumWindows")
-	procGetWindowTextW  = user32.NewProc("GetWindowTextW")
-	procGetWindow       = user32.NewProc("GetWindow")
-	procGetWindowLongW  = user32.NewProc("GetWindowLongW")
-	enumWindowsCallback = windows.NewCallback(enumWindowsProc)
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	procEnumWindows              = user32.NewProc("EnumWindows")
+	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
+	procGetWindow                = user32.NewProc("GetWindow")
+	procGetWindowLongW           = user32.NewProc("GetWindowLongW")
+	procGetProcessWindowStation  = user32.NewProc("GetProcessWindowStation")
+	procGetUserObjectInformation = user32.NewProc("GetUserObjectInformationW")
+	enumWindowsCallback          = windows.NewCallback(enumWindowsProc)
 )
 
 const (
@@ -46,7 +48,35 @@ const (
 	gwOwner = 4
 	// wsExDlgModalFrame is the extended window style of windows with a modal dialog frame.
 	wsExDlgModalFrame = 0x00000001
+	// uoiFlags is the GetUserObjectInformation index that returns USEROBJECTFLAGS.
+	uoiFlags = 1
+	// wsfVisible is the USEROBJECTFLAGS flag of a window station that has visible display
+	// surfaces, that is, an interactive window station.
+	wsfVisible = 0x0001
 )
+
+// userObjectFlags mirrors Win32 USEROBJECTFLAGS from winuser.h.
+type userObjectFlags struct {
+	Inherit  int32
+	Reserved int32
+	Flags    uint32
+}
+
+// interactiveStation caches whether this process runs on an interactive window station.
+var interactiveStation = sync.OnceValue(func() bool {
+	ws, _, _ := procGetProcessWindowStation.Call()
+	if ws == 0 {
+		return true
+	}
+	var f userObjectFlags
+	var needed uint32
+	r, _, _ := procGetUserObjectInformation.Call(ws, uoiFlags, uintptr(unsafe.Pointer(&f)), unsafe.Sizeof(f), uintptr(unsafe.Pointer(&needed)))
+	if r == 0 {
+		// Assume interactive so that the visibility filter stays in place.
+		return true
+	}
+	return f.Flags&wsfVisible != 0
+})
 
 // gwlExStyle is the GetWindowLong index of the extended window style. It is a variable because
 // the negative constant cannot be converted to uintptr directly.
@@ -195,7 +225,10 @@ func enumWindowsProc(hwnd uintptr, lParam uintptr) uintptr {
 	if tid == 0 || err != nil || !ctx.jobPIDs[pid] {
 		return 1
 	}
-	if !windows.IsWindowVisible(h) {
+	// On a non-interactive window station, such as session 0 where googet runs as
+	// SYSTEM, IsWindowVisible is false even for a dialog that is blocking on input, so
+	// the visibility filter only applies on interactive stations.
+	if interactiveStation() && !windows.IsWindowVisible(h) {
 		return 1
 	}
 
@@ -259,8 +292,8 @@ func isSession0() bool {
 	return sessionID == 0
 }
 
-// detectWindowsWin32 enumerates visible top-level windows owned by pids and returns candidate
-// interactive prompts.
+// detectWindowsWin32 enumerates top-level windows owned by pids and returns candidate
+// interactive prompts. Invisible windows are skipped only on an interactive window station.
 func detectWindowsWin32(pids []uint32) ([]windowInfo, error) {
 	ctx := &windowEnumContext{jobPIDs: make(map[uint32]bool, len(pids))}
 	for _, p := range pids {
