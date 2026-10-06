@@ -16,8 +16,10 @@ limitations under the License.
 package goolib
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -31,9 +33,9 @@ import (
 // outside it. kill terminates every process in the job and exited reports
 // whether c itself has exited. release clears the kill-on-close limit and
 // closes the job, so descendants left running after a normal exit keep
-// running, as before. activity sums the job's accounting counters. If the job
-// cannot be set up, for example because a parent job forbids it, kill only
-// kills c and there is no activity counter.
+// running, as before. activity reads the job's accounting counters and dialog
+// looks for dialogs of its processes. If the job cannot be set up, for example
+// because a parent job forbids it, kill only kills c and neither is available.
 func startContained(c *exec.Cmd) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
@@ -83,7 +85,8 @@ func startContained(c *exec.Cmd) (*contained, error) {
 			windows.CloseHandle(job)
 			windows.CloseHandle(proc)
 		},
-		activity: func() (uint64, error) { return jobActivity(job) },
+		activity: func() (uint64, uint64, error) { return jobActivity(job) },
+		dialog:   func() (string, bool) { return jobDialog(job) },
 	}, nil
 }
 
@@ -102,19 +105,119 @@ var (
 	_ [unsafe.Sizeof(jobAccounting{}) - 96]byte
 )
 
-// jobActivity returns the sum of the CPU time, I/O operation and transfer
-// counts and number of processes ever started in job. Each only grows, so the
-// sum changes whenever any of them does.
-func jobActivity(job windows.Handle) (uint64, error) {
+// jobActivity returns the CPU time of job and the sum of its I/O operation and
+// transfer counts and number of processes ever started. Each only grows, so
+// the sum changes whenever any of them does.
+func jobActivity(job windows.Handle) (cpu, io uint64, err error) {
 	var a jobAccounting
 	if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAndIoAccountingInformation,
 		uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	ioc := a.IoInfo
-	return uint64(a.TotalUserTime+a.TotalKernelTime) + uint64(a.TotalProcesses) +
+	return uint64(a.TotalUserTime + a.TotalKernelTime), uint64(a.TotalProcesses) +
 		ioc.ReadOperationCount + ioc.WriteOperationCount + ioc.OtherOperationCount +
 		ioc.ReadTransferCount + ioc.WriteTransferCount + ioc.OtherTransferCount, nil
+}
+
+var (
+	user32                        = windows.NewLazySystemDLL("user32.dll")
+	procGetWindow                 = user32.NewProc("GetWindow")
+	procGetWindowLongW            = user32.NewProc("GetWindowLongW")
+	procGetWindowTextW            = user32.NewProc("GetWindowTextW")
+	procGetProcessWindowStation   = user32.NewProc("GetProcessWindowStation")
+	procGetUserObjectInformationW = user32.NewProc("GetUserObjectInformationW")
+)
+
+const (
+	gwOwner    = 4                // GW_OWNER.
+	uoiFlags   = 1                // UOI_FLAGS.
+	wsfVisible = 1                // WSF_VISIBLE.
+	gwlExStyle = ^uintptr(20 - 1) // GWL_EXSTYLE (-20), sign-extended.
+)
+
+// Callbacks made by windows.NewCallback are never freed and only a limited
+// number can be made, so one package-level callback serves all calls and gets
+// its state from these variables. EnumWindows calls it synchronously, so
+// jobDialog holds enumMu throughout.
+var (
+	enumMu       sync.Mutex
+	enumPIDs     = map[uint32]bool{}
+	enumTitle    string
+	enumFound    bool
+	enumCallback = windows.NewCallback(enumWindow)
+)
+
+// jobDialog returns the title of a dialog of a process in job, and whether
+// there is one. If the processes cannot be listed, it reports no dialog.
+func jobDialog(job windows.Handle) (string, bool) {
+	// JOBOBJECT_BASIC_PROCESS_ID_LIST. With ERROR_MORE_DATA, processes past
+	// the first 64 are not looked at.
+	var l struct {
+		Assigned, Listed uint32
+		PIDs             [64]uintptr
+	}
+	if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicProcessIdList,
+		uintptr(unsafe.Pointer(&l)), uint32(unsafe.Sizeof(l)), nil); err != nil && !errors.Is(err, windows.ERROR_MORE_DATA) {
+		return "", false
+	}
+	enumMu.Lock()
+	defer enumMu.Unlock()
+	clear(enumPIDs)
+	for _, pid := range l.PIDs[:min(l.Listed, uint32(len(l.PIDs)))] {
+		enumPIDs[uint32(pid)] = true
+	}
+	enumTitle, enumFound = "", false
+	// EnumWindows returns an error when enumWindow stops it early, on
+	// finding a dialog, so its error says nothing.
+	windows.EnumWindows(enumCallback, nil)
+	return enumTitle, enumFound
+}
+
+// enumWindow is the EnumWindows callback. It stops at the first dialog of a
+// process in enumPIDs and records its title.
+func enumWindow(h windows.HWND, _ uintptr) uintptr {
+	var pid uint32
+	if _, err := windows.GetWindowThreadProcessId(h, &pid); err != nil || !enumPIDs[pid] {
+		return 1
+	}
+	// WS_VISIBLE is a style bit, set on shown windows even on a window station
+	// nobody sees, so hidden helper windows are never taken for dialogs.
+	if !windows.IsWindowVisible(h) {
+		return 1
+	}
+	var class [16]uint16
+	n, _ := windows.GetClassName(h, &class[0], int32(len(class)))
+	owner, _, _ := procGetWindow.Call(uintptr(h), gwOwner)
+	exStyle, _, _ := procGetWindowLongW.Call(uintptr(h), gwlExStyle)
+	if !isDialogWindow(windows.UTF16ToString(class[:n]), owner != 0, uint32(exStyle)) {
+		return 1
+	}
+	var title [128]uint16
+	m, _, _ := procGetWindowTextW.Call(uintptr(h), uintptr(unsafe.Pointer(&title[0])), uintptr(len(title)))
+	enumTitle, enumFound = windows.UTF16ToString(title[:m]), true
+	return 0
+}
+
+// unattended reports whether nobody can answer a dialog because googet runs
+// in session 0, where services run, or on a window station without a display.
+func unattended() (bool, error) {
+	var session uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session); err != nil || session == 0 {
+		return err == nil, err
+	}
+	ws, _, err := procGetProcessWindowStation.Call()
+	if ws == 0 {
+		return false, err
+	}
+	var f struct {
+		inherit, reserved int32
+		flags             uint32
+	}
+	if r, _, err := procGetUserObjectInformationW.Call(ws, uoiFlags, uintptr(unsafe.Pointer(&f)), unsafe.Sizeof(f), 0); r == 0 {
+		return false, err
+	}
+	return f.flags&wsfVisible == 0, nil
 }
 
 // newJob creates a kill-on-close Job Object and assigns proc to it. Breakaway

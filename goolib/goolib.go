@@ -75,6 +75,30 @@ const (
 // in googet.conf.
 var InactivityMode = InactivityMonitor
 
+// ErrDialog is wrapped by the error Run returns when it kills a command that
+// showed a dialog nobody could answer for DialogGrace.
+var ErrDialog = errors.New("command blocked on a dialog")
+
+// DialogGrace is how long Run lets a command show a dialog nobody can answer
+// before acting according to InactivityMode. Nobody can answer when googet
+// runs in session 0 or on a window station without a display. Such a dialog
+// counts as stuck only while the command does no I/O, writes no output and
+// starts no processes. CPU time alone does not count, since the dialog's
+// message loop uses some. A dialog a user can answer is logged, and the
+// command is then never killed for inactivity, only warned about. It only
+// applies on Windows, while InactivityTimeout is in effect.
+var DialogGrace = 30 * time.Second
+
+// isUnattended reports, computed once, whether nobody can answer a dialog
+// shown by a command.
+var isUnattended = sync.OnceValue(func() bool {
+	v, err := unattended()
+	if err != nil {
+		logger.Warningf("Cannot tell whether dialogs of installers can be answered, so assuming they can: %v", err)
+	}
+	return v
+})
+
 // waitDelay bounds how long Run waits for the command's output to be closed
 // after it exits or is killed, since orphaned descendants may hold the pipes
 // open indefinitely.
@@ -138,7 +162,8 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 // process group elsewhere) and are all killed if the command runs longer than
 // Timeout, in which case the error wraps ErrTimeout, or if it goes longer than
 // InactivityTimeout without activity in enforce mode, in which case the error
-// wraps ErrInactive.
+// wraps ErrInactive, or shows a dialog nobody can answer for DialogGrace in
+// enforce mode, in which case the error wraps ErrDialog.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	c.Stdout = io.MultiWriter(progress.Stdout(), w)
 	c.Stderr = io.MultiWriter(progress.Stderr(), w)
@@ -169,10 +194,14 @@ type contained struct {
 	exited func() bool
 	// release is called once the command has been waited for.
 	release func()
-	// activity returns a counter that grows whenever the command or its
-	// descendants do work, or an error if it cannot be read. It is nil where
-	// such a counter is unavailable.
-	activity func() (uint64, error)
+	// activity returns two counters that grow whenever the command or its
+	// descendants use CPU time or do other work, such as I/O or starting
+	// processes, or an error if they cannot be read. It is nil where such
+	// counters are unavailable.
+	activity func() (cpu, io uint64, err error)
+	// dialog returns the title of a dialog of the command or its descendants,
+	// and whether there is one. It is nil where windows cannot be listed.
+	dialog func() (title string, ok bool)
 }
 
 // runContained starts c with its descendants contained and waits for it,
@@ -195,7 +224,8 @@ func runContained(c *exec.Cmd, timeout time.Duration) error {
 
 // supervise returns the result of waiting for the command, received from done.
 // It kills the command through p if it runs longer than a positive timeout or
-// if w is not nil and finds it inactive in enforce mode.
+// if w is not nil and, in enforce mode, finds it inactive or showing a dialog
+// nobody can answer for DialogGrace without doing I/O.
 func supervise(name string, done <-chan error, p *contained, timeout time.Duration, w *watch) error {
 	var deadline, ticks <-chan time.Time
 	if timeout > 0 {
@@ -204,10 +234,10 @@ func supervise(name string, done <-chan error, p *contained, timeout time.Durati
 		deadline = t.C
 	}
 	// Without a watch, ticks stays nil and never fires.
-	var last uint64
+	var lastCPU, lastIO uint64
 	if w != nil {
 		// The baseline is taken before the first tick can arrive.
-		last, _ = w.sample()
+		lastCPU, lastIO, _ = w.sample()
 		if w.ticks == nil {
 			t := time.NewTicker(w.interval)
 			defer t.Stop()
@@ -226,6 +256,7 @@ func supervise(name string, done <-chan error, p *contained, timeout time.Durati
 		return err
 	}
 	idle, warned, unreadable := 0, false, false
+	dialogTicks, dialogHandled := 0, false
 	for {
 		select {
 		case err := <-done:
@@ -233,25 +264,57 @@ func supervise(name string, done <-chan error, p *contained, timeout time.Durati
 		case <-deadline:
 			return stop(fmt.Errorf("%w: %s was killed after %v", ErrTimeout, name, timeout))
 		case <-ticks:
-			n, err := w.sample()
+			cpu, ioCount, err := w.sample()
 			if err != nil && !unreadable {
 				w.warn("Cannot read the activity of %s, so it always counts as active: %v", name, err)
 				unreadable = true
 			}
 			// A failed sample counts as activity so that a busy command is
 			// never killed.
-			if err != nil || n != last {
-				last, idle, warned = n, 0, false
+			ioChanged := err != nil || ioCount != lastIO
+			active := ioChanged || cpu != lastCPU
+			lastCPU, lastIO = cpu, ioCount
+			title, ok := "", false
+			if p.dialog != nil {
+				title, ok = p.dialog()
+			}
+			answerable := ok && !w.unattended()
+			// A dialog's message loop uses CPU time, so a command showing one
+			// counts as stuck as long as it does no I/O. The grace period
+			// starts at the first tick that sees that.
+			if ok && !ioChanged {
+				dialogTicks++
+			} else {
+				dialogTicks, dialogHandled = 0, false
+			}
+			if dialogTicks > 0 && !dialogHandled && time.Duration(dialogTicks-1)*w.interval >= DialogGrace && !p.exited() {
+				dialogHandled = true
+				switch {
+				case answerable:
+					w.info("%s shows %q, which a user can answer", name, title)
+				case !w.monitor:
+					return stop(fmt.Errorf("%w: %s was killed after showing a dialog for %v: %q", ErrDialog, name, DialogGrace, title))
+				default:
+					w.warn("%s has shown %q for %v with nobody to answer it; it would have been killed with inactivitymode %s", name, title, DialogGrace, InactivityEnforce)
+				}
+			}
+			if active {
+				idle, warned = 0, false
 				continue
 			}
 			if idle++; time.Duration(idle)*w.interval < w.limit {
 				continue
 			}
-			if !w.monitor {
+			// A user may take their time to answer a dialog.
+			if !w.monitor && !answerable {
 				return stop(fmt.Errorf("%w: %s was killed after %v without activity", ErrInactive, name, w.limit))
 			}
 			if !warned && !p.exited() {
-				w.warn("%s has had no activity for %v; it would have been killed with inactivitymode %s", name, w.limit, InactivityEnforce)
+				if answerable {
+					w.warn("%s has had no activity for %v but shows %q, which a user can answer", name, w.limit, title)
+				} else {
+					w.warn("%s has had no activity for %v; it would have been killed with inactivitymode %s", name, w.limit, InactivityEnforce)
+				}
 				warned = true
 			}
 		}
@@ -266,17 +329,20 @@ func (b *byteCounter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// watch is the inactivity watchdog of a command. sample returns a counter
-// that grows with any activity, or an error if it could not be read. It is
-// called on each tick of ticks, one per interval, and the command is inactive
-// once it has not changed for limit. monitor makes inactivity call warn
-// instead of killing the command.
+// watch is the inactivity watchdog of a command. sample returns two counters
+// that grow with the command's CPU time and with its other activity, or an
+// error if they could not be read. It is called on each tick of ticks, one per
+// interval, and the command is inactive once neither has changed for limit.
+// monitor makes inactivity call warn instead of killing the command. info logs
+// dialogs that a user can answer. unattended reports whether nobody can answer
+// a dialog.
 type watch struct {
-	sample          func() (uint64, error)
+	sample          func() (cpu, io uint64, err error)
 	limit, interval time.Duration
 	ticks           <-chan time.Time
 	monitor         bool
-	warn            func(format string, v ...any)
+	warn, info      func(format string, v ...any)
+	unattended      func() bool
 }
 
 // minInactivity and minInterval bound the inactivity limit and the sampling
@@ -292,7 +358,7 @@ var raiseLimitWarning sync.Once
 // activity as activity, or nil if activity is nil, limit is not positive or
 // mode is InactivityOff. Output alone is not enough because installers can be
 // busy for a long time without writing anything.
-func newWatch(activity func() (uint64, error), out *byteCounter, limit time.Duration, mode string) *watch {
+func newWatch(activity func() (cpu, io uint64, err error), out *byteCounter, limit time.Duration, mode string) *watch {
 	if activity == nil || limit <= 0 || mode == InactivityOff {
 		return nil
 	}
@@ -304,16 +370,18 @@ func newWatch(activity func() (uint64, error), out *byteCounter, limit time.Dura
 	}
 	return &watch{
 		// Both counters only grow, so their sum changes whenever either does.
-		sample: func() (uint64, error) {
-			n, err := activity()
-			return n + out.n.Load(), err
+		sample: func() (uint64, uint64, error) {
+			cpu, n, err := activity()
+			return cpu, n + out.n.Load(), err
 		},
 		limit: limit,
 		// Sampling about six times per limit keeps the overshoot small.
 		interval: max(min(10*time.Second, limit/6), minInterval),
 		// Only an explicit enforce kills; anything else, such as a typo, monitors.
-		monitor: mode != InactivityEnforce,
-		warn:    logger.Warningf,
+		monitor:    mode != InactivityEnforce,
+		warn:       logger.Warningf,
+		info:       logger.Infof,
+		unattended: isUnattended,
 	}
 }
 

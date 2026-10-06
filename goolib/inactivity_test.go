@@ -24,18 +24,23 @@ import (
 // inactive: newWatch samples its one-minute limit every 10s.
 const inactiveTicks = 6
 
-// fakeCmd is a command supervised with a fake activity counter and clock.
+// fakeCmd is a command supervised with fake activity counters and clock.
 type fakeCmd struct {
-	ticks    chan time.Time
-	done     chan error
-	result   chan error
-	out      byteCounter
-	activity atomic.Uint64
-	// unreadable makes the activity counter fail.
+	ticks  chan time.Time
+	done   chan error
+	result chan error
+	out    byteCounter
+	// cpu and io are the counters of CPU time and of other activity.
+	cpu, io atomic.Uint64
+	// unreadable makes the activity counters fail.
 	unreadable atomic.Bool
 	exited     atomic.Bool
 	killed     atomic.Bool
 	warnings   atomic.Int32
+	// dialog makes the command show a dialog, and answerable lets someone
+	// answer it.
+	dialog, answerable atomic.Bool
+	infos              atomic.Int32
 }
 
 // superviseFake starts supervising a fake command with the given inactivity
@@ -49,12 +54,13 @@ func superviseFake(t *testing.T, mode string, timeout time.Duration) *fakeCmd {
 			f.done <- errors.New("killed")
 		},
 		exited: f.exited.Load,
-		activity: func() (uint64, error) {
+		activity: func() (uint64, uint64, error) {
 			if f.unreadable.Load() {
-				return 0, errors.New("unreadable")
+				return 0, 0, errors.New("unreadable")
 			}
-			return f.activity.Load(), nil
+			return f.cpu.Load(), f.io.Load(), nil
 		},
+		dialog: func() (string, bool) { return "Setup", f.dialog.Load() },
 	}
 	w := newWatch(p.activity, &f.out, time.Minute, mode)
 	if w == nil {
@@ -62,6 +68,8 @@ func superviseFake(t *testing.T, mode string, timeout time.Duration) *fakeCmd {
 	}
 	w.ticks = f.ticks
 	w.warn = func(string, ...any) { f.warnings.Add(1) }
+	w.info = func(string, ...any) { f.infos.Add(1) }
+	w.unattended = func() bool { return !f.answerable.Load() }
 	go func() { f.result <- supervise("fake", f.done, p, timeout, w) }()
 	return f
 }
@@ -75,6 +83,8 @@ func (f *fakeCmd) tick(t *testing.T, n int) {
 		case f.ticks <- time.Time{}:
 		case err := <-f.result:
 			t.Fatalf("supervise() = %v after %d ticks, want it still running", err, i)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("supervise() blocked after %d ticks, want it handling ticks", i)
 		}
 	}
 }
@@ -118,7 +128,8 @@ func TestSuperviseActivityPreventsKill(t *testing.T) {
 		wantWarnings int32
 	}{
 		{"output", func(f *fakeCmd) { f.out.Write([]byte("x")) }, 0},
-		{"activity", func(f *fakeCmd) { f.activity.Add(1) }, 0},
+		{"cpu", func(f *fakeCmd) { f.cpu.Add(1) }, 0},
+		{"io", func(f *fakeCmd) { f.io.Add(1) }, 0},
 		{"unreadable activity", func(f *fakeCmd) { f.unreadable.Store(true) }, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,7 +158,7 @@ func TestSuperviseMonitorWarnsOncePerInactivity(t *testing.T) {
 	if got := f.warnings.Load(); got != 1 {
 		t.Errorf("supervise() warnings = %d after one stretch of inactivity, want 1", got)
 	}
-	f.activity.Add(1)
+	f.io.Add(1)
 	// The send of the last tick returned before supervise sampled for it, so
 	// this activity races with that sample and is seen on it or on the next
 	// tick. Either way the second warning comes by tick inactiveTicks+1 and has
@@ -196,10 +207,10 @@ func TestSuperviseTimeoutInMonitorMode(t *testing.T) {
 }
 
 func TestNewWatch(t *testing.T) {
-	activity := func() (uint64, error) { return 0, nil }
+	activity := func() (uint64, uint64, error) { return 0, 0, nil }
 	for _, tt := range []struct {
 		name         string
-		activity     func() (uint64, error)
+		activity     func() (uint64, uint64, error)
 		limit        time.Duration
 		mode         string
 		wantNil      bool
@@ -241,7 +252,7 @@ func TestNewWatchIntervalFloor(t *testing.T) {
 	orig := minInactivity
 	t.Cleanup(func() { minInactivity = orig })
 	minInactivity = 0
-	w := newWatch(func() (uint64, error) { return 0, nil }, &byteCounter{}, 3*time.Second, InactivityEnforce)
+	w := newWatch(func() (uint64, uint64, error) { return 0, 0, nil }, &byteCounter{}, 3*time.Second, InactivityEnforce)
 	if w == nil || w.limit != 3*time.Second || w.interval != time.Second {
 		t.Errorf("newWatch(3s limit) = %+v, want limit 3s and interval 1s", w)
 	}

@@ -56,6 +56,9 @@ minimum `1m`, `0` disables it). `inactivitymode` is `monitor` (the default) to
 log a warning, `enforce` to kill the command, or `off`. Work the Windows
 Installer service does for msiexec or wusa does not count, so a long silent MSI
 install can look inactive; use `enforce` only for installers that avoid it.
+A command that shows a dialog nobody can answer, as when googet runs as a
+service, and does no I/O, writes no output and starts no processes for 30s is
+handled the same way, even if it uses CPU time.
 
 ## Repo file
 
