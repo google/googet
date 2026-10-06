@@ -92,6 +92,15 @@ job, and by services, WMI or scheduled tasks the command hands work to. A
 command waiting for such work looks inactive, so `enforce` kills it while that
 work carries on; use `enforce` only for installers that avoid it.
 
+Any standard Windows dialog (window class `#32770`, which some progress windows
+also use) or owned window with a modal frame counts as a dialog.
+`enforce` does not kill a command while it shows a dialog a user can answer,
+including on a locked console or a disconnected RDP session; it logs the dialog
+and warns about the inactivity instead. A command that shows a dialog nobody
+can answer, as when googet runs as a service, and does no I/O, writes no output
+and starts no processes for `inactivitytimeout` is handled the same way as
+inactivity, even if it uses CPU time.
+
 ## Repo file
 
 GooGet has the ability to use a repo file to change some repo specific settings.

@@ -27,14 +27,15 @@ import (
 // inactive: newWatch samples its one-minute limit every 10s.
 const inactiveTicks = 6
 
-// fakeCmd is a command supervised with a fake activity counter and clock.
+// fakeCmd is a command supervised with fake activity counters and clock.
 type fakeCmd struct {
-	ticks    chan time.Time
-	done     chan error
-	result   chan error
-	out      byteCounter
-	activity atomic.Uint64
-	// unreadable makes the activity counter fail.
+	ticks  chan time.Time
+	done   chan error
+	result chan error
+	out    byteCounter
+	// cpu and io are the counters of CPU time and of other activity.
+	cpu, io atomic.Uint64
+	// unreadable makes the activity counters fail.
 	unreadable atomic.Bool
 	exited     atomic.Bool
 	killed     atomic.Bool
@@ -43,6 +44,12 @@ type fakeCmd struct {
 	resumes      atomic.Int32
 	resumedAfter atomic.Int64
 	warnings     atomic.Int32
+	// dialog makes the command show a dialog, and answerable lets someone
+	// answer it.
+	dialog, answerable atomic.Bool
+	infos              atomic.Int32
+	// probedUnattended is what supervise last told the dialog probe.
+	probedUnattended atomic.Bool
 }
 
 // superviseFake starts supervising a fake command with the given inactivity
@@ -57,11 +64,15 @@ func superviseFake(t *testing.T, mode string, timeout time.Duration) *fakeCmd {
 			return nil
 		},
 		exited: f.exited.Load,
-		activity: func() (uint64, error) {
+		activity: func() (uint64, uint64, error) {
 			if f.unreadable.Load() {
-				return 0, errors.New("unreadable")
+				return 0, 0, errors.New("unreadable")
 			}
-			return f.activity.Load(), nil
+			return f.cpu.Load(), f.io.Load(), nil
+		},
+		dialog: func(unattended bool) (string, bool) {
+			f.probedUnattended.Store(unattended)
+			return "Setup", f.dialog.Load()
 		},
 	}
 	w := newWatch(p.activity, &f.out, time.Minute, mode)
@@ -79,8 +90,11 @@ func superviseFake(t *testing.T, mode string, timeout time.Duration) *fakeCmd {
 			f.resumedAfter.Store(int64(d))
 		}
 	}
-	// A non-zero start makes supervise's baseline sample matter.
-	f.activity.Store(42)
+	w.info = func(string, ...any) { f.infos.Add(1) }
+	w.unattended = func() bool { return !f.answerable.Load() }
+	// Non-zero starting counters make supervise's baseline sample matter.
+	f.cpu.Store(42)
+	f.io.Store(42)
 	go func() { f.result <- supervise("fake", f.done, p, timeout, w) }()
 	return f
 }
@@ -94,6 +108,8 @@ func (f *fakeCmd) tick(t *testing.T, n int) {
 		case f.ticks <- time.Time{}:
 		case err := <-f.result:
 			t.Fatalf("supervise() = %v after %d ticks, want it still running", err, i)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("supervise() blocked after %d ticks, want it handling ticks", i)
 		}
 	}
 }
@@ -108,6 +124,22 @@ func (f *fakeCmd) wait(t *testing.T) error {
 		t.Fatal("supervise() did not return")
 		return nil
 	}
+}
+
+// tickUntilReturn sends up to n ticks, stopping early once supervise returns,
+// and returns what supervise returned.
+func (f *fakeCmd) tickUntilReturn(t *testing.T, n int) error {
+	t.Helper()
+	for i := range n {
+		select {
+		case f.ticks <- time.Time{}:
+		case err := <-f.result:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatalf("supervise() blocked after %d ticks, want it handling ticks", i)
+		}
+	}
+	return f.wait(t)
 }
 
 // finish makes the command exit successfully and returns what supervise
@@ -137,7 +169,8 @@ func TestSuperviseActivityPreventsKill(t *testing.T) {
 		wantWarnings int32
 	}{
 		{"output", func(f *fakeCmd) { f.out.Write([]byte("x")) }, 0},
-		{"activity", func(f *fakeCmd) { f.activity.Add(1) }, 0},
+		{"cpu", func(f *fakeCmd) { f.cpu.Add(1) }, 0},
+		{"io", func(f *fakeCmd) { f.io.Add(1) }, 0},
 		{"unreadable activity", func(f *fakeCmd) { f.unreadable.Store(true) }, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,12 +197,12 @@ func TestSuperviseMonitorWarnsOncePerInactivity(t *testing.T) {
 	f := superviseFake(t, InactivityMonitor, 0)
 	// Activity that ends a stretch too short to warn about is not logged.
 	f.tick(t, inactiveTicks-1)
-	f.activity.Add(1)
+	f.cpu.Add(1)
 	f.tick(t, 3*inactiveTicks)
 	if got := f.warnings.Load(); got != 1 {
 		t.Errorf("supervise() warnings = %d after one stretch of inactivity, want 1", got)
 	}
-	f.activity.Add(1)
+	f.io.Add(1)
 	// The send of the last tick returned before supervise sampled for it, so
 	// this activity races with that sample and is seen on it or on the next
 	// tick. Either way the second warning comes by tick inactiveTicks+1 and has
@@ -225,10 +258,10 @@ func TestSuperviseTimeoutInMonitorMode(t *testing.T) {
 }
 
 func TestNewWatch(t *testing.T) {
-	activity := func() (uint64, error) { return 0, nil }
+	activity := func() (uint64, uint64, error) { return 0, 0, nil }
 	for _, tt := range []struct {
 		name         string
-		activity     func() (uint64, error)
+		activity     func() (uint64, uint64, error)
 		limit        time.Duration
 		mode         string
 		wantNil      bool
@@ -276,7 +309,7 @@ func TestNewWatchIntervalFloor(t *testing.T) {
 		{3 * time.Second, time.Second},
 		{30 * time.Second, 5 * time.Second},
 	} {
-		w := newWatch(func() (uint64, error) { return 0, nil }, &byteCounter{}, tt.limit, InactivityEnforce)
+		w := newWatch(func() (uint64, uint64, error) { return 0, 0, nil }, &byteCounter{}, tt.limit, InactivityEnforce)
 		if w == nil || w.limit != tt.limit || w.interval != tt.wantInterval {
 			t.Errorf("newWatch(%v limit) = %+v, want limit %v and interval %v", tt.limit, w, tt.limit, tt.wantInterval)
 		}
@@ -297,7 +330,7 @@ func TestSuperviseRealTicker(t *testing.T) {
 			return nil
 		},
 		exited:   func() bool { return false },
-		activity: func() (uint64, error) { return 7, nil },
+		activity: func() (uint64, uint64, error) { return 7, 3, nil },
 	}
 	w := newWatch(p.activity, &byteCounter{}, 30*time.Millisecond, InactivityEnforce)
 	if err := supervise("fake", done, p, time.Hour, w); !errors.Is(err, ErrInactive) {
@@ -315,6 +348,8 @@ func render(ds []decision) []string {
 		switch d.action {
 		case actKill:
 			got = append(got, "kill: "+d.error().Error())
+		case actInfo:
+			got = append(got, "info: "+fmt.Sprintf(d.format, d.args...))
 		case actResume:
 			got = append(got, "resume: "+fmt.Sprintf(d.format, d.args...))
 		default:
@@ -338,63 +373,63 @@ func TestWatchStateStep(t *testing.T) {
 	}{
 		{
 			name:   "activity",
-			before: watchState{last: 42, idle: 3},
-			obs:    observation{n: 43},
-			after:  watchState{last: 43},
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 3},
+			obs:    observation{cpu: 43, io: 43},
+			after:  watchState{lastCPU: 43, lastIO: 43},
 		},
 		{
 			name:   "idle below the limit",
-			before: watchState{last: 42, idle: 4},
-			obs:    observation{n: 42},
-			after:  watchState{last: 42, idle: 5},
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 4},
+			obs:    observation{cpu: 42, io: 42},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 5},
 		},
 		{
 			name:   "enforce at the limit",
-			before: watchState{last: 42, idle: 5},
-			obs:    observation{n: 42},
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:    observation{cpu: 42, io: 42},
 			want:   []string{"kill: command inactive: fake was killed after 1m0s without activity"},
-			after:  watchState{last: 42, idle: 6},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 6},
 		},
 		{
 			// An already-exited command is neither warned about nor killed.
 			name:   "enforce at the limit after exit",
-			before: watchState{last: 42, idle: 5},
-			obs:    observation{n: 42, exited: true},
-			after:  watchState{last: 42, idle: 6},
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:    observation{cpu: 42, io: 42, exited: true},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 6},
 		},
 		{
 			name:    "monitor at the limit",
 			monitor: true,
-			before:  watchState{last: 42, idle: 5},
-			obs:     observation{n: 42},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:     observation{cpu: 42, io: 42},
 			want:    []string{"warn: fake has had no activity for 1m0s; it would have been killed with inactivitymode enforce"},
-			after:   watchState{last: 42, idle: 6, warned: true},
+			after:   watchState{lastCPU: 42, lastIO: 42, idle: 6, warned: true},
 		},
 		{
 			name:    "monitor past the limit",
 			monitor: true,
-			before:  watchState{last: 42, idle: 6, warned: true},
-			obs:     observation{n: 42},
-			after:   watchState{last: 42, idle: 7, warned: true},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 6, warned: true},
+			obs:     observation{cpu: 42, io: 42},
+			after:   watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true},
 		},
 		{
 			name:    "monitor at the limit after exit",
 			monitor: true,
-			before:  watchState{last: 42, idle: 5},
-			obs:     observation{n: 42, exited: true},
-			after:   watchState{last: 42, idle: 6},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:     observation{cpu: 42, io: 42, exited: true},
+			after:   watchState{lastCPU: 42, lastIO: 42, idle: 6},
 		},
 		{
 			name:    "activity after a warned stretch",
 			monitor: true,
-			before:  watchState{last: 42, idle: 7, warned: true},
-			obs:     observation{n: 43},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true},
+			obs:     observation{cpu: 43, io: 43},
 			want:    []string{"resume: fake is active again after 1m10s without activity"},
-			after:   watchState{last: 43},
+			after:   watchState{lastCPU: 43, lastIO: 43},
 		},
 		{
 			name:   "first unreadable sample",
-			before: watchState{last: 42, idle: 3},
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 3},
 			obs:    observation{err: unreadable},
 			want:   []string{"warn: Cannot read the activity of fake, so it always counts as active: unreadable"},
 			after:  watchState{unreadable: true},
@@ -409,7 +444,7 @@ func TestWatchStateStep(t *testing.T) {
 			// A failed sample ends the stretch but is not reported as activity.
 			name:    "first unreadable sample after a warned stretch",
 			monitor: true,
-			before:  watchState{last: 42, idle: 7, warned: true},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true},
 			obs:     observation{err: unreadable},
 			want:    []string{"warn: Cannot read the activity of fake, so it always counts as active: unreadable"},
 			after:   watchState{unreadable: true},
@@ -417,13 +452,105 @@ func TestWatchStateStep(t *testing.T) {
 		{
 			name:    "later unreadable sample after a warned stretch",
 			monitor: true,
-			before:  watchState{last: 42, idle: 7, warned: true, unreadable: true},
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true, unreadable: true},
 			obs:     observation{err: unreadable},
 			after:   watchState{unreadable: true},
 		},
+		{
+			// The dialog's message loop uses CPU time, which does not count.
+			name:   "unanswerable dialog below the grace",
+			before: watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 4}},
+			obs:    observation{cpu: 43, io: 42, title: "Setup", dialog: true, unattended: true},
+			after:  watchState{lastCPU: 43, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 5}},
+		},
+		{
+			name:   "enforce at the dialog grace",
+			before: watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 5}},
+			obs:    observation{cpu: 43, io: 42, title: "Setup", dialog: true, unattended: true},
+			want:   []string{`kill: command blocked on a dialog: fake was killed after showing a dialog for 1m0s: "Setup"`},
+			after:  watchState{lastCPU: 43, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true}},
+		},
+		{
+			name:    "monitor at the dialog grace",
+			monitor: true,
+			before:  watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 5}},
+			obs:     observation{cpu: 43, io: 42, title: "Setup", dialog: true, unattended: true},
+			want:    []string{`warn: fake has shown "Setup" for 1m0s with nobody to answer it; it would have been killed with inactivitymode enforce`},
+			after:   watchState{lastCPU: 43, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true}},
+		},
+		{
+			name:    "monitor at the dialog grace after exit",
+			monitor: true,
+			before:  watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 5}},
+			obs:     observation{cpu: 43, io: 42, title: "Setup", dialog: true, unattended: true, exited: true},
+			after:   watchState{lastCPU: 43, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 6}},
+		},
+		{
+			name:   "dialog with I/O",
+			before: watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true}},
+			obs:    observation{cpu: 42, io: 43, title: "Setup", dialog: true, unattended: true},
+			after:  watchState{lastCPU: 42, lastIO: 43},
+		},
+		{
+			// The error names the dialog.
+			name:   "enforce at the dialog grace and the limit",
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 5, dialogStretch: dialogStretch{dialogSeen: 5}},
+			obs:    observation{cpu: 42, io: 42, title: "Setup", dialog: true, unattended: true},
+			want:   []string{`kill: command blocked on a dialog: fake was killed after showing a dialog for 1m0s: "Setup"`},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 5, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true}},
+		},
+		{
+			name:    "monitor at the dialog grace and the limit",
+			monitor: true,
+			before:  watchState{lastCPU: 42, lastIO: 42, idle: 5, dialogStretch: dialogStretch{dialogSeen: 5}},
+			obs:     observation{cpu: 42, io: 42, title: "Setup", dialog: true, unattended: true},
+			want: []string{
+				`warn: fake has shown "Setup" for 1m0s with nobody to answer it; it would have been killed with inactivitymode enforce`,
+				"warn: fake has had no activity for 1m0s; it would have been killed with inactivitymode enforce",
+			},
+			after: watchState{lastCPU: 42, lastIO: 42, idle: 6, warned: true, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true}},
+		},
+		{
+			// The dialog came too late to reach its grace before the limit.
+			name:   "late dialog at the limit",
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:    observation{cpu: 42, io: 42, title: "Setup", dialog: true, unattended: true},
+			want:   []string{"kill: command inactive: fake was killed after 1m0s without activity"},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 6, dialogStretch: dialogStretch{dialogSeen: 1}},
+		},
+		{
+			name:   "answerable dialog at the grace",
+			before: watchState{lastCPU: 42, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 5, wasAnswerable: true}},
+			obs:    observation{cpu: 43, io: 42, title: "Setup", dialog: true},
+			want:   []string{`info: fake shows "Setup", which a user can answer`},
+			after:  watchState{lastCPU: 43, lastIO: 42, dialogStretch: dialogStretch{dialogSeen: 6, dialogHandled: true, wasAnswerable: true}},
+		},
+		{
+			// From the first tick that sees it, an answerable dialog prevents the
+			// kill.
+			name:   "answerable dialog at the limit",
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 5},
+			obs:    observation{cpu: 42, io: 42, title: "Setup", dialog: true},
+			want:   []string{`warn: fake has had no activity for 1m0s but shows "Setup", which a user can answer`},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 6, warned: true, dialogStretch: dialogStretch{dialogSeen: 1, wasAnswerable: true}},
+		},
+		{
+			// Closing the dialog starts a fresh inactivity window.
+			name:   "answerable dialog closed",
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true, dialogStretch: dialogStretch{dialogSeen: 8, dialogHandled: true, wasAnswerable: true}},
+			obs:    observation{cpu: 42, io: 42},
+			after:  watchState{lastCPU: 42, lastIO: 42, idle: 1},
+		},
+		{
+			name:   "answerable dialog closed with activity",
+			before: watchState{lastCPU: 42, lastIO: 42, idle: 7, warned: true, dialogStretch: dialogStretch{dialogSeen: 8, dialogHandled: true, wasAnswerable: true}},
+			obs:    observation{cpu: 43, io: 42},
+			want:   []string{"resume: fake is active again after 1m10s without activity"},
+			after:  watchState{lastCPU: 43, lastIO: 42},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			w := &watch{limit: time.Minute, interval: 10 * time.Second, monitor: tt.monitor}
+			w := &watch{limit: time.Minute, interval: 10 * time.Second, grace: time.Minute, monitor: tt.monitor}
 			s := tt.before
 			s.w, s.name = w, "fake"
 			got := render(s.step(tt.obs))

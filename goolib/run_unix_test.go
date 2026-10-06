@@ -27,6 +27,10 @@ import (
 	"time"
 )
 
+// platformHelper runs the OS-specific helperEnv modes, which exit; it returns
+// for any other mode. Unix has none.
+func platformHelper(string) {}
+
 // processAlive reports whether pid exists and, where procfs is available, is
 // not a zombie waiting to be reaped.
 func processAlive(pid int) bool {
