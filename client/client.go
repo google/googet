@@ -15,6 +15,7 @@ limitations under the License.
 package client
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -122,6 +123,10 @@ type RepoMap map[string]Repo
 type Downloader struct {
 	HTTPClient       *http.Client
 	UsingProxyServer bool
+	// StallTimeout is how long a response body may deliver no data, or a GCS
+	// object take to open, before the transfer is canceled. Zero means
+	// DefaultStallTimeout.
+	StallTimeout time.Duration
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
@@ -146,6 +151,9 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		// Response bodies are guarded by NewStallReader; this bounds the
+		// wait for the response headers.
+		ResponseHeaderTimeout: DefaultStallTimeout,
 	}
 	return &Downloader{HTTPClient: httpClient, UsingProxyServer: proxyServer != ""}, nil
 }
@@ -261,6 +269,8 @@ func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, erro
 }
 
 func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	indexURL := repoURL + "/index.gz"
 	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
 	ct := "application/x-gzip"
@@ -282,7 +292,7 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}
-	return decode(res.Body, ct, repoURL, cf)
+	return decode(NewStallReader(res.Body, d.StallTimeout, func() { cancel(ErrStalled) }), ct, repoURL, cf)
 }
 
 func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
@@ -302,9 +312,26 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 		object += "/"
 	}
 
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timeout := cmp.Or(d.StallTimeout, DefaultStallTimeout)
+	stall := func() { cancel(ErrStalled) }
+	// open opens the object at path and guards reading it against stalls.
+	// The GCS client has no response header timeout, so opening is bounded
+	// here too.
+	open := func(path string) (io.ReadCloser, error) {
+		t := time.AfterFunc(timeout, stall)
+		r, err := bkt.Object(path).NewReader(ctx)
+		t.Stop()
+		if err != nil {
+			return nil, cmp.Or(context.Cause(ctx), err)
+		}
+		return NewStallReader(r, timeout, stall), nil
+	}
+
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
-	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
+	if r, err := open(indexPath); err == nil {
 		return decode(r, "application/x-gzip", url, cf)
 	}
 
@@ -314,7 +341,7 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 
 	logger.Info("Failed to read gzipped index, trying plain JSON.")
 	indexPath = object + "index"
-	r, err := bkt.Object(indexPath).NewReader(ctx)
+	r, err := open(indexPath)
 	if err != nil {
 		return nil, err
 	}
