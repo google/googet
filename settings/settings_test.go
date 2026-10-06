@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/settings"
 )
 
@@ -83,5 +84,38 @@ func TestProgressDefault(t *testing.T) {
 	settings.Initialize(rootDir, true)
 	if !settings.Progress {
 		t.Errorf("settings.Progress with no progress key = false, want true")
+	}
+}
+
+func TestStallTimeout(t *testing.T) {
+	oldStall := client.StallTimeout
+	oldRoot, oldConfirm, oldArchs := settings.RootDir, settings.Confirm, settings.Archs
+	oldCacheLife, oldUnsafe, oldStrict, oldProgress := settings.CacheLife, settings.AllowUnsafeURL, settings.StrictConflicts, settings.Progress
+	t.Cleanup(func() {
+		client.StallTimeout = oldStall
+		settings.RootDir, settings.Confirm, settings.Archs = oldRoot, oldConfirm, oldArchs
+		settings.CacheLife, settings.AllowUnsafeURL, settings.StrictConflicts, settings.Progress = oldCacheLife, oldUnsafe, oldStrict, oldProgress
+	})
+	rootDir := t.TempDir()
+	// Each case starts from the previous one's value, so a bad value must
+	// restore the default rather than keep the prior setting.
+	for _, tc := range []struct {
+		conf string
+		want time.Duration
+	}{
+		{"stalltimeout: 5m", 5 * time.Minute},
+		{"stalltimeout: 5x", client.DefaultStallTimeout},
+		{"stalltimeout: 30s", 30 * time.Second},
+		{"stalltimeout: -1s", client.DefaultStallTimeout},
+		{"stalltimeout: 0s", client.DefaultStallTimeout},
+		{"cachelife: 10m", client.DefaultStallTimeout},
+	} {
+		if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte(tc.conf), 0644); err != nil {
+			t.Fatalf("error writing conf file: %v", err)
+		}
+		settings.Initialize(rootDir, true)
+		if got := client.StallTimeout; got != tc.want {
+			t.Errorf("client.StallTimeout with %q = %v, want %v", tc.conf, got, tc.want)
+		}
 	}
 }
