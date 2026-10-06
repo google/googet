@@ -16,6 +16,11 @@ limitations under the License.
 package goolib
 
 import (
+	"errors"
+	"io"
+	"testing"
+	"time"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -28,4 +33,31 @@ func processAlive(pid int) bool {
 	defer windows.CloseHandle(h)
 	ev, err := windows.WaitForSingleObject(h, 0)
 	return err == nil && ev == uint32(windows.WAIT_TIMEOUT)
+}
+
+func TestRunInactivity(t *testing.T) {
+	const limit = spinFor / 3
+	origMinInactivity, origMinInterval := minInactivity, minInterval
+	t.Cleanup(func() { minInactivity, minInterval = origMinInactivity, origMinInterval })
+	minInactivity, minInterval = 0, 100*time.Millisecond
+	for _, tt := range []struct {
+		name    string
+		mode    string
+		wantErr error
+	}{
+		// The helper sleeps without output, CPU time or I/O.
+		{"inactive", "sleep", ErrInactive},
+		// The helper writes nothing for three times the limit but uses CPU.
+		{"busy", "spin", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			origTimeout, origLimit, origMode := Timeout, InactivityTimeout, InactivityMode
+			t.Cleanup(func() { Timeout, InactivityTimeout, InactivityMode = origTimeout, origLimit, origMode })
+			// The timeout is long enough for the spin helper to finish.
+			Timeout, InactivityTimeout, InactivityMode = spinFor+4*time.Second, limit, InactivityEnforce
+			if err := Run(helperCmd(tt.mode), nil, io.Discard); !errors.Is(err, tt.wantErr) {
+				t.Errorf("Run(%s helper) error = %v, want %v", tt.mode, err, tt.wantErr)
+			}
+		})
+	}
 }

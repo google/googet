@@ -32,8 +32,11 @@ import (
 // does the same with a "stubborn" one; "hang" starts a grandchild, prints its
 // PID and hangs; "stubborn" does the same while ignoring SIGTERM; "exit" and
 // "fail" do the same but exit at once with code 0 or 3; "sleep" is the
-// grandchild.
+// grandchild; "spin" uses CPU without output for spinFor and exits.
 const helperEnv = "GOOLIB_TEST_HELPER"
+
+// spinFor is how long the "spin" helper runs.
+const spinFor = 3 * time.Second
 
 // helperCmd returns a command that runs the test binary in the given helper
 // mode. The race detector's exit delay is disabled so helpers exit promptly.
@@ -74,6 +77,11 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "sleep":
 		time.Sleep(10 * time.Minute)
+		os.Exit(0)
+	case "spin":
+		for end := time.Now().Add(spinFor); time.Now().Before(end); {
+			// Burn CPU without output.
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())

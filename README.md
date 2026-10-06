@@ -39,6 +39,8 @@ proxyserver: http://address_to_proxy:port
 archs: [noarch, x86_64]
 cachelife: 10m
 installtimeout: 4h
+inactivitytimeout: 5m
+inactivitymode: monitor
 ```
 
 `installtimeout` limits how long googet lets an installer, uninstaller or verify
@@ -47,6 +49,13 @@ command run before it and the processes it started are killed (default `4h`,
 descendants that call setsid or setpgid leave the process group and escape. On
 Windows, MSI and wusa work done by the Windows Installer service runs outside
 the command's job and is not killed.
+
+On Windows only, `inactivitytimeout` limits how long such a command may go
+without output or CPU time, I/O or new processes in its job (default `5m`,
+minimum `1m`, `0` disables it). `inactivitymode` is `monitor` (the default) to
+log a warning, `enforce` to kill the command, or `off`. Work the Windows
+Installer service does for msiexec or wusa does not count, so a long silent MSI
+install can look inactive; use `enforce` only for installers that avoid it.
 
 ## Repo file
 

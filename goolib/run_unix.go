@@ -29,8 +29,9 @@ import (
 // googet are forwarded to it, a second one escalates to SIGKILL, and release
 // re-raises the first one so that googet still dies from it. Otherwise
 // release does nothing, so descendants left running after a normal exit keep
-// running.
-func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(), err error) {
+// running. There is no activity counter, so the inactivity limit does not
+// apply.
+func startContained(c *exec.Cmd) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -50,7 +51,7 @@ func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(
 			reraise(s.(syscall.Signal))
 		default:
 		}
-		return nil, nil, nil, err
+		return nil, err
 	}
 	// With Setpgid and a zero Pgid the group ID is the child's PID.
 	pgid := c.Process.Pid
@@ -68,7 +69,7 @@ func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(
 			syscall.Kill(-pgid, sig)
 		}
 	}()
-	release = func() {
+	release := func() {
 		// No more signals are sent to sigs once Stop returns.
 		signal.Stop(sigs)
 		close(sigs)
@@ -79,8 +80,12 @@ func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(
 		}
 	}
 	// Wait reaps c before draining its output, after which its PID is gone.
-	exited = func() bool { return syscall.Kill(pgid, 0) == syscall.ESRCH }
-	return func() { syscall.Kill(-pgid, syscall.SIGKILL) }, exited, release, nil
+	exited := func() bool { return syscall.Kill(pgid, 0) == syscall.ESRCH }
+	return &contained{
+		kill:    func() { syscall.Kill(-pgid, syscall.SIGKILL) },
+		exited:  exited,
+		release: release,
+	}, nil
 }
 
 // reraise sends s to googet itself once it is no longer caught. The signal

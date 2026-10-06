@@ -31,15 +31,16 @@ import (
 // outside it. kill terminates every process in the job and exited reports
 // whether c itself has exited. release clears the kill-on-close limit and
 // closes the job, so descendants left running after a normal exit keep
-// running, as before. If the job cannot be set up, for example because a
-// parent job forbids it, kill only kills c.
-func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(), err error) {
+// running, as before. activity sums the job's accounting counters. If the job
+// cannot be set up, for example because a parent job forbids it, kill only
+// kills c and there is no activity counter.
+func startContained(c *exec.Cmd) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	c.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	if err := c.Start(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	pid := uint32(c.Process.Pid)
 	// The process is suspended, so it cannot have exited and pid is valid.
@@ -58,23 +59,62 @@ func startContained(c *exec.Cmd) (kill func(), exited func() bool, release func(
 				windows.CloseHandle(h)
 			}
 		}
-		return nil, nil, nil, fmt.Errorf("starting %s: %w", c.Path, err)
+		return nil, fmt.Errorf("starting %s: %w", c.Path, err)
 	}
-	exited = func() bool {
+	exited := func() bool {
 		ev, err := windows.WaitForSingleObject(proc, 0)
 		return err == nil && ev == windows.WAIT_OBJECT_0
 	}
 	if jobErr != nil {
-		logger.Warningf("Running %s without a job object, only it will be killed on timeout: %v", c.Path, jobErr)
-		return func() { c.Process.Kill() }, exited, func() { windows.CloseHandle(proc) }, nil
+		logger.Warningf("Running %s without a job object, so only it will be killed on timeout and inactivity is not watched: %v", c.Path, jobErr)
+		return &contained{
+			kill:    func() { c.Process.Kill() },
+			exited:  exited,
+			release: func() { windows.CloseHandle(proc) },
+		}, nil
 	}
-	return func() { windows.TerminateJobObject(job, 1) }, exited, func() {
-		if err := setJobLimits(job, windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK); err != nil {
-			logger.Warningf("Failed to clear the kill-on-close limit for %s; its remaining descendants will be killed: %v", c.Path, err)
-		}
-		windows.CloseHandle(job)
-		windows.CloseHandle(proc)
+	return &contained{
+		kill:   func() { windows.TerminateJobObject(job, 1) },
+		exited: exited,
+		release: func() {
+			if err := setJobLimits(job, windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK); err != nil {
+				logger.Warningf("Failed to clear the kill-on-close limit for %s; its remaining descendants will be killed: %v", c.Path, err)
+			}
+			windows.CloseHandle(job)
+			windows.CloseHandle(proc)
+		},
+		activity: func() (uint64, error) { return jobActivity(job) },
 	}, nil
+}
+
+// jobAccounting mirrors JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION.
+type jobAccounting struct {
+	TotalUserTime, TotalKernelTime                     int64
+	ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount, TotalProcesses                uint32
+	ActiveProcesses, TotalTerminatedProcesses          uint32
+	IoInfo                                             windows.IO_COUNTERS
+}
+
+// The Win32 structure is 96 bytes; these fail to compile otherwise.
+var (
+	_ [96 - unsafe.Sizeof(jobAccounting{})]byte
+	_ [unsafe.Sizeof(jobAccounting{}) - 96]byte
+)
+
+// jobActivity returns the sum of the CPU time, I/O operation and transfer
+// counts and number of processes ever started in job. Each only grows, so the
+// sum changes whenever any of them does.
+func jobActivity(job windows.Handle) (uint64, error) {
+	var a jobAccounting
+	if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAndIoAccountingInformation,
+		uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err != nil {
+		return 0, err
+	}
+	ioc := a.IoInfo
+	return uint64(a.TotalUserTime+a.TotalKernelTime) + uint64(a.TotalProcesses) +
+		ioc.ReadOperationCount + ioc.WriteOperationCount + ioc.OtherOperationCount +
+		ioc.ReadTransferCount + ioc.WriteTransferCount + ioc.OtherTransferCount, nil
 }
 
 // newJob creates a kill-on-close Job Object and assigns proc to it. Breakaway
