@@ -194,6 +194,9 @@ func readConf(filename string) {
 		goolib.InactivityMode = m
 	default:
 		logger.Errorf("Invalid inactivitymode %q, want %s, %s or %s", gc.InactivityMode, goolib.InactivityEnforce, goolib.InactivityMonitor, goolib.InactivityOff)
+		// An invalid value falls back to monitor rather than leaving enforce in
+		// effect, matching newWatch.
+		goolib.InactivityMode = goolib.InactivityMonitor
 	}
 
 	AllowUnsafeURL = gc.AllowUnsafeURL

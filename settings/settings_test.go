@@ -101,7 +101,8 @@ func TestInactivitySettings(t *testing.T) {
 		{"zero timeout disables", "inactivitytimeout: 0", 0, goolib.InactivityEnforce},
 		{"invalid timeout", "inactivitytimeout: 1x", 7 * time.Minute, goolib.InactivityEnforce},
 		{"upper case mode", "inactivitymode: OFF", 7 * time.Minute, goolib.InactivityOff},
-		{"invalid mode", "inactivitymode: kill", 7 * time.Minute, goolib.InactivityEnforce},
+		// A typo must not leave enforce in effect.
+		{"invalid mode", "inactivitymode: kill", 7 * time.Minute, goolib.InactivityMonitor},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rootDir := t.TempDir()
@@ -119,6 +120,22 @@ func TestInactivitySettings(t *testing.T) {
 				t.Errorf("goolib.InactivityMode with %q got: %q, want: %q", tt.conf, got, tt.wantMode)
 			}
 		})
+	}
+}
+
+func TestInactivityModeDefault(t *testing.T) {
+	// Without the key, settings leaves goolib.InactivityMode, and so its
+	// default, alone. A sentinel tells that apart from setting the default.
+	rootDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte("cachelife: 10m"), 0644); err != nil {
+		t.Fatalf("error writing conf file: %v", err)
+	}
+	orig := goolib.InactivityMode
+	t.Cleanup(func() { goolib.InactivityMode = orig })
+	goolib.InactivityMode = "sentinel"
+	settings.Initialize(rootDir, true)
+	if got, want := goolib.InactivityMode, "sentinel"; got != want {
+		t.Errorf("goolib.InactivityMode without inactivitymode = %q, want %q", got, want)
 	}
 }
 

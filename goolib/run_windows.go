@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -41,8 +43,9 @@ var relaySignals = []os.Signal{os.Interrupt}
 // the job, so descendants left running after c exits keep running, as before.
 // If the job cannot be set up, for example because a parent job forbids it,
 // kill only kills c, its descendants survive, and neither activity nor dialog
-// is available. Otherwise activity reads the job's accounting counters and
-// dialog looks for dialogs of its processes.
+// is available. Otherwise activity reads the counters of the job and of the
+// Windows Installer and servicing processes, and dialog looks for dialogs of
+// the job's processes.
 func startContained(c *exec.Cmd, sigs *signalRelay) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
@@ -80,7 +83,7 @@ func startContained(c *exec.Cmd, sigs *signalRelay) (*contained, error) {
 		logger.Warningf("Running %s without a job object, so only it will be killed on timeout or Ctrl-C and inactivity is not watched: %v", c.Path, jobErr)
 	} else {
 		p.kill = func() error { return windows.TerminateJobObject(job, 1) }
-		p.activity = func() (uint64, uint64, error) { return jobActivity(job) }
+		p.activity = addActivity(func() (uint64, uint64, error) { return jobActivity(job) }, serviceActivity)
 		p.dialog = func(unattended bool) (string, bool) { return jobDialog(job, unattended) }
 		closeJob = func() {
 			if err := setJobLimits(job, windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK); err != nil {
@@ -145,10 +148,90 @@ func jobActivity(job windows.Handle) (cpu, io uint64, err error) {
 		uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err != nil {
 		return 0, 0, err
 	}
-	ioc := a.IoInfo
-	return uint64(a.TotalUserTime + a.TotalKernelTime), uint64(a.TotalProcesses) +
-		ioc.ReadOperationCount + ioc.WriteOperationCount + ioc.OtherOperationCount +
-		ioc.ReadTransferCount + ioc.WriteTransferCount + ioc.OtherTransferCount, nil
+	return uint64(a.TotalUserTime + a.TotalKernelTime), uint64(a.TotalProcesses) + ioTotal(a.IoInfo), nil
+}
+
+// ioTotal returns the sum of the I/O operation and transfer counts in c.
+func ioTotal(c windows.IO_COUNTERS) uint64 {
+	return c.ReadOperationCount + c.WriteOperationCount + c.OtherOperationCount +
+		c.ReadTransferCount + c.WriteTransferCount + c.OtherTransferCount
+}
+
+// serviceImages are the image names of the Windows Installer service, which
+// runs custom actions as msiexec.exe too, and of servicing. Tests replace it.
+// The README lists these names; keep it in sync.
+var serviceImages = []string{"msiexec.exe", "TrustedInstaller.exe", "TiWorker.exe"}
+
+// procGetProcessIoCounters is loaded by hand because x/sys/windows has no
+// wrapper for GetProcessIoCounters.
+var procGetProcessIoCounters = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessIoCounters")
+
+// serviceActivity returns the CPU time of the processes named in
+// serviceImages and of the processes they start, transitively, and the sum of
+// their I/O counts and their number, skipping googet itself, stale parent
+// links, exited processes and processes it cannot open. Processes come and go,
+// so the sums can also shrink.
+func serviceActivity() (cpu, io uint64, err error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer windows.CloseHandle(snap)
+	self := windows.GetCurrentProcessId()
+	var roots []uint32
+	children := map[uint32][]uint32{}
+	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		children[e.ParentProcessID] = append(children[e.ParentProcessID], e.ProcessID)
+		name := windows.UTF16ToString(e.ExeFile[:])
+		if slices.ContainsFunc(serviceImages, func(s string) bool { return strings.EqualFold(s, name) }) {
+			roots = append(roots, e.ProcessID)
+		}
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return 0, 0, err
+	}
+	cpu, io = walkServiceTree(roots, children, self, processActivity)
+	return cpu, io, nil
+}
+
+// processActivity returns the creation time, CPU time and I/O count of process
+// pid, and whether it is still running and its times could be read.
+func processActivity(pid uint32) (created, cpu, io uint64, ok bool) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	defer windows.CloseHandle(h)
+	var ctime, exited, kernel, user windows.Filetime
+	if windows.GetProcessTimes(h, &ctime, &exited, &kernel, &user) != nil {
+		return 0, 0, 0, false
+	}
+	// OpenProcess and GetProcessTimes still succeed on an exited process while
+	// any handle to it remains open, and exited is undefined while running.
+	// GetExitCodeProcess needs only PROCESS_QUERY_LIMITED_INFORMATION, unlike
+	// WaitForSingleObject which requires SYNCHRONIZE (denied on some service
+	// processes); an exit code of STATUS_PENDING (259) only errs toward active.
+	var code uint32
+	if windows.GetExitCodeProcess(h, &code) != nil || code != uint32(windows.STATUS_PENDING) {
+		return 0, 0, 0, false
+	}
+	cpu = filetimeTicks(kernel) + filetimeTicks(user)
+	var c windows.IO_COUNTERS
+	// ok depends only on GetProcessTimes and GetExitCodeProcess so a running
+	// process whose I/O counters cannot be read still bridges its descendants
+	// and counts CPU and PID.
+	if r, _, _ := procGetProcessIoCounters.Call(uintptr(h), uintptr(unsafe.Pointer(&c))); r != 0 {
+		io = ioTotal(c)
+	}
+	return filetimeTicks(ctime), cpu, io, true
+}
+
+// filetimeTicks returns the 100ns ticks stored in a Filetime.
+// Filetime.Nanoseconds does not fit durations, since it subtracts the 1601
+// epoch.
+func filetimeTicks(f windows.Filetime) uint64 {
+	return uint64(f.HighDateTime)<<32 | uint64(f.LowDateTime)
 }
 
 var (
