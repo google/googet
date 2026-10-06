@@ -38,8 +38,6 @@ import (
 	"github.com/google/logger"
 )
 
-var toRemove []string
-
 // minInstalled reports whether the package is installed at the given version or greater.
 func minInstalled(pi goolib.PackageInfo, db *googetdb.GooDB) (bool, error) {
 	p, err := db.FetchPkg(pi)
@@ -405,7 +403,7 @@ func extractSpec(pkgPath string) (*goolib.PkgSpec, error) {
 	return goolib.ExtractPkgSpec(f)
 }
 
-func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, force bool, conflictMap map[string]string) func(string, os.FileInfo, error) error {
+func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, force bool, conflictMap map[string]string, u *undo) func(string, os.FileInfo, error) error {
 	return func(path string, fi os.FileInfo, err error) (outerr error) {
 		if err != nil {
 			return err
@@ -440,27 +438,18 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, fo
 			logger.Infof("Creating folder %q", outPath)
 			// We designate directories by an empty hash.
 			insFiles[outPath] = ""
-			return oswrap.MkdirAll(outPath, fi.Mode())
+			return u.mkdirAll(outPath, fi.Mode())
 		}
-		fn, err := client.RemoveOrRename(outPath)
-		if err != nil {
+		if err := u.mkdirAll(filepath.Dir(outPath), fi.Mode()); err != nil {
 			return err
 		}
-		if fn != "" {
-			toRemove = append(toRemove, fn)
+		if err := u.prepare(outPath); err != nil {
+			return err
 		}
 		logger.Infof("Copying file %q", outPath)
 		oFile, err := oswrap.Create(outPath)
 		if err != nil {
-			if !os.IsNotExist(err) {
-				return err
-			}
-			if err := oswrap.MkdirAll(filepath.Dir(outPath), fi.Mode()); err != nil {
-				return err
-			}
-			if oFile, err = oswrap.Create(outPath); err != nil {
-				return err
-			}
+			return err
 		}
 		defer func() {
 			if err := oFile.Close(); err != nil && outerr == nil {
@@ -567,7 +556,112 @@ func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb
 	return installPkgInner(pkg, ps, dbOnly, force, db)
 }
 
-// installPkgInner extracts the package, copies its files and runs its install script.
+// backupInfix marks the backup of a file that an install overwrites.
+const backupInfix = ".googet-bak"
+
+// change is one filesystem change made by an install.
+type change struct {
+	path string
+	// backup holds the old content of path, or is empty if path was created.
+	backup string
+}
+
+// undo records the changes an install makes to the filesystem, in order, so
+// that they can be reverted if the install fails. Reverting them newest first
+// restores each path to its original state even if it was written more than
+// once. The zero value is ready to use.
+type undo struct {
+	changes []change
+}
+
+// mkdirAll creates dir and any missing parents, recording each one it
+// creates.
+func (u *undo) mkdirAll(dir string, mode os.FileMode) error {
+	var missing []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := oswrap.Lstat(d); !os.IsNotExist(err) || filepath.Dir(d) == d {
+			break
+		}
+		missing = append(missing, d)
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		u.changes = append(u.changes, change{path: missing[i]})
+	}
+	return oswrap.MkdirAll(dir, mode)
+}
+
+// prepare makes path ready to be written. An existing file is renamed to a
+// backup in the same directory, which works on Windows even for running
+// executables; a missing path is recorded as created.
+func (u *undo) prepare(path string) error {
+	fi, err := oswrap.Lstat(path)
+	switch {
+	case os.IsNotExist(err):
+		u.changes = append(u.changes, change{path: path})
+		return nil
+	case err != nil:
+		return err
+	case fi.IsDir():
+		// An empty directory in the way of the file is removed, and is not
+		// recreated on rollback; client.RemoveOrRename fails if it is not
+		// empty.
+		if _, err := client.RemoveOrRename(path); err != nil {
+			return err
+		}
+		u.changes = append(u.changes, change{path: path})
+		return nil
+	}
+	// oswrap has no CreateTemp; os handles long absolute Windows paths itself.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+backupInfix+"*")
+	if err != nil {
+		return err
+	}
+	f.Close()
+	if err := oswrap.Rename(path, f.Name()); err != nil {
+		oswrap.Remove(f.Name())
+		return err
+	}
+	u.changes = append(u.changes, change{path: path, backup: f.Name()})
+	return nil
+}
+
+// rollback reverts the changes, newest first: created paths are removed and
+// backups are restored. Directories that are not empty are left in place.
+func (u *undo) rollback() {
+	for i := len(u.changes) - 1; i >= 0; i-- {
+		c := u.changes[i]
+		// RemoveOrRename moves a file that is in use out of the way.
+		if _, err := client.RemoveOrRename(c.path); err != nil {
+			logger.Warningf("Rollback: leaving %q: %v", c.path, err)
+			continue
+		}
+		if c.backup == "" {
+			continue
+		}
+		if err := oswrap.Rename(c.backup, c.path); err != nil {
+			logger.Errorf("Rollback: failed to restore %q from %q: %v", c.path, c.backup, err)
+		}
+	}
+}
+
+// commit deletes the backups, scheduling any that are in use for removal on
+// reboot.
+func (u *undo) commit() {
+	for _, c := range u.changes {
+		if c.backup == "" {
+			continue
+		}
+		if err := oswrap.Remove(c.backup); err != nil {
+			if err := oswrap.RemoveOnReboot(c.backup); err != nil {
+				logger.Errorf("Failed to remove backup %q: %v", c.backup, err)
+			}
+		}
+	}
+}
+
+// installPkgInner extracts the package, copies its files and runs its install
+// script. If any step fails, the files it placed are removed and the files it
+// overwrote are restored.
 func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
 	dir, err := download.ExtractPkg(pkg)
 	if err != nil {
@@ -576,11 +670,15 @@ func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *goo
 
 	logger.Infof("Executing install of package %q", filepath.Base(dir))
 
-	toRemove = []string{}
-	// Try to cleanup moved files after package is installed.
+	u := &undo{}
+	// done is set only on the final return so that errors and panics both
+	// roll back.
+	done := false
 	defer func() {
-		for _, fn := range toRemove {
-			oswrap.Remove(fn)
+		if done {
+			u.commit()
+		} else {
+			u.rollback()
 		}
 	}()
 
@@ -593,7 +691,7 @@ func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *goo
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)
 		src = filepath.Join(dir, src)
-		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly, force, conflictMap)); err != nil {
+		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly, force, conflictMap, u)); err != nil {
 			return nil, err
 		}
 	}
@@ -604,6 +702,7 @@ func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *goo
 		}
 	}
 
+	done = true
 	if err := oswrap.RemoveAll(dir); err != nil {
 		logger.Error(err)
 	}
