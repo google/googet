@@ -565,3 +565,145 @@ func TestWatchStateStep(t *testing.T) {
 		})
 	}
 }
+
+func TestAddActivity(t *testing.T) {
+	errA, errB := errors.New("a failed"), errors.New("b failed")
+	counters := func(cpu, io uint64, err error) func() (uint64, uint64, error) {
+		return func() (uint64, uint64, error) { return cpu, io, err }
+	}
+	for _, tt := range []struct {
+		name            string
+		a, b            func() (uint64, uint64, error)
+		wantCPU, wantIO uint64
+		wantErrs        []error
+	}{
+		{name: "sum", a: counters(1, 2, nil), b: counters(10, 20, nil), wantCPU: 11, wantIO: 22},
+		{name: "a fails", a: counters(0, 0, errA), b: counters(10, 20, nil), wantCPU: 10, wantIO: 20, wantErrs: []error{errA}},
+		{name: "b fails", a: counters(1, 2, nil), b: counters(0, 0, errB), wantCPU: 1, wantIO: 2, wantErrs: []error{errB}},
+		{name: "both fail", a: counters(0, 0, errA), b: counters(0, 0, errB), wantErrs: []error{errA, errB}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, io, err := addActivity(tt.a, tt.b)()
+			if cpu != tt.wantCPU || io != tt.wantIO {
+				t.Errorf("addActivity()() = %d, %d, want %d, %d", cpu, io, tt.wantCPU, tt.wantIO)
+			}
+			if (err != nil) != (len(tt.wantErrs) > 0) {
+				t.Errorf("addActivity()() error = %v, want errors %v", err, tt.wantErrs)
+			}
+			for _, want := range tt.wantErrs {
+				if !errors.Is(err, want) {
+					t.Errorf("addActivity()() error = %v, want it to wrap %v", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWalkServiceTree(t *testing.T) {
+	type proc struct {
+		created, cpu, io uint64
+		ok               bool
+	}
+	// 1 (created 100) started 2 (200), which started 3 (300) and 4 (200);
+	// a reused PID makes 4 the parent of 2 with equal creation times, closing
+	// a cycle. 1 also appears as the stale Toolhelp parent of 7 (created 50,
+	// older than 1), whose child 8 (created 600) must not be reached through 7.
+	// 5 (created 100) and its child 6 (created 150) form a second tree; 9 is
+	// unreadable (ok=false) so its child 10 is not reached.
+	procs := map[uint32]proc{
+		1:  {created: 100, cpu: 1, io: 10, ok: true},
+		2:  {created: 200, cpu: 2, io: 20, ok: true},
+		3:  {created: 300, cpu: 4, io: 40, ok: true},
+		4:  {created: 200, cpu: 8, io: 80, ok: true},
+		5:  {created: 100, cpu: 16, io: 160, ok: true},
+		6:  {created: 150, cpu: 32, io: 320, ok: true},
+		7:  {created: 50, cpu: 64, io: 640, ok: true},
+		8:  {created: 600, cpu: 128, io: 1280, ok: true},
+		9:  {ok: false},
+		10: {created: 500, cpu: 256, io: 2560, ok: true},
+	}
+	children := map[uint32][]uint32{
+		1: {2, 7},
+		2: {3, 4},
+		4: {2},
+		5: {6, 7},
+		7: {8},
+		9: {10},
+	}
+	for _, tt := range []struct {
+		name            string
+		roots           []uint32
+		self            uint32
+		wantCPU, wantIO uint64
+		notInspected    []uint32
+	}{
+		{
+			name:         "tree with cycle and stale older child",
+			roots:        []uint32{1},
+			self:         99,
+			wantCPU:      1 + 2 + 4 + 8,
+			wantIO:       (10 + 1) + (20 + 1) + (40 + 1) + (80 + 1),
+			notInspected: []uint32{8},
+		},
+		{
+			name:    "older child still counted when also a root",
+			roots:   []uint32{7, 1},
+			self:    99,
+			wantCPU: 1 + 2 + 4 + 8 + 64 + 128,
+			wantIO:  (10 + 1) + (20 + 1) + (40 + 1) + (80 + 1) + (640 + 1) + (1280 + 1),
+		},
+		{
+			name:         "self excluded as root and child",
+			roots:        []uint32{1, 5},
+			self:         2,
+			wantCPU:      1 + 16 + 32,
+			wantIO:       (10 + 1) + (160 + 1) + (320 + 1),
+			notInspected: []uint32{3, 4},
+		},
+		{
+			name:         "self as root excluded",
+			roots:        []uint32{5},
+			self:         5,
+			wantCPU:      0,
+			wantIO:       0,
+			notInspected: []uint32{6},
+		},
+		{
+			name:         "unreadable parent skips subtree",
+			roots:        []uint32{9},
+			self:         99,
+			wantCPU:      0,
+			wantIO:       0,
+			notInspected: []uint32{10},
+		},
+		{
+			name: "no roots",
+			self: 99,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			seen := map[uint32]bool{}
+			inspect := func(pid uint32) (uint64, uint64, uint64, bool) {
+				if seen[pid] {
+					t.Errorf("walkServiceTree() inspected PID %d more than once", pid)
+				}
+				seen[pid] = true
+				p := procs[pid]
+				return p.created, p.cpu, p.io, p.ok
+			}
+			gotCPU, gotIO := walkServiceTree(tt.roots, children, tt.self, inspect)
+			if gotCPU != tt.wantCPU || gotIO != tt.wantIO {
+				t.Errorf("walkServiceTree(%v, self=%d) = %d, %d, want %d, %d",
+					tt.roots, tt.self, gotCPU, gotIO, tt.wantCPU, tt.wantIO)
+			}
+			if seen[tt.self] {
+				t.Errorf("walkServiceTree() inspected self PID %d", tt.self)
+			}
+			for _, pid := range tt.notInspected {
+				if seen[pid] {
+					t.Errorf("walkServiceTree() inspected unreachable PID %d", pid)
+				}
+			}
+		})
+	}
+}

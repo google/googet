@@ -261,3 +261,18 @@ func TestMainInterruptedReraises(t *testing.T) {
 		})
 	}
 }
+
+func TestCreatePackageDisablesInactivityWatchdog(t *testing.T) {
+	// createPackage turns the watchdog off before it runs any build step.
+	dir := t.TempDir()
+	orig := goolib.InactivityMode
+	t.Cleanup(func() { goolib.InactivityMode = orig })
+	goolib.InactivityMode = goolib.InactivityEnforce
+	gs := &goolib.GooSpec{PackageSpec: &goolib.PkgSpec{Name: "pkg", Version: "1.0.0@1", Arch: "noarch"}}
+	if err := createPackage(gs, dir, dir); err != nil {
+		t.Fatalf("createPackage() error = %v", err)
+	}
+	if got, want := goolib.InactivityMode, goolib.InactivityOff; got != want {
+		t.Errorf("goolib.InactivityMode after createPackage() = %q, want %q", got, want)
+	}
+}

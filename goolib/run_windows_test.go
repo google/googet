@@ -16,11 +16,15 @@ limitations under the License.
 package goolib
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -166,8 +170,18 @@ func TestRunWithoutJob(t *testing.T) {
 	}
 }
 
+// ignoreServices makes the rest of a test count no service processes, so
+// that unrelated installs on the machine cannot affect it.
+func ignoreServices(t *testing.T) {
+	t.Helper()
+	orig := serviceImages
+	t.Cleanup(func() { serviceImages = orig })
+	serviceImages = nil
+}
+
 func TestRunInactivity(t *testing.T) {
 	const limit = spinFor / 3
+	ignoreServices(t)
 	origMinInactivity, origMinInterval := minInactivity, minInterval
 	t.Cleanup(func() { minInactivity, minInterval = origMinInactivity, origMinInterval })
 	minInactivity, minInterval = 0, 100*time.Millisecond
@@ -240,11 +254,24 @@ func TestRunCtrlBreakAfterExit(t *testing.T) {
 // "hidden-helper-window" helpers create.
 const dialogTitle = "googet test dialog"
 
+// childEnv names the binary the "spawn-spin" helper runs a "spin" helper from.
+const childEnv = "GOOLIB_TEST_CHILD"
+
 // platformHelper runs the Windows-only helperEnv modes, which exit; it returns
 // for any other mode.
 func platformHelper(mode string) {
 	s, _ := windows.UTF16PtrFromString(dialogTitle)
 	switch mode {
+	case "spawn-spin":
+		c := helperCmd("spin")
+		c.Path, c.Args[0] = os.Getenv(childEnv), os.Getenv(childEnv)
+		if err := c.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		fmt.Println(c.Process.Pid)
+		c.Wait()
+		os.Exit(0)
 	case "dialog":
 		// Burn CPU time while the message box is open so CPU activity cannot
 		// mask the stuck dialog.
@@ -274,6 +301,7 @@ func platformHelper(mode string) {
 }
 
 func TestRunDialog(t *testing.T) {
+	ignoreServices(t)
 	origTimeout, origLimit, origMode, origGrace := Timeout, InactivityTimeout, InactivityMode, dialogGrace
 	origMinInactivity, origIsUnattended := minInactivity, isUnattended
 	t.Cleanup(func() {
@@ -306,8 +334,167 @@ func TestRunDialog(t *testing.T) {
 	}
 }
 
+// helperCopyCmd is like helperCmd but runs a copy of the test binary exe
+// named name, so that its processes can be told apart from the test's.
+func helperCopyCmd(t *testing.T, exe, name, mode string) *exec.Cmd {
+	t.Helper()
+	b, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) error = %v", exe, err)
+	}
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, b, 0755); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v", p, err)
+	}
+	c := helperCmd(mode)
+	c.Path, c.Args[0] = p, p
+	return c
+}
+
+func TestRunServiceActivity(t *testing.T) {
+	const limit = spinFor / 6
+	ignoreServices(t)
+	origTimeout, origLimit, origMode := Timeout, InactivityTimeout, InactivityMode
+	origMinInactivity, origMinInterval := minInactivity, minInterval
+	t.Cleanup(func() {
+		Timeout, InactivityTimeout, InactivityMode = origTimeout, origLimit, origMode
+		minInactivity, minInterval = origMinInactivity, origMinInterval
+	})
+	InactivityTimeout, InactivityMode = limit, InactivityEnforce
+	minInactivity, minInterval = 0, 100*time.Millisecond
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	for _, tt := range []struct {
+		name, image, mode string
+		// wantChildPID is set for a helper that prints the PID of its child.
+		wantChildPID bool
+	}{
+		// The spinner runs outside the job, like the Windows Installer
+		// service, and uses CPU for longer than the timeout.
+		{"service process", "googet-svc-spin.exe", "spin", false},
+		// The spinner, named like the test binary, is started by a service
+		// process, as a custom action is.
+		{"descendant", "googet-svc-parent.exe", "spawn-spin", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			origSubTimeout, origImages := Timeout, serviceImages
+			t.Cleanup(func() { Timeout, serviceImages = origSubTimeout, origImages })
+			c := helperCopyCmd(t, exe, tt.image, tt.mode)
+			c.Env = append(c.Env, childEnv+"="+exe)
+			var out io.Reader
+			if tt.wantChildPID {
+				var err error
+				out, err = c.StdoutPipe()
+				if err != nil {
+					t.Fatalf("StdoutPipe() error = %v", err)
+				}
+			}
+			if err := c.Start(); err != nil {
+				t.Fatalf("Start(%s helper) error = %v", tt.mode, err)
+			}
+			t.Cleanup(func() {
+				c.Process.Kill()
+				c.Wait()
+			})
+			if out != nil {
+				line, rerr := bufio.NewReader(out).ReadString('\n')
+				pid, perr := strconv.Atoi(strings.TrimSpace(line))
+				if rerr != nil || perr != nil {
+					t.Fatalf("spawn-spin printed %q (read error: %v, parse error: %v), want child PID", line, rerr, perr)
+				}
+				childProc, ferr := os.FindProcess(pid)
+				if ferr != nil {
+					t.Fatalf("os.FindProcess(%d) error = %v", pid, ferr)
+				}
+				t.Cleanup(func() {
+					childProc.Kill()
+					childProc.Wait()
+				})
+			}
+			// Matching ignores case. The hard timeout ends a command that is
+			// never found inactive.
+			Timeout, serviceImages = 3*limit, []string{strings.ToUpper(tt.image)}
+			if err := Run(helperCmd("sleep"), nil, io.Discard); !errors.Is(err, ErrTimeout) {
+				t.Errorf("Run(sleep helper) with a busy %s error = %v, want %v", tt.name, err, ErrTimeout)
+			}
+		})
+	}
+	t.Run("no matching service", func(t *testing.T) {
+		origSubTimeout, origImages := Timeout, serviceImages
+		t.Cleanup(func() { Timeout, serviceImages = origSubTimeout, origImages })
+		// Inactivity ends the command long before this longer timeout.
+		Timeout, serviceImages = 12*limit, []string{"no-such-image.exe"}
+		if err := Run(helperCmd("sleep"), nil, io.Discard); !errors.Is(err, ErrInactive) {
+			t.Errorf("Run(sleep helper) without service processes error = %v, want %v", err, ErrInactive)
+		}
+	})
+}
+
+func TestFiletimeTicksAndIOTotal(t *testing.T) {
+	ft := windows.Filetime{HighDateTime: 0x12345678, LowDateTime: 0x9abcdef0}
+	if got, want := filetimeTicks(ft), uint64(0x123456789abcdef0); got != want {
+		t.Errorf("filetimeTicks(%+v) = %#x, want %#x", ft, got, want)
+	}
+	ioc := windows.IO_COUNTERS{
+		ReadOperationCount:  1,
+		WriteOperationCount: 2,
+		OtherOperationCount: 4,
+		ReadTransferCount:   8,
+		WriteTransferCount:  16,
+		OtherTransferCount:  32,
+	}
+	if got, want := ioTotal(ioc), uint64(63); got != want {
+		t.Errorf("ioTotal(%+v) = %d, want %d", ioc, got, want)
+	}
+}
+
+func TestProcessActivity(t *testing.T) {
+	pid := windows.GetCurrentProcessId()
+	created, _, io1, ok := processActivity(pid)
+	if !ok || created == 0 {
+		t.Fatalf("processActivity(%d) = created %d, ok %v, want non-zero and true", pid, created, ok)
+	}
+	if err := os.WriteFile(filepath.Join(t.TempDir(), "io"), []byte("activity"), 0644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	_, _, io2, ok := processActivity(pid)
+	if !ok || io2 == 0 || io2 <= io1 {
+		t.Errorf("processActivity(%d) io before/after write = %d -> %d (ok=%v), want positive and growing", pid, io1, io2, ok)
+	}
+}
+
 func TestUnattended(t *testing.T) {
 	if _, err := unattended(); err != nil {
 		t.Errorf("unattended() error = %v, want nil", err)
+	}
+}
+
+func TestProcessActivityExited(t *testing.T) {
+	c := helperCmd("true")
+	if err := c.Start(); err != nil {
+		t.Fatalf("starting true helper: %v", err)
+	}
+	pid := uint32(c.Process.Pid)
+	// Keep a handle open across Wait so the kernel process object outlives the
+	// process and exercises the STATUS_PENDING check, not just OpenProcess
+	// failing once the last handle closes.
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		c.Wait()
+		t.Fatalf("OpenProcess(%d) error = %v", pid, err)
+	}
+	defer windows.CloseHandle(h)
+	if err := c.Wait(); err != nil {
+		t.Fatalf("waiting for true helper: %v", err)
+	}
+	if _, _, _, ok := processActivity(pid); ok {
+		t.Errorf("processActivity(%d) ok = true with open handle to exited process, want false", pid)
+	}
+	// PID 0 (System Idle Process) deterministically fails OpenProcess without
+	// risking kernel PID reuse after closing the last handle to pid.
+	if _, _, _, ok := processActivity(0); ok {
+		t.Errorf("processActivity(0) ok = true for non-openable PID 0, want false")
 	}
 }
