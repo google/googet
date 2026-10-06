@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
@@ -267,6 +270,237 @@ func TestLatest(t *testing.T) {
 				t.Errorf("Latest(%+v) downloaded %q, want %q", tc.pi, got, want)
 			}
 		})
+	}
+}
+
+// step scripts one GET response of stepServer. The zero value sends the
+// whole requested range.
+type step struct {
+	hang   bool // Stall before sending headers.
+	status int  // If nonzero, send only this status.
+	stall  bool // Stall after sending send bytes of the range.
+	send   int
+}
+
+// stepServer serves payload with range support, answering the i-th GET as
+// steps[i] describes and every later GET in full. Every HEAD and GET waits
+// delay before sending headers. It records the Range header of every GET in
+// ranges, which is safe to read once the server is closed.
+func stepServer(payload []byte, steps []step, delay time.Duration, ranges *[]string) *httptest.Server {
+	var mu sync.Mutex
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay)
+		w.Header().Set("Accept-Ranges", "bytes")
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			return
+		}
+		mu.Lock()
+		var s step
+		if i := len(*ranges); i < len(steps) {
+			s = steps[i]
+		}
+		*ranges = append(*ranges, r.Header.Get("Range"))
+		mu.Unlock()
+		if s.hang {
+			<-r.Context().Done()
+			return
+		}
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+			return
+		}
+		start, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(r.Header.Get("Range"), "bytes="), "-"))
+		body := payload[start:]
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		if !s.stall {
+			w.Write(body)
+			return
+		}
+		w.Write(body[:s.send])
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+}
+
+func TestPackageRetries(t *testing.T) {
+	defer func(d func(int) time.Duration) { retryDelay = d }(retryDelay)
+	retryDelay = func(int) time.Duration { return 0 }
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	const timeout = 200 * time.Millisecond
+	downloader.StallTimeout = timeout
+
+	// Each attempt stalls after 100 more bytes, more times than maxFailures.
+	var progressing []step
+	var progressingRanges []string
+	for i := range maxFailures + 2 {
+		progressing = append(progressing, step{stall: true, send: 100})
+		progressingRanges = append(progressingRanges, "bytes="+strconv.Itoa(100*i)+"-")
+	}
+	progressingRanges = append(progressingRanges, "bytes="+strconv.Itoa(100*(maxFailures+2))+"-")
+	// Every attempt stalls without sending anything.
+	var stuck []step
+	var stuckRanges []string
+	for range maxFailures {
+		stuck = append(stuck, step{stall: true})
+		stuckRanges = append(stuckRanges, "bytes=0-")
+	}
+
+	for _, tc := range []struct {
+		desc       string
+		existing   []byte
+		chksum     string
+		delay      time.Duration
+		steps      []step
+		wantRanges []string
+		wantErr    error
+		wantStatus int
+	}{
+		{
+			desc:       "stall mid-body resumes",
+			steps:      []step{{stall: true, send: 400}},
+			wantRanges: []string{"bytes=0-", "bytes=400-"},
+		},
+		{
+			desc:       "stall before headers is retried",
+			steps:      []step{{hang: true}},
+			wantRanges: []string{"bytes=0-", "bytes=0-"},
+		},
+		{
+			// The HEAD and the GET headers each take most of the timeout,
+			// so the timer must restart when each of them completes.
+			desc:       "slow headers are progress",
+			delay:      timeout * 3 / 5,
+			wantRanges: []string{"bytes=0-"},
+		},
+		{
+			desc:       "stalls that make progress never give up",
+			steps:      progressing,
+			wantRanges: progressingRanges,
+		},
+		{
+			desc:       "gives up after repeated stalls without progress",
+			steps:      append(stuck, step{stall: true}),
+			wantRanges: stuckRanges,
+			wantErr:    client.ErrStalled,
+		},
+		{
+			desc:       "temporary server errors are retried",
+			steps:      []step{{status: http.StatusServiceUnavailable}, {status: http.StatusTooManyRequests}, {status: http.StatusRequestTimeout}},
+			wantRanges: []string{"bytes=0-", "bytes=0-", "bytes=0-", "bytes=0-"},
+		},
+		{
+			desc:       "not found is not retried",
+			steps:      []step{{status: http.StatusNotFound}},
+			wantRanges: []string{"bytes=0-"},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			desc:       "checksum mismatch is not retried",
+			chksum:     "bad",
+			wantRanges: []string{"bytes=0-"},
+			wantErr:    errChecksum,
+		},
+		{
+			desc:       "checksum mismatch after resume restarts once",
+			existing:   bytes.Repeat([]byte("x"), 400),
+			wantRanges: []string{"bytes=400-", "bytes=0-"},
+		},
+		{
+			desc:       "checksum mismatch after resume and restart gives up",
+			existing:   bytes.Repeat([]byte("x"), 400),
+			chksum:     "bad",
+			wantRanges: []string{"bytes=400-", "bytes=0-"},
+			wantErr:    errChecksum,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			var ranges []string
+			srv := stepServer(payload, tc.steps, tc.delay, &ranges)
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			if tc.existing != nil {
+				if err := os.WriteFile(dst, tc.existing, 0644); err != nil {
+					t.Fatalf("writing existing file: %v", err)
+				}
+			}
+			want := chksum
+			if tc.chksum != "" {
+				want = tc.chksum
+			}
+			err := Package(context.Background(), srv.URL+"/pkg.goo", dst, want, downloader)
+			srv.Close()
+			var se *statusError
+			switch {
+			case tc.wantStatus != 0:
+				if !errors.As(err, &se) || se.code != tc.wantStatus {
+					t.Errorf("Package() = %v, want status %d", err, tc.wantStatus)
+				}
+			case tc.wantErr != nil:
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("Package() = %v, want %v", err, tc.wantErr)
+				}
+			case err != nil:
+				t.Fatalf("Package() = %v, want nil", err)
+			default:
+				if got, _ := os.ReadFile(dst); !bytes.Equal(got, payload) {
+					t.Errorf("downloaded %d bytes, want %d bytes matching the payload", len(got), len(payload))
+				}
+			}
+			if !slices.Equal(ranges, tc.wantRanges) {
+				t.Errorf("GET ranges = %q, want %q", ranges, tc.wantRanges)
+			}
+		})
+	}
+}
+
+func TestPackageDoesNotRetryPermanentErrors(t *testing.T) {
+	defer func(d func(int) time.Duration) { retryDelay = d }(retryDelay)
+	retryDelay = func(int) time.Duration {
+		t.Error("Package() retried a permanent error")
+		return 0
+	}
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		desc, url, dst string
+	}{
+		{desc: "unsupported scheme", url: "ftp://example.com/pkg.goo", dst: filepath.Join(dir, "pkg.goo")},
+		{desc: "invalid URL", url: "http://[::1", dst: filepath.Join(dir, "pkg.goo")},
+		{desc: "unwritable destination", url: "http://127.0.0.1:1/pkg.goo", dst: filepath.Join(dir, "missing", "pkg.goo")},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if err := Package(context.Background(), tc.url, tc.dst, "sum", downloader); err == nil {
+				t.Error("Package() = nil, want an error")
+			}
+		})
+	}
+}
+
+func TestPackageStopsOnCancel(t *testing.T) {
+	var ranges []string
+	srv := stepServer(nil, []step{{hang: true}}, 0, &ranges)
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	err = Package(ctx, srv.URL+"/pkg.goo", filepath.Join(t.TempDir(), "pkg.goo"), "sum", downloader)
+	srv.Close()
+	if !errors.Is(err, context.Canceled) || errors.Is(err, client.ErrStalled) {
+		t.Errorf("Package() = %v, want context.Canceled and not ErrStalled", err)
+	}
+	if len(ranges) != 1 {
+		t.Errorf("got %d GET requests, want 1", len(ranges))
 	}
 }
 
