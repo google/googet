@@ -210,6 +210,7 @@ func TestRetryFromFullPackage(t *testing.T) {
 		{"interrupted", fmt.Errorf("wrap: %w", goolib.ErrInterrupted), false},
 		{"timeout", fmt.Errorf("wrap: %w", goolib.ErrTimeout), false},
 		{"inactive", fmt.Errorf("wrap: %w", goolib.ErrInactive), false},
+		{"dialog", fmt.Errorf("wrap: %w", goolib.ErrDialog), false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := retryFromFullPackage(tt.err); got != tt.want {

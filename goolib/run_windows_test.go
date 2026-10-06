@@ -17,7 +17,10 @@ package goolib
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -147,7 +150,7 @@ func TestRunWithoutJob(t *testing.T) {
 	if !processAlive(pid) {
 		t.Errorf("grandchild %d was killed, want only the command killed without a job", pid)
 	}
-	// Nor is there an activity counter for the inactivity limit.
+	// Nor are there activity counters or dialogs to watch.
 	c := helperCmd("true")
 	sigs := catchSignals()
 	p, err := startContained(c, sigs)
@@ -158,8 +161,8 @@ func TestRunWithoutJob(t *testing.T) {
 	c.Wait()
 	sigs.stop()
 	p.release()
-	if p.activity != nil {
-		t.Error("startContained() activity != nil without a job, want nil")
+	if p.activity != nil || p.dialog != nil {
+		t.Errorf("startContained() activity, dialog set = %v, %v without a job, want neither", p.activity != nil, p.dialog != nil)
 	}
 }
 
@@ -230,5 +233,81 @@ func TestRunCtrlBreakAfterExit(t *testing.T) {
 	}
 	if ev, err := windows.WaitForSingleObject(gc, 0); err != nil || ev != uint32(windows.WAIT_TIMEOUT) {
 		t.Errorf("grandchild %d was killed by an event that came after the installer exited (wait = %v, %v)", pid, ev, err)
+	}
+}
+
+// dialogTitle is the title of the windows the "dialog" and
+// "hidden-helper-window" helpers create.
+const dialogTitle = "googet test dialog"
+
+// platformHelper runs the Windows-only helperEnv modes, which exit; it returns
+// for any other mode.
+func platformHelper(mode string) {
+	s, _ := windows.UTF16PtrFromString(dialogTitle)
+	switch mode {
+	case "dialog":
+		// Burn CPU time while the message box is open so CPU activity cannot
+		// mask the stuck dialog.
+		go func() {
+			for {
+				runtime.Gosched()
+			}
+		}()
+		windows.MessageBox(0, s, s, windows.MB_OK)
+		os.Exit(0)
+	case "hidden-helper-window":
+		// Create a standard dialog window without WS_VISIBLE or
+		// WS_EX_DLGMODALFRAME, like the hidden helper windows of .NET and GDI+,
+		// and keep it, which needs no message loop. It is not a dialog, even
+		// when nobody can answer one.
+		runtime.LockOSThread()
+		class, _ := windows.UTF16PtrFromString(dialogClass)
+		hwnd, _, err := windows.NewLazySystemDLL("user32.dll").NewProc("CreateWindowExW").Call(
+			0, uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(s)), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+		if hwnd == 0 {
+			fmt.Fprintf(os.Stderr, "CreateWindowExW failed: %v\n", err)
+			os.Exit(1)
+		}
+		time.Sleep(10 * time.Minute)
+		os.Exit(0)
+	}
+}
+
+func TestRunDialog(t *testing.T) {
+	origTimeout, origLimit, origMode, origGrace := Timeout, InactivityTimeout, InactivityMode, dialogGrace
+	origMinInactivity, origIsUnattended := minInactivity, isUnattended
+	t.Cleanup(func() {
+		Timeout, InactivityTimeout, InactivityMode, dialogGrace = origTimeout, origLimit, origMode, origGrace
+		minInactivity, isUnattended = origMinInactivity, origIsUnattended
+	})
+	// Dialogs are sampled every 1s (6s/6) and acted on at 2s, before the
+	// helper can become inactive at 6s. Whether this runs in session 0 varies,
+	// so nobody answering is forced.
+	Timeout, InactivityTimeout, InactivityMode, dialogGrace = 30*time.Second, 6*time.Second, InactivityEnforce, 2*time.Second
+	minInactivity, isUnattended = 0, func() bool { return true }
+	for _, tt := range []struct {
+		mode    string
+		wantErr error
+	}{
+		{"dialog", ErrDialog},
+		// A hidden helper window is not a dialog, so six idle ticks after
+		// CreateWindowExW reach InactivityTimeout instead.
+		{"hidden-helper-window", ErrInactive},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			err := Run(helperCmd(tt.mode), nil, io.Discard)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Run(%s helper) error = %v, want %v", tt.mode, err, tt.wantErr)
+			}
+			if tt.wantErr == ErrDialog && (err == nil || !strings.Contains(err.Error(), dialogTitle)) {
+				t.Errorf("Run(%s helper) error = %v, want the title %q", tt.mode, err, dialogTitle)
+			}
+		})
+	}
+}
+
+func TestUnattended(t *testing.T) {
+	if _, err := unattended(); err != nil {
+		t.Errorf("unattended() error = %v, want nil", err)
 	}
 }

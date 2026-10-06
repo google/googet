@@ -40,7 +40,8 @@ import (
 // but exit at once with code 0 or 3, and "exit-stubborn" does what "stubborn"
 // does but exits at once with code 0; "sleep", "sleep-stubborn" and
 // "sleep-hup" are the grandchild; "true" exits at once; "spin" uses CPU
-// without output for spinFor and exits.
+// without output for spinFor and exits; "dialog" and "hidden-helper-window"
+// are Windows-only (see platformHelper).
 const helperEnv = "GOOLIB_TEST_HELPER"
 
 // runReturned is printed to stderr by actAsGooget once Run has behaved as
@@ -179,6 +180,11 @@ func TestMain(m *testing.M) {
 			// Burn CPU without output.
 		}
 		os.Exit(0)
+	case "":
+	default:
+		platformHelper(mode)
+		fmt.Fprintf(os.Stderr, "unknown %s mode %q\n", helperEnv, mode)
+		os.Exit(2)
 	}
 	os.Exit(m.Run())
 }

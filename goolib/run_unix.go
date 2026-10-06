@@ -87,3 +87,7 @@ func Reraise(s os.Signal) {
 	}
 	time.Sleep(time.Second)
 }
+
+// unattended reports whether nobody can answer a dialog. Commands are not
+// watched for dialogs here, so it does not matter.
+func unattended() (bool, error) { return false, nil }
