@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -33,7 +35,7 @@ import (
 // outside it. kill terminates every process in the job and exited reports
 // whether c itself has exited. release clears the kill-on-close limit and
 // closes the job, so descendants left running after a normal exit keep
-// running, as before. activity reads the job's accounting counters and dialog
+// running, as before. activity reads the job's and service counters and dialog
 // looks for dialogs of its processes. If the job cannot be set up, for example
 // because a parent job forbids it, kill only kills c and neither is available.
 func startContained(c *exec.Cmd) (*contained, error) {
@@ -85,7 +87,7 @@ func startContained(c *exec.Cmd) (*contained, error) {
 			windows.CloseHandle(job)
 			windows.CloseHandle(proc)
 		},
-		activity: func() (uint64, uint64, error) { return jobActivity(job) },
+		activity: addActivity(func() (uint64, uint64, error) { return jobActivity(job) }, serviceActivity),
 		dialog:   func() (string, bool) { return jobDialog(job) },
 	}, nil
 }
@@ -114,10 +116,79 @@ func jobActivity(job windows.Handle) (cpu, io uint64, err error) {
 		uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err != nil {
 		return 0, 0, err
 	}
-	ioc := a.IoInfo
-	return uint64(a.TotalUserTime + a.TotalKernelTime), uint64(a.TotalProcesses) +
-		ioc.ReadOperationCount + ioc.WriteOperationCount + ioc.OtherOperationCount +
-		ioc.ReadTransferCount + ioc.WriteTransferCount + ioc.OtherTransferCount, nil
+	return uint64(a.TotalUserTime + a.TotalKernelTime), uint64(a.TotalProcesses) + ioTotal(a.IoInfo), nil
+}
+
+// ioTotal returns the sum of the I/O operation and transfer counts in c.
+func ioTotal(c windows.IO_COUNTERS) uint64 {
+	return c.ReadOperationCount + c.WriteOperationCount + c.OtherOperationCount +
+		c.ReadTransferCount + c.WriteTransferCount + c.OtherTransferCount
+}
+
+// serviceImages are the image names of the Windows Installer service, which
+// runs custom actions as msiexec.exe too, and of servicing. Tests replace it.
+var serviceImages = []string{"msiexec.exe", "TrustedInstaller.exe", "TiWorker.exe"}
+
+// procGetProcessIoCounters is loaded by hand because x/sys/windows has no
+// wrapper for GetProcessIoCounters.
+var procGetProcessIoCounters = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetProcessIoCounters")
+
+// serviceActivity returns the CPU time of the processes named in
+// serviceImages and of the processes they start, transitively, and the sum of
+// their I/O counts and their number, skipping those it cannot open. Processes
+// come and go, so the sums can also shrink.
+func serviceActivity() (cpu, io uint64, err error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer windows.CloseHandle(snap)
+	var roots []uint32
+	children := map[uint32][]uint32{}
+	e := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		children[e.ParentProcessID] = append(children[e.ParentProcessID], e.ProcessID)
+		name := windows.UTF16ToString(e.ExeFile[:])
+		if slices.ContainsFunc(serviceImages, func(s string) bool { return strings.EqualFold(s, name) }) {
+			roots = append(roots, e.ProcessID)
+		}
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return 0, 0, err
+	}
+	for _, pid := range withDescendants(roots, children) {
+		if c, n, ok := processActivity(pid); ok {
+			// A process starting or exiting changes the count, which is a
+			// change too.
+			cpu, io = cpu+c, io+n+1
+		}
+	}
+	return cpu, io, nil
+}
+
+// processActivity returns the CPU time and I/O count of process pid, and
+// whether it could be opened.
+func processActivity(pid uint32) (cpu, io uint64, ok bool) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer windows.CloseHandle(h)
+	var created, exited, kernel, user windows.Filetime
+	if windows.GetProcessTimes(h, &created, &exited, &kernel, &user) == nil {
+		cpu = filetimeTicks(kernel) + filetimeTicks(user)
+	}
+	var c windows.IO_COUNTERS
+	if r, _, _ := procGetProcessIoCounters.Call(uintptr(h), uintptr(unsafe.Pointer(&c))); r != 0 {
+		io = ioTotal(c)
+	}
+	return cpu, io, true
+}
+
+// filetimeTicks returns a duration held in a Filetime, in 100ns ticks.
+// Filetime.Nanoseconds does not fit, since it converts from the 1601 epoch.
+func filetimeTicks(f windows.Filetime) uint64 {
+	return uint64(f.HighDateTime)<<32 | uint64(f.LowDateTime)
 }
 
 var (

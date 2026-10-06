@@ -33,7 +33,7 @@ import (
 // PID and hangs; "stubborn" does the same while ignoring SIGTERM; "exit" and
 // "fail" do the same but exit at once with code 0 or 3; "sleep" is the
 // grandchild; "spin" uses CPU without output for spinFor and exits.
-// "dialog" and "hidden-dialog" are Windows only and handled in
+// "dialog", "hidden-dialog" and "spawn-spin" are Windows only and handled in
 // run_windows_test.go.
 const helperEnv = "GOOLIB_TEST_HELPER"
 

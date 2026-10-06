@@ -15,6 +15,7 @@ package goolib
 
 import (
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -255,5 +256,66 @@ func TestNewWatchIntervalFloor(t *testing.T) {
 	w := newWatch(func() (uint64, uint64, error) { return 0, 0, nil }, &byteCounter{}, 3*time.Second, InactivityEnforce)
 	if w == nil || w.limit != 3*time.Second || w.interval != time.Second {
 		t.Errorf("newWatch(3s limit) = %+v, want limit 3s and interval 1s", w)
+	}
+}
+
+func TestAddActivity(t *testing.T) {
+	errA, errB := errors.New("a failed"), errors.New("b failed")
+	counters := func(cpu, io uint64, err error) func() (uint64, uint64, error) {
+		return func() (uint64, uint64, error) { return cpu, io, err }
+	}
+	for _, tt := range []struct {
+		name            string
+		a, b            func() (uint64, uint64, error)
+		wantCPU, wantIO uint64
+		wantErrs        []error
+	}{
+		{name: "sum", a: counters(1, 2, nil), b: counters(10, 20, nil), wantCPU: 11, wantIO: 22},
+		{name: "a fails", a: counters(0, 0, errA), b: counters(10, 20, nil), wantCPU: 10, wantIO: 20, wantErrs: []error{errA}},
+		{name: "b fails", a: counters(1, 2, nil), b: counters(0, 0, errB), wantCPU: 1, wantIO: 2, wantErrs: []error{errB}},
+		{name: "both fail", a: counters(0, 0, errA), b: counters(0, 0, errB), wantErrs: []error{errA, errB}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, io, err := addActivity(tt.a, tt.b)()
+			if cpu != tt.wantCPU || io != tt.wantIO {
+				t.Errorf("addActivity()() = %d, %d, want %d, %d", cpu, io, tt.wantCPU, tt.wantIO)
+			}
+			if (err != nil) != (len(tt.wantErrs) > 0) {
+				t.Errorf("addActivity()() error = %v, want errors %v", err, tt.wantErrs)
+			}
+			for _, want := range tt.wantErrs {
+				if !errors.Is(err, want) {
+					t.Errorf("addActivity()() error = %v, want it to wrap %v", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWithDescendants(t *testing.T) {
+	// 1 starts 2, which starts 3 and 4; a reused PID makes 4 the parent of 2,
+	// closing a cycle. 5 and its child 6 are unrelated.
+	children := map[uint32][]uint32{1: {2}, 2: {3, 4}, 4: {2}, 5: {6}}
+	for _, tt := range []struct {
+		name  string
+		roots []uint32
+		want  []uint32
+	}{
+		{name: "tree with a cycle", roots: []uint32{1}, want: []uint32{1, 2, 3, 4}},
+		{name: "overlapping roots", roots: []uint32{2, 3}, want: []uint32{2, 3, 4}},
+		{name: "two trees", roots: []uint32{3, 5}, want: []uint32{3, 5, 6}},
+		{name: "no roots"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			roots := slices.Clone(tt.roots)
+			got := withDescendants(tt.roots, children)
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("withDescendants(%v) = %v, want %v", tt.roots, got, tt.want)
+			}
+			if !slices.Equal(tt.roots, roots) {
+				t.Errorf("withDescendants() changed its roots to %v, want %v", tt.roots, roots)
+			}
+		})
 	}
 }

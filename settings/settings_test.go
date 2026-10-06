@@ -17,7 +17,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m\ninactivitytimeout: 2m\ninactivitymode: Enforce")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m\ninactivitytimeout: 2m\ninactivitymode: Monitor")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -82,10 +82,22 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("Parsing InactivityMode", func(t *testing.T) {
-		if got, want := goolib.InactivityMode, goolib.InactivityEnforce; got != want {
+		if got, want := goolib.InactivityMode, goolib.InactivityMonitor; got != want {
 			t.Errorf("goolib.InactivityMode got: %q, want: %q", got, want)
 		}
 	})
+}
+
+func TestInactivityModeDefault(t *testing.T) {
+	// Without the key, settings leaves goolib's default, enforce, in place.
+	rootDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte("cachelife: 10m"), 0644); err != nil {
+		t.Fatalf("error writing conf file: %v", err)
+	}
+	settings.Initialize(rootDir, true)
+	if got, want := goolib.InactivityMode, goolib.InactivityEnforce; got != want {
+		t.Errorf("goolib.InactivityMode without inactivitymode = %q, want %q", got, want)
+	}
 }
 
 func TestInvalidInactivityMode(t *testing.T) {

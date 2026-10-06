@@ -19,6 +19,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -39,8 +41,17 @@ func processAlive(pid int) bool {
 	return err == nil && ev == uint32(windows.WAIT_TIMEOUT)
 }
 
+// ignoreServices makes the rest of a test count no service processes, so
+// that unrelated installs on the machine cannot affect it.
+func ignoreServices(t *testing.T) {
+	orig := serviceImages
+	t.Cleanup(func() { serviceImages = orig })
+	serviceImages = nil
+}
+
 func TestRunInactivity(t *testing.T) {
 	const limit = spinFor / 3
+	ignoreServices(t)
 	origMinInactivity, origMinInterval := minInactivity, minInterval
 	t.Cleanup(func() { minInactivity, minInterval = origMinInactivity, origMinInterval })
 	minInactivity, minInterval = 0, 100*time.Millisecond
@@ -70,9 +81,17 @@ func TestRunInactivity(t *testing.T) {
 // helpers show.
 const dialogTitle = "googet test dialog"
 
+// childEnv names the binary the "spawn-spin" helper runs a "spin" helper from.
+const childEnv = "GOOLIB_TEST_CHILD"
+
 func init() {
 	s, _ := windows.UTF16PtrFromString(dialogTitle)
 	switch os.Getenv(helperEnv) {
+	case "spawn-spin":
+		c := helperCmd("spin")
+		c.Path, c.Args[0] = os.Getenv(childEnv), os.Getenv(childEnv)
+		c.Run()
+		os.Exit(0)
 	case "dialog":
 		// Show a message box and block until it is closed.
 		windows.MessageBox(0, s, s, windows.MB_OK)
@@ -90,6 +109,7 @@ func init() {
 }
 
 func TestRunDialog(t *testing.T) {
+	ignoreServices(t)
 	origTimeout, origLimit, origMode, origGrace := Timeout, InactivityTimeout, InactivityMode, DialogGrace
 	origMinInactivity, origIsUnattended := minInactivity, isUnattended
 	t.Cleanup(func() {
@@ -120,6 +140,71 @@ func TestRunDialog(t *testing.T) {
 				t.Errorf("Run(%s helper) error = %v, want the title %q", tt.mode, err, dialogTitle)
 			}
 		})
+	}
+}
+
+// helperCopyCmd is like helperCmd but runs a copy of the test binary exe
+// named name, so that its processes can be told apart from the test's.
+func helperCopyCmd(t *testing.T, exe, name, mode string) *exec.Cmd {
+	t.Helper()
+	b, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) error = %v", exe, err)
+	}
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, b, 0755); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v", p, err)
+	}
+	c := helperCmd(mode)
+	c.Path, c.Args[0] = p, p
+	return c
+}
+
+func TestRunServiceActivity(t *testing.T) {
+	const limit = spinFor / 6
+	ignoreServices(t)
+	origTimeout, origLimit, origMode := Timeout, InactivityTimeout, InactivityMode
+	origMinInactivity, origMinInterval := minInactivity, minInterval
+	t.Cleanup(func() {
+		Timeout, InactivityTimeout, InactivityMode = origTimeout, origLimit, origMode
+		minInactivity, minInterval = origMinInactivity, origMinInterval
+	})
+	InactivityTimeout, InactivityMode = limit, InactivityEnforce
+	minInactivity, minInterval = 0, 100*time.Millisecond
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	for _, tt := range []struct{ name, image, mode string }{
+		// The spinner runs outside the job, like the Windows Installer
+		// service, and uses CPU for longer than the timeout.
+		{"service process", "googet-svc-spin.exe", "spin"},
+		// The spinner, named like the test binary, is started by a service
+		// process, as a custom action is.
+		{"descendant", "googet-svc-parent.exe", "spawn-spin"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := helperCopyCmd(t, exe, tt.image, tt.mode)
+			c.Env = append(c.Env, childEnv+"="+exe)
+			if err := c.Start(); err != nil {
+				t.Fatalf("Start(%s helper) error = %v", tt.mode, err)
+			}
+			t.Cleanup(func() {
+				c.Process.Kill()
+				c.Wait()
+			})
+			// Matching ignores case. The hard timeout ends a command that is
+			// never found inactive.
+			Timeout, serviceImages = 3*limit, []string{strings.ToUpper(tt.image)}
+			if err := Run(helperCmd("sleep"), nil, io.Discard); !errors.Is(err, ErrTimeout) {
+				t.Errorf("Run(sleep helper) with a busy %s error = %v, want %v", tt.name, err, ErrTimeout)
+			}
+		})
+	}
+	// Inactivity ends the command long before this longer timeout.
+	Timeout, serviceImages = 12*limit, []string{"no-such-image.exe"}
+	if err := Run(helperCmd("sleep"), nil, io.Discard); !errors.Is(err, ErrInactive) {
+		t.Errorf("Run(sleep helper) without service processes error = %v, want %v", err, ErrInactive)
 	}
 }
 

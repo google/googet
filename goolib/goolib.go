@@ -52,11 +52,15 @@ var ErrInactive = errors.New("command inactive")
 
 // InactivityTimeout is how long Run lets a command go without activity before
 // acting according to InactivityMode. Activity is any output and any change in
-// the CPU time, I/O or process count of the command's Job Object. Zero or
-// negative disables the limit, and positive values below one minute are raised
-// to one minute. It only applies on Windows: elsewhere there is no cheap way
-// to tell that a quiet command tree is still busy. googet sets it from the
-// inactivitytimeout key in googet.conf.
+// the CPU time, I/O or process count of the command's Job Object or of the
+// Windows Installer and servicing processes and the processes they start,
+// which do the work of msiexec and wusa outside the job. Those processes are
+// counted whoever they work for, so an unrelated install can hide inactivity,
+// which only errs toward not killing. Zero or negative disables the limit,
+// and positive values below one minute are raised to one minute. It only
+// applies on Windows: elsewhere there is no cheap way to tell that a quiet
+// command tree is still busy. googet sets it from the inactivitytimeout key in
+// googet.conf.
 var InactivityTimeout = 5 * time.Minute
 
 // The values of InactivityMode.
@@ -67,13 +71,11 @@ const (
 )
 
 // InactivityMode is what Run does when a command exceeds InactivityTimeout:
-// InactivityEnforce kills it and all of its descendants, InactivityOff
-// disables the limit, and InactivityMonitor or any other value logs a warning
-// for each stretch of inactivity. The default is InactivityMonitor because
-// work the Windows Installer service does for msiexec or wusa runs outside the
-// job and is not seen as activity. googet sets it from the inactivitymode key
-// in googet.conf.
-var InactivityMode = InactivityMonitor
+// InactivityEnforce, the default, kills it and all of its descendants,
+// InactivityOff disables the limit, and InactivityMonitor or any other value
+// logs a warning for each stretch of inactivity, for example while rolling
+// the limit out. googet sets it from the inactivitymode key in googet.conf.
+var InactivityMode = InactivityEnforce
 
 // ErrDialog is wrapped by the error Run returns when it kills a command that
 // showed a dialog nobody could answer for DialogGrace.
@@ -82,11 +84,13 @@ var ErrDialog = errors.New("command blocked on a dialog")
 // DialogGrace is how long Run lets a command show a dialog nobody can answer
 // before acting according to InactivityMode. Nobody can answer when googet
 // runs in session 0 or on a window station without a display. Such a dialog
-// counts as stuck only while the command does no I/O, writes no output and
-// starts no processes. CPU time alone does not count, since the dialog's
+// counts as stuck only while the command writes no output and starts no
+// processes and neither it nor the service processes InactivityTimeout counts
+// do I/O. CPU time alone does not count, since the dialog's
 // message loop uses some. A dialog a user can answer is logged, and the
-// command is then never killed for inactivity, only warned about. It only
-// applies on Windows, while InactivityTimeout is in effect.
+// command is then never killed for inactivity, only warned about. Dialogs of
+// the Windows Installer service itself are outside the job and not seen. It
+// only applies on Windows, while InactivityTimeout is in effect.
 var DialogGrace = 30 * time.Second
 
 // isUnattended reports, computed once, whether nobody can answer a dialog
@@ -194,14 +198,43 @@ type contained struct {
 	exited func() bool
 	// release is called once the command has been waited for.
 	release func()
-	// activity returns two counters that grow whenever the command or its
+	// activity returns two counters that change whenever the command or its
 	// descendants use CPU time or do other work, such as I/O or starting
-	// processes, or an error if they cannot be read. It is nil where such
-	// counters are unavailable.
+	// processes, or an error if they cannot be read. They may also count other
+	// processes doing its work. It is nil where such counters are unavailable.
 	activity func() (cpu, io uint64, err error)
 	// dialog returns the title of a dialog of the command or its descendants,
 	// and whether there is one. It is nil where windows cannot be listed.
 	dialog func() (title string, ok bool)
+}
+
+// addActivity returns an activity func that sums the counters of a and b and
+// fails if either does.
+func addActivity(a, b func() (cpu, io uint64, err error)) func() (cpu, io uint64, err error) {
+	return func() (uint64, uint64, error) {
+		cpuA, ioA, errA := a()
+		cpuB, ioB, errB := b()
+		return cpuA + cpuB, ioA + ioB, errors.Join(errA, errB)
+	}
+}
+
+// withDescendants returns roots and, transitively, their descendants, given
+// the IDs of the child processes of each process ID. A reused PID can make an
+// unrelated process look like a descendant, even in a cycle; each process is
+// returned once, and including too many only errs toward not killing.
+func withDescendants(roots []uint32, children map[uint32][]uint32) []uint32 {
+	seen := map[uint32]bool{}
+	var all []uint32
+	for todo := slices.Clone(roots); len(todo) > 0; {
+		pid := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		if !seen[pid] {
+			seen[pid] = true
+			all = append(all, pid)
+			todo = append(todo, children[pid]...)
+		}
+	}
+	return all
 }
 
 // runContained starts c with its descendants contained and waits for it,
@@ -330,7 +363,7 @@ func (b *byteCounter) Write(p []byte) (int, error) {
 }
 
 // watch is the inactivity watchdog of a command. sample returns two counters
-// that grow with the command's CPU time and with its other activity, or an
+// that change with the command's CPU time and with its other activity, or an
 // error if they could not be read. It is called on each tick of ticks, one per
 // interval, and the command is inactive once neither has changed for limit.
 // monitor makes inactivity call warn instead of killing the command. info logs
@@ -369,7 +402,7 @@ func newWatch(activity func() (cpu, io uint64, err error), out *byteCounter, lim
 		limit = minInactivity
 	}
 	return &watch{
-		// Both counters only grow, so their sum changes whenever either does.
+		// A change in either counter almost always shows in their sum.
 		sample: func() (uint64, uint64, error) {
 			cpu, n, err := activity()
 			return cpu, n + out.n.Load(), err
