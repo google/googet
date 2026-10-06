@@ -198,3 +198,23 @@ func TestCommandTimeout(t *testing.T) {
 		t.Errorf("Command() extracted full package after timeout (stat err = %v)", serr)
 	}
 }
+
+func TestRetryFromFullPackage(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"exit failure", errors.New("command exited with error code 1"), true},
+		{"interrupted", fmt.Errorf("wrap: %w", goolib.ErrInterrupted), false},
+		{"timeout", fmt.Errorf("wrap: %w", goolib.ErrTimeout), false},
+		{"inactive", fmt.Errorf("wrap: %w", goolib.ErrInactive), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryFromFullPackage(tt.err); got != tt.want {
+				t.Errorf("retryFromFullPackage(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}

@@ -32,19 +32,20 @@ var relaySignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, 
 // whole group and exited reports whether c itself has exited. Because the
 // group does not receive terminal signals, signals caught by sigs while c runs
 // are forwarded to it, and once one was forwarded a later one escalates to
-// SIGKILL. Descendants left running after c exits keep running.
-func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited func() bool, release func(), err error) {
+// SIGKILL. Descendants left running after c exits keep running. There is no
+// activity counter, so the inactivity limit does not apply.
+func startContained(c *exec.Cmd, sigs *signalRelay) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	c.SysProcAttr.Setpgid = true
 	if err := c.Start(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	// With Setpgid and a zero Pgid the group ID is the child's PID.
 	pgid := c.Process.Pid
 	// Wait reaps c before draining its output, after which its PID is gone.
-	exited = func() bool { return syscall.Kill(pgid, 0) == syscall.ESRCH }
+	exited := func() bool { return syscall.Kill(pgid, 0) == syscall.ESRCH }
 	sigs.relay(func(s os.Signal, acted bool) bool {
 		// Descendants that outlive c keep running, unless an earlier signal
 		// already interrupted c.
@@ -63,7 +64,10 @@ func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited f
 		}
 		return true
 	})
-	return func() error { return syscall.Kill(-pgid, syscall.SIGKILL) }, exited, nil, nil
+	return &contained{
+		kill:   func() error { return syscall.Kill(-pgid, syscall.SIGKILL) },
+		exited: exited,
+	}, nil
 }
 
 // Reraise makes the current process die from s, typically the signal returned

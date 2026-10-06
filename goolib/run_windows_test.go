@@ -17,6 +17,7 @@ package goolib
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"syscall"
 	"testing"
@@ -145,6 +146,47 @@ func TestRunWithoutJob(t *testing.T) {
 	// at the end of the test.
 	if !processAlive(pid) {
 		t.Errorf("grandchild %d was killed, want only the command killed without a job", pid)
+	}
+	// Nor is there an activity counter for the inactivity limit.
+	c := helperCmd("true")
+	sigs := catchSignals()
+	p, err := startContained(c, sigs)
+	if err != nil {
+		sigs.stop()
+		t.Fatalf("startContained() error = %v", err)
+	}
+	c.Wait()
+	sigs.stop()
+	p.release()
+	if p.activity != nil {
+		t.Error("startContained() activity != nil without a job, want nil")
+	}
+}
+
+func TestRunInactivity(t *testing.T) {
+	const limit = spinFor / 3
+	origMinInactivity, origMinInterval := minInactivity, minInterval
+	t.Cleanup(func() { minInactivity, minInterval = origMinInactivity, origMinInterval })
+	minInactivity, minInterval = 0, 100*time.Millisecond
+	for _, tt := range []struct {
+		name    string
+		mode    string
+		wantErr error
+	}{
+		// The helper sleeps without output, CPU time or I/O.
+		{"inactive", "sleep", ErrInactive},
+		// The helper writes nothing for three times the limit but uses CPU.
+		{"busy", "spin", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			origTimeout, origLimit, origMode := Timeout, InactivityTimeout, InactivityMode
+			t.Cleanup(func() { Timeout, InactivityTimeout, InactivityMode = origTimeout, origLimit, origMode })
+			// The timeout is long enough for the spin helper to finish.
+			Timeout, InactivityTimeout, InactivityMode = spinFor+4*time.Second, limit, InactivityEnforce
+			if err := Run(helperCmd(tt.mode), nil, io.Discard); !errors.Is(err, tt.wantErr) {
+				t.Errorf("Run(%s helper) error = %v, want %v", tt.mode, err, tt.wantErr)
+			}
+		})
 	}
 }
 

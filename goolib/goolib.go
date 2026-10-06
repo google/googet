@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -83,6 +84,40 @@ const DefaultTimeout = 4 * time.Hour
 // command Run executes: installers, uninstallers, verify commands and goopack
 // build steps. googet sets it from the installtimeout key in googet.conf.
 var Timeout = DefaultTimeout
+
+// ErrInactive is wrapped by the error Run returns when it kills a command that
+// went longer than InactivityTimeout without activity.
+var ErrInactive = errors.New("command inactive")
+
+// InactivityTimeout is how long Run lets a command go without activity before
+// acting according to InactivityMode. Activity is any output, and any CPU time,
+// I/O or new processes in the command's Job Object. Zero or negative disables
+// the limit, and positive values below one minute are raised to one minute. It
+// only applies on Windows: elsewhere there is no cheap way to tell that a quiet
+// command tree is still busy. googet sets it from the inactivitytimeout key in
+// googet.conf.
+var InactivityTimeout = 5 * time.Minute
+
+const (
+	// InactivityEnforce makes InactivityMode kill an inactive command.
+	InactivityEnforce = "enforce"
+	// InactivityMonitor makes InactivityMode log warnings without killing.
+	InactivityMonitor = "monitor"
+	// InactivityOff disables the inactivity watchdog.
+	InactivityOff = "off"
+)
+
+// InactivityMode is what Run does when a command exceeds InactivityTimeout:
+// InactivityEnforce kills it and all of its descendants, InactivityOff
+// disables the limit, and InactivityMonitor or any other value logs a warning
+// for each stretch of inactivity, and another one if activity resumes. Work
+// done outside the command's job is not seen as activity: by the Windows
+// Installer service for msiexec or wusa, by descendants that break away from
+// the job, and by services, WMI or scheduled tasks the command hands work to.
+// InactivityEnforce can then kill the command while that work carries on,
+// which is why InactivityMonitor is the default. googet sets it from the
+// inactivitymode key in googet.conf.
+var InactivityMode = InactivityMonitor
 
 // waitDelay bounds how long Run waits for the command's output to be closed
 // after it exits or is killed, since orphaned descendants may hold the pipes
@@ -145,7 +180,9 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 //
 // The command and its descendants are contained (a Job Object on Windows, a
 // process group elsewhere) and are all killed if the command runs longer than
-// Timeout, in which case the error wraps ErrTimeout.
+// Timeout, in which case the error wraps ErrTimeout, or if it goes longer than
+// InactivityTimeout without activity in enforce mode, in which case the error
+// wraps ErrInactive.
 //
 // On Unix the command's process group does not receive terminal signals, so
 // SIGINT, SIGTERM, SIGHUP and SIGQUIT that this process receives while the
@@ -194,52 +231,246 @@ func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	return nil
 }
 
-// runContained starts c with its descendants contained and waits for it. If
-// timeout is positive and c runs longer, the command and all of its
-// descendants are killed. If a signal reached the command, the error wraps
-// ErrInterrupted.
+// contained controls a command started by startContained.
+type contained struct {
+	// kill kills the command and all of its descendants.
+	kill func() error
+	// exited reports whether the command itself has exited.
+	exited func() bool
+	// release is called once the command has been waited for; it may be nil.
+	release func()
+	// activity returns a counter that grows whenever the command or its
+	// descendants do work, or an error if it cannot be read. It is nil where
+	// such a counter is unavailable.
+	activity func() (uint64, error)
+}
+
+// runContained starts c with its descendants contained and waits for it,
+// killing them all if c runs longer than a positive timeout or, in enforce
+// mode, goes longer than InactivityTimeout without activity. If a signal
+// reached the command, the error wraps ErrInterrupted.
 func runContained(c *exec.Cmd, timeout time.Duration) (err error) {
+	// Output counts as activity. MultiWriter flattens c's writers into these.
+	var out byteCounter
+	c.Stdout = io.MultiWriter(&out, c.Stdout)
+	c.Stderr = io.MultiWriter(&out, c.Stderr)
 	// Signals are caught from before the start so that none is missed.
 	sigs := catchSignals(relaySignals...)
-	var release func()
+	var p *contained
 	defer func() {
 		// Stop the relay before release closes handles it may still use.
 		first, acted := sigs.stop()
 		setInterrupted(first)
-		if release != nil {
-			release()
+		if p != nil && p.release != nil {
+			p.release()
 		}
 		if acted {
 			err = interruptedError(c)
 		}
 	}()
-	var kill func() error
-	var exited func() bool
-	kill, exited, release, err = startContained(c, sigs)
+	p, err = startContained(c, sigs)
 	if err != nil {
 		return err
 	}
-	if timeout <= 0 {
-		return c.Wait()
-	}
 	done := make(chan error, 1)
 	go func() { done <- c.Wait() }()
-	t := time.NewTimer(timeout)
-	defer t.Stop()
-	select {
-	case err := <-done:
-		return err
-	case <-t.C:
-		// A command that already exited may still be draining output held open
-		// by a descendant; that is not a timeout.
-		if exited() {
+	return supervise(c.Path, done, p, timeout, newWatch(p.activity, &out, InactivityTimeout, InactivityMode))
+}
+
+// supervise returns the result of waiting for the command, received from done.
+// It kills the command through p if it runs longer than a positive timeout or
+// if w is not nil and finds it inactive in enforce mode.
+func supervise(name string, done <-chan error, p *contained, timeout time.Duration, w *watch) error {
+	var deadline, ticks <-chan time.Time
+	if timeout > 0 {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+		deadline = t.C
+	}
+	var s *watchState
+	// Without a watch, ticks stays nil and never fires.
+	if w != nil {
+		// The baseline is taken before the first tick can arrive. If it cannot
+		// be read, the first tick either reports the error or sees a change,
+		// and counts as active either way.
+		last, _ := w.sample()
+		s = &watchState{w: w, name: name, last: last}
+		ticks = w.ticks
+		if ticks == nil {
+			t := time.NewTicker(w.interval)
+			defer t.Stop()
+			ticks = t.C
+		}
+	}
+	// A command that already exited may still be draining output held open by
+	// a descendant; that is neither a timeout nor inactivity.
+	stop := func(err error) error {
+		if p.exited() {
 			return <-done
 		}
-		if err := kill(); err != nil {
-			logger.Errorf("Failed to kill %s after %v: %v", c.Path, timeout, err)
+		if kerr := p.kill(); kerr != nil {
+			logger.Errorf("Failed to kill %s: %v", name, kerr)
 		}
 		<-done
-		return fmt.Errorf("%w: %s was killed after %v", ErrTimeout, c.Path, timeout)
+		return err
+	}
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-deadline:
+			return stop(fmt.Errorf("%w: %s was killed after %v", ErrTimeout, name, timeout))
+		case <-ticks:
+			n, err := w.sample()
+			for _, d := range s.step(observation{n: n, err: err, exited: p.exited()}) {
+				switch d.action {
+				case actKill:
+					return stop(d.error())
+				case actWarn, actResume:
+					w.warn(d.format, d.args...)
+				}
+			}
+		}
+	}
+}
+
+// observation is what supervise sees on one tick of a watch: the activity
+// sample or the error reading it, and whether the command itself has exited.
+type observation struct {
+	n      uint64
+	err    error
+	exited bool
+}
+
+// action is what a decision asks supervise to do.
+type action int
+
+const (
+	// actWarn logs a warning.
+	actWarn action = iota
+	// actResume logs a warning that activity resumed after a stretch that was
+	// warned about.
+	actResume
+	// actKill kills the command, which then fails with the decision's error.
+	actKill
+)
+
+// decision is one thing supervise does after a tick. format and args describe
+// the warning, or the kill after err, a sentinel error.
+type decision struct {
+	action action
+	err    error
+	format string
+	args   []any
+}
+
+// error returns the error a command killed by d fails with.
+func (d decision) error() error {
+	return fmt.Errorf("%w: %s", d.err, fmt.Sprintf(d.format, d.args...))
+}
+
+// watchState is what supervise remembers between ticks of the watch w of the
+// command name: the last sample, the number of ticks since it changed, whether
+// that stretch of inactivity was warned about, and whether a failure to read
+// the activity was.
+type watchState struct {
+	w                  *watch
+	name               string
+	last               uint64
+	idle               int
+	warned, unreadable bool
+}
+
+// step updates s with the observation of one tick and returns what supervise
+// must do about it, in order; a kill comes last. It neither logs nor kills, so
+// that tests can drive it tick by tick.
+func (s *watchState) step(o observation) []decision {
+	var ds []decision
+	if o.err != nil && !s.unreadable {
+		ds = append(ds, decision{action: actWarn, format: "Cannot read the activity of %s, so it always counts as active: %v", args: []any{s.name, o.err}})
+		s.unreadable = true
+	}
+	// A failed sample counts as activity so that a busy command is never
+	// killed.
+	if o.err != nil || o.n != s.last {
+		// Telling a slow command from a hung one needs both ends of a stretch
+		// that was warned about. A failed sample is not known to be activity.
+		if s.warned && o.err == nil {
+			ds = append(ds, decision{action: actResume, format: "%s is active again after %v without activity", args: []any{s.name, time.Duration(s.idle) * s.w.interval}})
+		}
+		s.last, s.idle, s.warned = o.n, 0, false
+		return ds
+	}
+	s.idle++
+	if time.Duration(s.idle)*s.w.interval < s.w.limit || o.exited {
+		return ds
+	}
+	if !s.w.monitor {
+		return append(ds, decision{action: actKill, err: ErrInactive, format: "%s was killed after %v without activity", args: []any{s.name, s.w.limit}})
+	}
+	if !s.warned {
+		ds = append(ds, decision{action: actWarn, format: "%s has had no activity for %v; it would have been killed with inactivitymode %s", args: []any{s.name, s.w.limit, InactivityEnforce}})
+		s.warned = true
+	}
+	return ds
+}
+
+// byteCounter is an io.Writer that counts the bytes written to it.
+type byteCounter struct{ n atomic.Uint64 }
+
+func (b *byteCounter) Write(p []byte) (int, error) {
+	b.n.Add(uint64(len(p)))
+	return len(p), nil
+}
+
+// watch is the inactivity watchdog of a command. sample returns a counter
+// that grows with any activity, or an error if it could not be read. It is
+// called on each tick of ticks, one per interval, and the command is inactive
+// once it has not changed for limit. monitor makes inactivity call warn
+// instead of killing the command.
+type watch struct {
+	sample          func() (uint64, error)
+	limit, interval time.Duration
+	ticks           <-chan time.Time
+	monitor         bool
+	warn            func(format string, v ...any)
+}
+
+// minInactivity and minInterval bound the inactivity limit and the sampling
+// interval from below. Windows charges CPU time in clock ticks of about 15.6ms,
+// so a busy command can show no change over very short periods. Tests lower
+// them.
+var minInactivity, minInterval = time.Minute, time.Second
+
+// raiseLimitWarning makes newWatch warn only once about raising a short limit.
+var raiseLimitWarning sync.Once
+
+// newWatch returns a watch that counts both the output written to out and
+// activity as activity, or nil if activity is nil, limit is not positive or
+// mode is InactivityOff. Output alone is not enough because installers can be
+// busy for a long time without writing anything.
+func newWatch(activity func() (uint64, error), out *byteCounter, limit time.Duration, mode string) *watch {
+	if activity == nil || limit <= 0 || mode == InactivityOff {
+		return nil
+	}
+	if limit < minInactivity {
+		raiseLimitWarning.Do(func() {
+			logger.Warningf("Raising the inactivity limit of %v to the minimum of %v", limit, minInactivity)
+		})
+		limit = minInactivity
+	}
+	return &watch{
+		// Both counters only grow, so their sum changes whenever either does.
+		sample: func() (uint64, error) {
+			n, err := activity()
+			return n + out.n.Load(), err
+		},
+		limit: limit,
+		// Sampling about six times per limit keeps the overshoot small.
+		interval: max(min(10*time.Second, limit/6), minInterval),
+		// Only an explicit enforce kills; anything else, such as a typo, monitors.
+		monitor: mode != InactivityEnforce,
+		warn:    logger.Warningf,
 	}
 }
 
