@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -27,9 +28,25 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/googet/v2/progress"
 )
+
+// ErrTimeout is wrapped by the error Run returns when it kills a command that
+// ran longer than Timeout.
+var ErrTimeout = errors.New("command timed out")
+
+// Timeout is how long Run lets a command run before killing it and all of its
+// descendants. Zero or negative disables the limit. It applies to every
+// command Run executes: installers, uninstallers, verify commands and goopack
+// build steps. googet sets it from the installtimeout key in googet.conf.
+var Timeout = 4 * time.Hour
+
+// waitDelay bounds how long Run waits for the command's output to be closed
+// after it exits or is killed, since orphaned descendants may hold the pipes
+// open indefinitely.
+var waitDelay = time.Minute
 
 var interpreter = map[string]string{
 	".ps1": "powershell",
@@ -84,10 +101,17 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 // stderr. While a progress spinner is active they are still shown as they are
 // produced, a line at a time after clearing the spinner line; nothing is
 // withheld or discarded.
+//
+// The command and its descendants are contained (a Job Object on Windows, a
+// process group elsewhere) and are all killed if the command runs longer than
+// Timeout, in which case the error wraps ErrTimeout.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	c.Stdout = io.MultiWriter(progress.Stdout(), w)
 	c.Stderr = io.MultiWriter(progress.Stderr(), w)
-	if err := c.Run(); err != nil {
+	c.WaitDelay = waitDelay
+	// ErrWaitDelay means the command succeeded but a descendant kept its output
+	// open, which is not a failure of the command.
+	if err := runContained(c, Timeout); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		e, ok := err.(*exec.ExitError)
 		if !ok {
 			return err
@@ -101,6 +125,37 @@ func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// runContained starts c with its descendants contained and waits for it. If
+// timeout is positive and c runs longer, the command and all of its
+// descendants are killed.
+func runContained(c *exec.Cmd, timeout time.Duration) error {
+	kill, exited, release, err := startContained(c)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if timeout <= 0 {
+		return c.Wait()
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-t.C:
+		// A command that already exited may still be draining output held open
+		// by a descendant; that is not a timeout.
+		if exited() {
+			return <-done
+		}
+		kill()
+		<-done
+		return fmt.Errorf("%w: %s was killed after %v", ErrTimeout, c.Path, timeout)
+	}
 }
 
 // PackageInfo describes the name arch and version of a package.
