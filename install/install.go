@@ -112,6 +112,9 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, dbOnly bool, d
 	// TODO(ajackura): Make sure no replacements are listed as
 	// dependencies or subdependancies.
 	for _, pkg := range ps.Replaces {
+		if goolib.Interrupted() != nil {
+			return goolib.ErrInterrupted
+		}
 		pi := goolib.PkgNameSplit(pkg)
 		ins, err := minInstalled(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: pi.Ver}, db)
 		if err != nil {
@@ -139,6 +142,9 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 	}
 	// Check for and install any dependencies.
 	for p, ver := range ps.PkgDependencies {
+		if goolib.Interrupted() != nil {
+			return goolib.ErrInterrupted
+		}
 		pi := goolib.PkgNameSplit(p)
 		ok, err := isSatisfied(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ver}, db)
 		if err != nil {
@@ -167,6 +173,9 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 
 // FromRepo installs a package and all dependencies from a repository.
 func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm client.RepoMap, archs []string, dbOnly, force bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
+	}
 	logger.Infof("Starting install of %s.%s.%s", pi.Name, pi.Arch, pi.Ver)
 	fmt.Printf("Installing %s.%s.%s and dependencies...\n", pi.Name, pi.Arch, pi.Ver)
 	// When a specific version is requested, look for an exact match in the repository.
@@ -195,6 +204,9 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 	}
 	if err := installDeps(ctx, rs.PackageSpec, cache, rm, archs, dbOnly, force, downloader, db); err != nil {
 		return err
+	}
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
 	}
 
 	dst, pkgURL, err := download.FromRepo(ctx, rs, repo, cache, downloader)
@@ -228,6 +240,9 @@ func FromRepo(ctx context.Context, pi goolib.PackageInfo, repo, cache string, rm
 
 // FromDisk installs a local .goo file.
 func FromDisk(pkgPath, cache string, dbOnly, force, shouldReinstall bool, db *googetdb.GooDB) error {
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
+	}
 	if _, err := oswrap.Stat(pkgPath); err != nil {
 		return err
 	}
@@ -299,6 +314,9 @@ func FromDisk(pkgPath, cache string, dbOnly, force, shouldReinstall bool, db *go
 
 // Reinstall reinstalls and optionally redownloads, a package.
 func Reinstall(ctx context.Context, ps client.PackageState, rd, force bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
+	}
 	spec := ps.PackageSpec
 	logger.Infof("Starting reinstall of %s.%s, version %s", spec.Name, spec.Arch, spec.Version)
 	fmt.Printf("Reinstalling %s.%s %s and dependencies...\n", spec.Name, spec.Arch, spec.Version)
@@ -338,7 +356,7 @@ func Reinstall(ctx context.Context, ps client.PackageState, rd, force bool, down
 	}
 
 	if _, err := installPkg(ps.LocalPath, ps.PackageSpec, false, force, db); err != nil {
-		return fmt.Errorf("error reinstalling package: %v", err)
+		return fmt.Errorf("error reinstalling package: %w", err)
 	}
 
 	logger.Infof("Reinstallation of %s.%s, version %s completed", spec.Name, spec.Arch, spec.Version)
@@ -569,6 +587,9 @@ func installPkg(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb
 
 // installPkgInner extracts the package, copies its files and runs its install script.
 func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *googetdb.GooDB) (map[string]string, error) {
+	if goolib.Interrupted() != nil {
+		return nil, goolib.ErrInterrupted
+	}
 	dir, err := download.ExtractPkg(pkg)
 	if err != nil {
 		return nil, err
