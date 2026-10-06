@@ -98,7 +98,7 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 
 	// We only need to build sources and download indexes if there are any
 	// non-file goo arguments passed to the install command (usually the case).
-	if !allFileGoos(flag.Args()) {
+	if !allFileGoos(flags.Args()) {
 		repos, err := repo.BuildSources(cmd.sources)
 		if err != nil {
 			logger.Errorf("Failed to initialize repos: %v", err)
