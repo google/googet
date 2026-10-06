@@ -39,12 +39,16 @@ import (
 // the same while its grandchild catches SIGHUP; "exit" and "fail" do the same
 // but exit at once with code 0 or 3, and "exit-stubborn" does what "stubborn"
 // does but exits at once with code 0; "sleep", "sleep-stubborn" and
-// "sleep-hup" are the grandchild; "true" exits at once.
+// "sleep-hup" are the grandchild; "true" exits at once; "spin" uses CPU
+// without output for spinFor and exits.
 const helperEnv = "GOOLIB_TEST_HELPER"
 
 // runReturned is printed to stderr by actAsGooget once Run has behaved as
 // expected, just before it calls Reraise.
 const runReturned = "Run returned as expected"
+
+// spinFor is how long the "spin" helper runs.
+const spinFor = 3 * time.Second
 
 // helperCmd returns a command that runs the test binary in the given helper
 // mode. The race detector's exit delay is disabled so helpers exit promptly.
@@ -169,6 +173,11 @@ func TestMain(m *testing.M) {
 		time.Sleep(10 * time.Minute)
 		os.Exit(0)
 	case "true":
+		os.Exit(0)
+	case "spin":
+		for end := time.Now().Add(spinFor); time.Now().Before(end); {
+			// Burn CPU without output.
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())

@@ -18,7 +18,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m\ninactivitytimeout: 2m\ninactivitymode: Enforce")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -26,8 +26,10 @@ func TestInitialize(t *testing.T) {
 		t.Fatalf("error closing conf file: %v", err)
 	}
 
-	origTimeout := goolib.Timeout
-	t.Cleanup(func() { goolib.Timeout = origTimeout })
+	origTimeout, origInactivity, origMode := goolib.Timeout, goolib.InactivityTimeout, goolib.InactivityMode
+	t.Cleanup(func() {
+		goolib.Timeout, goolib.InactivityTimeout, goolib.InactivityMode = origTimeout, origInactivity, origMode
+	})
 	settings.Initialize(rootDir, true)
 
 	if got, want := settings.Confirm, true; got != want {
@@ -73,6 +75,51 @@ func TestInitialize(t *testing.T) {
 			t.Errorf("goolib.Timeout got: %v, want: %v", got, want)
 		}
 	})
+
+	t.Run("Parsing InactivityTimeout", func(t *testing.T) {
+		if got, want := goolib.InactivityTimeout, 2*time.Minute; got != want {
+			t.Errorf("goolib.InactivityTimeout got: %v, want: %v", got, want)
+		}
+	})
+
+	t.Run("Parsing InactivityMode", func(t *testing.T) {
+		if got, want := goolib.InactivityMode, goolib.InactivityEnforce; got != want {
+			t.Errorf("goolib.InactivityMode got: %q, want: %q", got, want)
+		}
+	})
+}
+
+func TestInactivitySettings(t *testing.T) {
+	// Each row starts from values other than the defaults, so that a value
+	// left unchanged is told apart from one reset to its default.
+	for _, tt := range []struct {
+		name     string
+		conf     string
+		wantTime time.Duration
+		wantMode string
+	}{
+		{"zero timeout disables", "inactivitytimeout: 0", 0, goolib.InactivityEnforce},
+		{"invalid timeout", "inactivitytimeout: 1x", 7 * time.Minute, goolib.InactivityEnforce},
+		{"upper case mode", "inactivitymode: OFF", 7 * time.Minute, goolib.InactivityOff},
+		{"invalid mode", "inactivitymode: kill", 7 * time.Minute, goolib.InactivityEnforce},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rootDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte(tt.conf), 0644); err != nil {
+				t.Fatalf("error writing conf file: %v", err)
+			}
+			origTime, origMode := goolib.InactivityTimeout, goolib.InactivityMode
+			t.Cleanup(func() { goolib.InactivityTimeout, goolib.InactivityMode = origTime, origMode })
+			goolib.InactivityTimeout, goolib.InactivityMode = 7*time.Minute, goolib.InactivityEnforce
+			settings.Initialize(rootDir, true)
+			if got := goolib.InactivityTimeout; got != tt.wantTime {
+				t.Errorf("goolib.InactivityTimeout with %q got: %v, want: %v", tt.conf, got, tt.wantTime)
+			}
+			if got := goolib.InactivityMode; got != tt.wantMode {
+				t.Errorf("goolib.InactivityMode with %q got: %q, want: %q", tt.conf, got, tt.wantMode)
+			}
+		})
+	}
 }
 
 func TestInstallTimeoutSettings(t *testing.T) {

@@ -188,9 +188,9 @@ func Command(ctx context.Context, ps client.PackageState, downloader *client.Dow
 
 // retryFromFullPackage reports whether a verify command that failed with err
 // when run alone should run again from the full package, for example because
-// it needs other files from it. A command that timed out would likely hang
-// again, and one that was interrupted must not run again since googet is
-// stopping.
+// it needs other files from it. A command that timed out or went inactive
+// would likely hang again, and one that was interrupted must not run again
+// since googet is stopping.
 func retryFromFullPackage(err error) bool {
-	return err != nil && !errors.Is(err, goolib.ErrInterrupted) && !errors.Is(err, goolib.ErrTimeout)
+	return err != nil && !errors.Is(err, goolib.ErrInterrupted) && !errors.Is(err, goolib.ErrTimeout) && !errors.Is(err, goolib.ErrInactive)
 }

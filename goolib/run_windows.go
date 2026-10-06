@@ -38,14 +38,15 @@ var relaySignals = []os.Signal{os.Interrupt}
 // c runs also calls kill. release clears the kill-on-close limit and closes
 // the job, so descendants left running after c exits keep running, as before.
 // If the job cannot be set up, for example because a parent job forbids it,
-// kill only kills c and its descendants survive.
-func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited func() bool, release func(), err error) {
+// kill only kills c, its descendants survive and there is no activity counter.
+// Otherwise activity sums the job's accounting counters.
+func startContained(c *exec.Cmd, sigs *signalRelay) (*contained, error) {
 	if c.SysProcAttr == nil {
 		c.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	c.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
 	if err := c.Start(); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	pid := uint32(c.Process.Pid)
 	// The process is suspended, so it cannot have exited and pid is valid.
@@ -64,18 +65,19 @@ func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited f
 				windows.CloseHandle(h)
 			}
 		}
-		return nil, nil, nil, fmt.Errorf("starting %s: %w", c.Path, err)
+		return nil, fmt.Errorf("starting %s: %w", c.Path, err)
 	}
-	exited = func() bool {
+	exited := func() bool {
 		ev, err := windows.WaitForSingleObject(proc, 0)
 		return err == nil && ev == windows.WAIT_OBJECT_0
 	}
-	kill = c.Process.Kill
+	p := &contained{kill: c.Process.Kill, exited: exited}
 	closeJob := func() {}
 	if jobErr != nil {
-		logger.Warningf("Running %s without a job object, only it will be killed on timeout or Ctrl-C: %v", c.Path, jobErr)
+		logger.Warningf("Running %s without a job object, so only it will be killed on timeout or Ctrl-C and inactivity is not watched: %v", c.Path, jobErr)
 	} else {
-		kill = func() error { return windows.TerminateJobObject(job, 1) }
+		p.kill = func() error { return windows.TerminateJobObject(job, 1) }
+		p.activity = func() (uint64, error) { return jobActivity(job) }
 		closeJob = func() {
 			if err := setJobLimits(job, windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK); err != nil {
 				logger.Warningf("Failed to clear the kill-on-close limit for %s; its remaining descendants will be killed: %v", c.Path, err)
@@ -93,7 +95,7 @@ func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited f
 		if !acted && exited() && (windows.GetExitCodeProcess(proc, &code) != nil || code != statusControlCExit) {
 			return false
 		}
-		if err := kill(); err != nil {
+		if err := p.kill(); err != nil {
 			logger.Errorf("Failed to kill %s after Ctrl-C: %v", c.Path, err)
 		}
 		return true
@@ -108,10 +110,41 @@ func startContained(c *exec.Cmd, sigs *signalRelay) (kill func() error, exited f
 			sigs.waitFirst(250 * time.Millisecond)
 		}
 	}
-	return kill, exited, func() {
+	p.release = func() {
 		closeJob()
 		windows.CloseHandle(proc)
-	}, nil
+	}
+	return p, nil
+}
+
+// jobAccounting mirrors JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION.
+type jobAccounting struct {
+	TotalUserTime, TotalKernelTime                     int64
+	ThisPeriodTotalUserTime, ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount, TotalProcesses                uint32
+	ActiveProcesses, TotalTerminatedProcesses          uint32
+	IoInfo                                             windows.IO_COUNTERS
+}
+
+// The Win32 structure is 96 bytes; these fail to compile otherwise.
+var (
+	_ [96 - unsafe.Sizeof(jobAccounting{})]byte
+	_ [unsafe.Sizeof(jobAccounting{}) - 96]byte
+)
+
+// jobActivity returns the sum of the CPU time, I/O operation and transfer
+// counts and number of processes ever started in job. Each only grows, so the
+// sum changes whenever any of them does.
+func jobActivity(job windows.Handle) (uint64, error) {
+	var a jobAccounting
+	if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAndIoAccountingInformation,
+		uintptr(unsafe.Pointer(&a)), uint32(unsafe.Sizeof(a)), nil); err != nil {
+		return 0, err
+	}
+	ioc := a.IoInfo
+	return uint64(a.TotalUserTime+a.TotalKernelTime) + uint64(a.TotalProcesses) +
+		ioc.ReadOperationCount + ioc.WriteOperationCount + ioc.OtherOperationCount +
+		ioc.ReadTransferCount + ioc.WriteTransferCount + ioc.OtherTransferCount, nil
 }
 
 // newJobFunc is newJob, replaced in tests to exercise the fallback without a

@@ -40,6 +40,8 @@ archs: [noarch, x86_64]
 cachelife: 10m
 stalltimeout: 5m
 installtimeout: 4h
+inactivitytimeout: 5m
+inactivitymode: monitor
 ```
 
 `stalltimeout` (a Go duration such as `5m` or `30s`, default `2m`; zero or
@@ -78,6 +80,17 @@ On either system, a signal that arrives after the command itself has exited,
 while googet still waits for output held open by a process it started, is not
 passed on: those processes keep running and the command's result stands, but
 googet runs no further commands.
+
+On Windows only, `inactivitytimeout` limits how long such a command may go
+without output or CPU time, I/O or new processes in its job (default `5m`,
+minimum `1m`, `0` disables it). `inactivitymode` is `monitor` (the default) to
+log a warning when the command goes inactive and when it becomes active again,
+`enforce` to kill the command, or `off`; the `inactivitymode` value is not
+case-sensitive. Work done outside the job does not count: by the Windows
+Installer service for msiexec or wusa, by descendants that break away from the
+job, and by services, WMI or scheduled tasks the command hands work to. A
+command waiting for such work looks inactive, so `enforce` kills it while that
+work carries on; use `enforce` only for installers that avoid it.
 
 ## Repo file
 
