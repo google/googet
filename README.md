@@ -38,7 +38,15 @@ Place a file named googet.conf in the googet root, which by default is
 proxyserver: http://address_to_proxy:port
 archs: [noarch, x86_64]
 cachelife: 10m
+installtimeout: 4h
 ```
+
+`installtimeout` limits how long googet lets an installer, uninstaller or verify
+command run before it and the processes it started are killed (default `4h`,
+`0` disables it); goopack build steps always use the default. On Unix,
+descendants that call setsid or setpgid leave the process group and escape. On
+Windows, MSI and wusa work done by the Windows Installer service runs outside
+the command's job and is not killed.
 
 ## Repo file
 

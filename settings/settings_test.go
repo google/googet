@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/settings"
 )
 
@@ -16,7 +17,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -24,6 +25,8 @@ func TestInitialize(t *testing.T) {
 		t.Fatalf("error closing conf file: %v", err)
 	}
 
+	origTimeout := goolib.Timeout
+	t.Cleanup(func() { goolib.Timeout = origTimeout })
 	settings.Initialize(rootDir, true)
 
 	if got, want := settings.Confirm, true; got != want {
@@ -61,6 +64,12 @@ func TestInitialize(t *testing.T) {
 	t.Run("Parsing Progress", func(t *testing.T) {
 		if got, want := settings.Progress, false; got != want {
 			t.Errorf("settings.Progress got: %v, want: %v", got, want)
+		}
+	})
+
+	t.Run("Parsing InstallTimeout", func(t *testing.T) {
+		if got, want := goolib.Timeout, 90*time.Minute; got != want {
+			t.Errorf("goolib.Timeout got: %v, want: %v", got, want)
 		}
 	})
 }
