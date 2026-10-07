@@ -1,4 +1,4 @@
-{{$version := "3.4.0@0" -}}
+{{$version := "3.4.1@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "3.4.1  - Fix: Honor the requested arch in 'googet download <name>.<arch>' when no version is given.",
     "3.4.0  - Feat: Add a download progress bar and install spinner on interactive terminals; installer output is still shown live.",
     "       - Add the -progress flag and progress googet.conf option (default true) to disable it; -verbose also disables it.",
     "       - Fix: Restart a resumed download from the beginning when the server ignores the Range request.",

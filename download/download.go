@@ -173,13 +173,16 @@ func FromRepo(ctx context.Context, rs goolib.RepoSpec, repo, dir string, downloa
 	return dst, pkgURL, Package(ctx, pkgURL, dst, rs.Checksum, downloader)
 }
 
-// Latest downloads the latest available version of a package.
-func Latest(ctx context.Context, name, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, string, error) {
-	spec, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: name, Arch: "", Ver: ""}, rm, archs, "", false)
+// Latest downloads the latest available version of the package named by
+// pi.Name. If pi.Arch is set, only that architecture is considered; otherwise
+// the architectures in archs are considered in order of preference. pi.Ver is
+// ignored.
+func Latest(ctx context.Context, pi goolib.PackageInfo, dir string, rm client.RepoMap, archs []string, downloader *client.Downloader) (string, string, error) {
+	spec, repo, arch, err := client.FindRepoLatest(goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: ""}, rm, archs, "", false)
 	if err != nil {
 		return "", "", err
 	}
-	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: name, Arch: arch, Ver: spec.Version}, rm[repo])
+	rs, err := client.FindRepoSpec(goolib.PackageInfo{Name: pi.Name, Arch: arch, Ver: spec.Version}, rm[repo])
 	if err != nil {
 		return "", "", err
 	}

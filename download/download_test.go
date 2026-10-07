@@ -176,6 +176,100 @@ func TestPackageHTTP(t *testing.T) {
 	}
 }
 
+func TestLatest(t *testing.T) {
+	// Each package payload names its own arch so the test can tell which
+	// spec was downloaded.
+	payloads := map[string][]byte{
+		"/pkgs/foo.x86_64.goo": []byte("foo x86_64"),
+		"/pkgs/foo.arm64.goo":  []byte("foo arm64"),
+		"/pkgs/bar.x86_64.goo": []byte("bar x86_64"),
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, ok := payloads[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		if r.Method == http.MethodGet {
+			w.Write(payload)
+		}
+	}))
+	defer srv.Close()
+
+	repoSpec := func(name, arch string) goolib.RepoSpec {
+		return goolib.RepoSpec{
+			Checksum:    goolib.Checksum(bytes.NewReader(payloads["/pkgs/"+name+"."+arch+".goo"])),
+			Source:      "pkgs/" + name + "." + arch + ".goo",
+			PackageSpec: &goolib.PkgSpec{Name: name, Version: "1.0.0@1", Arch: arch},
+		}
+	}
+	rm := client.RepoMap{
+		srv.URL + "/repo": client.Repo{
+			Packages: []goolib.RepoSpec{
+				repoSpec("foo", "arm64"),
+				repoSpec("foo", "x86_64"),
+				repoSpec("bar", "x86_64"),
+			},
+		},
+	}
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	hostArchs := []string{"noarch", "x86_64"}
+
+	for _, tc := range []struct {
+		desc     string
+		pi       goolib.PackageInfo
+		wantArch string // Empty means an error is expected.
+	}{
+		{
+			desc:     "requested arch differs from host",
+			pi:       goolib.PackageInfo{Name: "foo", Arch: "arm64"},
+			wantArch: "arm64",
+		},
+		{
+			desc:     "requested arch matches host",
+			pi:       goolib.PackageInfo{Name: "foo", Arch: "x86_64"},
+			wantArch: "x86_64",
+		},
+		{
+			desc:     "no arch uses host preference",
+			pi:       goolib.PackageInfo{Name: "foo"},
+			wantArch: "x86_64",
+		},
+		{
+			desc: "requested arch unavailable",
+			pi:   goolib.PackageInfo{Name: "bar", Arch: "arm64"},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			dst, _, err := Latest(context.Background(), tc.pi, t.TempDir(), rm, hostArchs, downloader)
+			if tc.wantArch == "" {
+				if err == nil {
+					t.Fatalf("Latest(%+v) = %q, nil; want error", tc.pi, dst)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Latest(%+v) = %v, want nil", tc.pi, err)
+			}
+			wantBase := goolib.PackageInfo{Name: tc.pi.Name, Arch: tc.wantArch, Ver: "1.0.0@1"}.PkgName()
+			if got := filepath.Base(dst); got != wantBase {
+				t.Errorf("Latest(%+v) saved %q, want %q", tc.pi, got, wantBase)
+			}
+			got, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("reading downloaded file: %v", err)
+			}
+			if want := payloads["/pkgs/"+tc.pi.Name+"."+tc.wantArch+".goo"]; !bytes.Equal(got, want) {
+				t.Errorf("Latest(%+v) downloaded %q, want %q", tc.pi, got, want)
+			}
+		})
+	}
+}
+
 func TestExtractPkg(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "")
 	if err != nil {
