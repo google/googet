@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -26,10 +27,86 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/google/googet/v2/progress"
+	"github.com/google/logger"
 )
+
+// ErrTimeout is wrapped by the error Run returns when it kills a command that
+// ran longer than Timeout.
+var ErrTimeout = errors.New("command timed out")
+
+// Timeout is how long Run lets a command run before killing it and all of its
+// descendants. Zero or negative disables the limit. It applies to every
+// command Run executes: installers, uninstallers, verify commands and goopack
+// build steps. googet sets it from the installtimeout key in googet.conf.
+var Timeout = 4 * time.Hour
+
+// ErrInactive is wrapped by the error Run returns when it kills a command that
+// went longer than InactivityTimeout without activity.
+var ErrInactive = errors.New("command inactive")
+
+// InactivityTimeout is how long Run lets a command go without activity before
+// acting according to InactivityMode. Activity is any output and any change in
+// the CPU time, I/O or process count of the command's Job Object or of the
+// Windows Installer and servicing processes and the processes they start,
+// which do the work of msiexec and wusa outside the job. Those processes are
+// counted whoever they work for, so an unrelated install can hide inactivity,
+// which only errs toward not killing. Zero or negative disables the limit,
+// and positive values below one minute are raised to one minute. It only
+// applies on Windows: elsewhere there is no cheap way to tell that a quiet
+// command tree is still busy. googet sets it from the inactivitytimeout key in
+// googet.conf.
+var InactivityTimeout = 5 * time.Minute
+
+// The values of InactivityMode.
+const (
+	InactivityEnforce = "enforce"
+	InactivityMonitor = "monitor"
+	InactivityOff     = "off"
+)
+
+// InactivityMode is what Run does when a command exceeds InactivityTimeout:
+// InactivityEnforce, the default, kills it and all of its descendants,
+// InactivityOff disables the limit, and InactivityMonitor or any other value
+// logs a warning for each stretch of inactivity, for example while rolling
+// the limit out. googet sets it from the inactivitymode key in googet.conf.
+var InactivityMode = InactivityEnforce
+
+// ErrDialog is wrapped by the error Run returns when it kills a command that
+// showed a dialog nobody could answer for DialogGrace.
+var ErrDialog = errors.New("command blocked on a dialog")
+
+// DialogGrace is how long Run lets a command show a dialog nobody can answer
+// before acting according to InactivityMode. Nobody can answer when googet
+// runs in session 0 or on a window station without a display. Such a dialog
+// counts as stuck only while the command writes no output and starts no
+// processes and neither it nor the service processes InactivityTimeout counts
+// do I/O. CPU time alone does not count, since the dialog's
+// message loop uses some. A dialog a user can answer is logged, and the
+// command is then never killed for inactivity, only warned about. Dialogs of
+// the Windows Installer service itself are outside the job and not seen. It
+// only applies on Windows, while InactivityTimeout is in effect.
+var DialogGrace = 30 * time.Second
+
+// isUnattended reports, computed once, whether nobody can answer a dialog
+// shown by a command.
+var isUnattended = sync.OnceValue(func() bool {
+	v, err := unattended()
+	if err != nil {
+		logger.Warningf("Cannot tell whether dialogs of installers can be answered, so assuming they can: %v", err)
+	}
+	return v
+})
+
+// waitDelay bounds how long Run waits for the command's output to be closed
+// after it exits or is killed, since orphaned descendants may hold the pipes
+// open indefinitely.
+var waitDelay = time.Minute
 
 var interpreter = map[string]string{
 	".ps1": "powershell",
@@ -84,10 +161,20 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 // stderr. While a progress spinner is active they are still shown as they are
 // produced, a line at a time after clearing the spinner line; nothing is
 // withheld or discarded.
+//
+// The command and its descendants are contained (a Job Object on Windows, a
+// process group elsewhere) and are all killed if the command runs longer than
+// Timeout, in which case the error wraps ErrTimeout, or if it goes longer than
+// InactivityTimeout without activity in enforce mode, in which case the error
+// wraps ErrInactive, or shows a dialog nobody can answer for DialogGrace in
+// enforce mode, in which case the error wraps ErrDialog.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 	c.Stdout = io.MultiWriter(progress.Stdout(), w)
 	c.Stderr = io.MultiWriter(progress.Stderr(), w)
-	if err := c.Run(); err != nil {
+	c.WaitDelay = waitDelay
+	// ErrWaitDelay means the command succeeded but a descendant kept its output
+	// open, which is not a failure of the command.
+	if err := runContained(c, Timeout); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		e, ok := err.(*exec.ExitError)
 		if !ok {
 			return err
@@ -101,6 +188,234 @@ func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// contained controls a command started by startContained.
+type contained struct {
+	// kill kills the command and all of its descendants.
+	kill func()
+	// exited reports whether the command itself has exited.
+	exited func() bool
+	// release is called once the command has been waited for.
+	release func()
+	// activity returns two counters that change whenever the command or its
+	// descendants use CPU time or do other work, such as I/O or starting
+	// processes, or an error if they cannot be read. They may also count other
+	// processes doing its work. It is nil where such counters are unavailable.
+	activity func() (cpu, io uint64, err error)
+	// dialog returns the title of a dialog of the command or its descendants,
+	// and whether there is one. It is nil where windows cannot be listed.
+	dialog func() (title string, ok bool)
+}
+
+// addActivity returns an activity func that sums the counters of a and b and
+// fails if either does.
+func addActivity(a, b func() (cpu, io uint64, err error)) func() (cpu, io uint64, err error) {
+	return func() (uint64, uint64, error) {
+		cpuA, ioA, errA := a()
+		cpuB, ioB, errB := b()
+		return cpuA + cpuB, ioA + ioB, errors.Join(errA, errB)
+	}
+}
+
+// withDescendants returns roots and, transitively, their descendants, given
+// the IDs of the child processes of each process ID. A reused PID can make an
+// unrelated process look like a descendant, even in a cycle; each process is
+// returned once, and including too many only errs toward not killing.
+func withDescendants(roots []uint32, children map[uint32][]uint32) []uint32 {
+	seen := map[uint32]bool{}
+	var all []uint32
+	for todo := slices.Clone(roots); len(todo) > 0; {
+		pid := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		if !seen[pid] {
+			seen[pid] = true
+			all = append(all, pid)
+			todo = append(todo, children[pid]...)
+		}
+	}
+	return all
+}
+
+// runContained starts c with its descendants contained and waits for it,
+// killing them all if c runs longer than a positive timeout or, in enforce
+// mode, goes longer than InactivityTimeout without activity.
+func runContained(c *exec.Cmd, timeout time.Duration) error {
+	// Output counts as activity. MultiWriter flattens c's writers into these.
+	var out byteCounter
+	c.Stdout = io.MultiWriter(&out, c.Stdout)
+	c.Stderr = io.MultiWriter(&out, c.Stderr)
+	p, err := startContained(c)
+	if err != nil {
+		return err
+	}
+	defer p.release()
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	return supervise(c.Path, done, p, timeout, newWatch(p.activity, &out, InactivityTimeout, InactivityMode))
+}
+
+// supervise returns the result of waiting for the command, received from done.
+// It kills the command through p if it runs longer than a positive timeout or
+// if w is not nil and, in enforce mode, finds it inactive or showing a dialog
+// nobody can answer for DialogGrace without doing I/O.
+func supervise(name string, done <-chan error, p *contained, timeout time.Duration, w *watch) error {
+	var deadline, ticks <-chan time.Time
+	if timeout > 0 {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+		deadline = t.C
+	}
+	// Without a watch, ticks stays nil and never fires.
+	var lastCPU, lastIO uint64
+	if w != nil {
+		// The baseline is taken before the first tick can arrive.
+		lastCPU, lastIO, _ = w.sample()
+		if w.ticks == nil {
+			t := time.NewTicker(w.interval)
+			defer t.Stop()
+			w.ticks = t.C
+		}
+		ticks = w.ticks
+	}
+	// A command that already exited may still be draining output held open by
+	// a descendant; that is neither a timeout nor inactivity.
+	stop := func(err error) error {
+		if p.exited() {
+			return <-done
+		}
+		p.kill()
+		<-done
+		return err
+	}
+	idle, warned, unreadable := 0, false, false
+	dialogTicks, dialogHandled := 0, false
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-deadline:
+			return stop(fmt.Errorf("%w: %s was killed after %v", ErrTimeout, name, timeout))
+		case <-ticks:
+			cpu, ioCount, err := w.sample()
+			if err != nil && !unreadable {
+				w.warn("Cannot read the activity of %s, so it always counts as active: %v", name, err)
+				unreadable = true
+			}
+			// A failed sample counts as activity so that a busy command is
+			// never killed.
+			ioChanged := err != nil || ioCount != lastIO
+			active := ioChanged || cpu != lastCPU
+			lastCPU, lastIO = cpu, ioCount
+			title, ok := "", false
+			if p.dialog != nil {
+				title, ok = p.dialog()
+			}
+			answerable := ok && !w.unattended()
+			// A dialog's message loop uses CPU time, so a command showing one
+			// counts as stuck as long as it does no I/O. The grace period
+			// starts at the first tick that sees that.
+			if ok && !ioChanged {
+				dialogTicks++
+			} else {
+				dialogTicks, dialogHandled = 0, false
+			}
+			if dialogTicks > 0 && !dialogHandled && time.Duration(dialogTicks-1)*w.interval >= DialogGrace && !p.exited() {
+				dialogHandled = true
+				switch {
+				case answerable:
+					w.info("%s shows %q, which a user can answer", name, title)
+				case !w.monitor:
+					return stop(fmt.Errorf("%w: %s was killed after showing a dialog for %v: %q", ErrDialog, name, DialogGrace, title))
+				default:
+					w.warn("%s has shown %q for %v with nobody to answer it; it would have been killed with inactivitymode %s", name, title, DialogGrace, InactivityEnforce)
+				}
+			}
+			if active {
+				idle, warned = 0, false
+				continue
+			}
+			if idle++; time.Duration(idle)*w.interval < w.limit {
+				continue
+			}
+			// A user may take their time to answer a dialog.
+			if !w.monitor && !answerable {
+				return stop(fmt.Errorf("%w: %s was killed after %v without activity", ErrInactive, name, w.limit))
+			}
+			if !warned && !p.exited() {
+				if answerable {
+					w.warn("%s has had no activity for %v but shows %q, which a user can answer", name, w.limit, title)
+				} else {
+					w.warn("%s has had no activity for %v; it would have been killed with inactivitymode %s", name, w.limit, InactivityEnforce)
+				}
+				warned = true
+			}
+		}
+	}
+}
+
+// byteCounter is an io.Writer that counts the bytes written to it.
+type byteCounter struct{ n atomic.Uint64 }
+
+func (b *byteCounter) Write(p []byte) (int, error) {
+	b.n.Add(uint64(len(p)))
+	return len(p), nil
+}
+
+// watch is the inactivity watchdog of a command. sample returns two counters
+// that change with the command's CPU time and with its other activity, or an
+// error if they could not be read. It is called on each tick of ticks, one per
+// interval, and the command is inactive once neither has changed for limit.
+// monitor makes inactivity call warn instead of killing the command. info logs
+// dialogs that a user can answer. unattended reports whether nobody can answer
+// a dialog.
+type watch struct {
+	sample          func() (cpu, io uint64, err error)
+	limit, interval time.Duration
+	ticks           <-chan time.Time
+	monitor         bool
+	warn, info      func(format string, v ...any)
+	unattended      func() bool
+}
+
+// minInactivity and minInterval bound the inactivity limit and the sampling
+// interval from below. Windows charges CPU time in clock ticks of about 15.6ms,
+// so a busy command can show no change over very short periods. Tests lower
+// them.
+var minInactivity, minInterval = time.Minute, time.Second
+
+// raiseLimitWarning makes newWatch warn only once about raising a short limit.
+var raiseLimitWarning sync.Once
+
+// newWatch returns a watch that counts both the output written to out and
+// activity as activity, or nil if activity is nil, limit is not positive or
+// mode is InactivityOff. Output alone is not enough because installers can be
+// busy for a long time without writing anything.
+func newWatch(activity func() (cpu, io uint64, err error), out *byteCounter, limit time.Duration, mode string) *watch {
+	if activity == nil || limit <= 0 || mode == InactivityOff {
+		return nil
+	}
+	if limit < minInactivity {
+		raiseLimitWarning.Do(func() {
+			logger.Warningf("Raising the inactivity limit of %v to the minimum of %v", limit, minInactivity)
+		})
+		limit = minInactivity
+	}
+	return &watch{
+		// A change in either counter almost always shows in their sum.
+		sample: func() (uint64, uint64, error) {
+			cpu, n, err := activity()
+			return cpu, n + out.n.Load(), err
+		},
+		limit: limit,
+		// Sampling about six times per limit keeps the overshoot small.
+		interval: max(min(10*time.Second, limit/6), minInterval),
+		// Only an explicit enforce kills; anything else, such as a typo, monitors.
+		monitor:    mode != InactivityEnforce,
+		warn:       logger.Warningf,
+		info:       logger.Infof,
+		unattended: isUnattended,
+	}
 }
 
 // PackageInfo describes the name arch and version of a package.

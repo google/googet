@@ -38,7 +38,33 @@ Place a file named googet.conf in the googet root, which by default is
 proxyserver: http://address_to_proxy:port
 archs: [noarch, x86_64]
 cachelife: 10m
+installtimeout: 4h
+inactivitytimeout: 5m
+inactivitymode: enforce
 ```
+
+`installtimeout` limits how long googet lets an installer, uninstaller or verify
+command run before it and the processes it started are killed (default `4h`,
+`0` disables it); goopack build steps always use the default. On Unix,
+descendants that call setsid or setpgid leave the process group and escape. On
+Windows, MSI and wusa work done by the Windows Installer service or servicing
+runs outside the command's job and is not killed.
+
+On Windows only, `inactivitytimeout` limits how long such a command may go
+without output or CPU time, I/O or new processes in its job (default `5m`,
+minimum `1m`, `0` disables it). Since msiexec and wusa hand their work to the
+Windows Installer service and servicing, the msiexec.exe, TrustedInstaller.exe
+and TiWorker.exe processes and the processes they start, such as custom actions
+and nested setups, count too, whatever install they work for, so an unrelated
+install can keep a stuck command alive. `inactivitymode` is `enforce`
+(the default) to kill the command, `monitor` to only log a warning, for example
+while rolling the limit out, or `off`. While the command shows a dialog a user
+can answer, `enforce` only warns. A command that shows a dialog nobody can
+answer, as when googet runs as a service, and writes no output, starts no
+processes and sees no I/O by it or those service processes for 30s is handled
+the same way, even if it uses CPU time. A dialog of the Windows Installer
+service itself is outside the job and not detected; since the CPU time of the
+service processes counts, it may only end at `installtimeout`.
 
 ## Repo file
 

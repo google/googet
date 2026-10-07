@@ -5,8 +5,10 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"gopkg.in/yaml.v3"
@@ -90,6 +92,12 @@ type conf struct {
 	StrictConflicts bool
 	// Progress is a pointer so an absent key keeps the default of true.
 	Progress *bool
+	// InstallTimeout sets goolib.Timeout.
+	InstallTimeout string
+	// InactivityTimeout and InactivityMode set the goolib variables of the
+	// same names.
+	InactivityTimeout string
+	InactivityMode    string
 }
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
@@ -144,6 +152,32 @@ func readConf(filename string) {
 
 	if gc.ProxyServer != "" {
 		ProxyServer = gc.ProxyServer
+	}
+
+	if gc.InstallTimeout != "" {
+		it, err := time.ParseDuration(gc.InstallTimeout)
+		if err != nil {
+			logger.Error(err)
+		} else {
+			goolib.Timeout = it
+		}
+	}
+
+	if gc.InactivityTimeout != "" {
+		it, err := time.ParseDuration(gc.InactivityTimeout)
+		if err != nil {
+			logger.Error(err)
+		} else {
+			goolib.InactivityTimeout = it
+		}
+	}
+
+	switch m := strings.ToLower(gc.InactivityMode); m {
+	case "":
+	case goolib.InactivityEnforce, goolib.InactivityMonitor, goolib.InactivityOff:
+		goolib.InactivityMode = m
+	default:
+		logger.Errorf("Invalid inactivitymode %q, want %s, %s or %s", gc.InactivityMode, goolib.InactivityEnforce, goolib.InactivityMonitor, goolib.InactivityOff)
 	}
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
