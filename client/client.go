@@ -122,6 +122,9 @@ type RepoMap map[string]Repo
 type Downloader struct {
 	HTTPClient       *http.Client
 	UsingProxyServer bool
+	// StallTimeout is how long a transfer may receive no data before it is
+	// canceled. Zero or less means two minutes.
+	StallTimeout time.Duration
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
@@ -260,7 +263,9 @@ func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, erro
 	return d.HTTPClient.Do(req)
 }
 
-func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) (_ []goolib.RepoSpec, err error) {
+	ctx, sw := WatchStall(ctx, d.StallTimeout)
+	defer sw.Stop(&err)
 	indexURL := repoURL + "/index.gz"
 	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
 	ct := "application/x-gzip"
@@ -270,6 +275,7 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
+		sw.Progress()
 		indexURL = repoURL + "/index"
 		trimmedIndexURL = strings.TrimPrefix(indexURL, "oauth-")
 		ct = "application/json"
@@ -282,15 +288,17 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}
-	return decode(res.Body, ct, repoURL, cf)
+	return decode(sw.Reader(res.Body), ct, repoURL, cf)
 }
 
-func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
+func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) (_ []goolib.RepoSpec, err error) {
 	if d.UsingProxyServer {
 		logger.Errorf("Proxy server not supported with gs:// URLs, skipping repo 'gs://%s/%s'", bucket, object)
 		var empty []goolib.RepoSpec
 		return empty, nil
 	}
+	ctx, sw := WatchStall(ctx, d.StallTimeout)
+	defer sw.Stop(&err)
 
 	client, err := storage.NewClient(ctx)
 	if err != nil {
@@ -305,7 +313,7 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
 	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
-		return decode(r, "application/x-gzip", url, cf)
+		return decode(sw.Reader(r), "application/x-gzip", url, cf)
 	}
 
 	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
@@ -319,7 +327,7 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 		return nil, err
 	}
 
-	return decode(r, "application/json", url, cf)
+	return decode(sw.Reader(r), "application/json", url, cf)
 }
 
 func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {

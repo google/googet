@@ -23,11 +23,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/dustin/go-humanize"
@@ -36,25 +38,116 @@ import (
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/progress"
 	"github.com/google/logger"
+	"google.golang.org/api/googleapi"
 )
+
+// maxFailures is how many consecutive download attempts may fail without
+// making progress before Package gives up.
+const maxFailures = 5
+
+// retryDelay returns how long to wait before the next attempt after the given
+// number of consecutive failures.
+var retryDelay = func(failures int) time.Duration {
+	return time.Second << failures
+}
+
+var (
+	// errChecksum reports a downloaded file that does not match its checksum.
+	errChecksum = errors.New("checksum doesn't match")
+	// errResumed marks a checksum mismatch in a download that was resumed from
+	// a partial file, which may have been corrupt.
+	errResumed = errors.New("download was resumed")
+)
+
+// statusError reports an unexpected HTTP response status.
+type statusError struct {
+	url    string
+	status string
+	code   int
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("downloading %s: unexpected status %s", e.url, e.status)
+}
 
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
+// Failed or stalled transfers are retried, resuming from the partial file
+// when the server supports it, until five consecutive attempts make no
+// progress. A transfer that keeps receiving data is never abandoned.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
-
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
-	if isGCSURL {
+	attempt := func() error {
+		if !isGCSURL {
+			return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
+		}
 		if err := oswrap.RemoveAll(dst); err != nil {
 			return err
 		}
-		return packageGCS(ctx, bucket, object, dst, chksum)
+		return packageGCS(ctx, bucket, object, dst, chksum, downloader)
 	}
+	// Progress is measured against the largest partial file seen, because an
+	// attempt that cannot resume starts again from zero.
+	best := fileSize(dst)
+	failures := 0
+	for {
+		err := attempt()
+		if err == nil || ctx.Err() != nil || !retryable(err) {
+			return err
+		}
+		if size := fileSize(dst); size > best {
+			best, failures = size, 0
+		} else {
+			failures++
+		}
+		if failures >= maxFailures {
+			return fmt.Errorf("giving up after %d attempts without progress: %w", failures, err)
+		}
+		d := retryDelay(failures)
+		logger.Warningf("Downloading %s failed, retrying in %v: %v", pkgURL, d, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d):
+		}
+	}
+}
 
-	return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
+// retryable reports whether a failed download attempt may succeed if retried:
+// it stalled, the connection failed, or the server reported a temporary
+// error. A checksum mismatch is retried only if the download was resumed from
+// a partial file, which has since been deleted.
+func retryable(err error) bool {
+	var se *statusError
+	var ge *googleapi.Error
+	var oe *net.OpError
+	switch {
+	case errors.Is(err, errChecksum):
+		return errors.Is(err, errResumed)
+	case errors.As(err, &se):
+		return temporaryStatus(se.code)
+	case errors.As(err, &ge):
+		return temporaryStatus(ge.Code)
+	}
+	return errors.Is(err, client.ErrStalled) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &oe)
+}
+
+// temporaryStatus reports whether an HTTP status code may succeed if retried.
+func temporaryStatus(code int) bool {
+	return code >= 500 || code == http.StatusRequestTimeout || code == http.StatusTooManyRequests
+}
+
+// fileSize returns the size of the file at path, or zero if it cannot be read.
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // packageHTTP downloads a package from an HTTP(S) server.
-func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) error {
+func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) (err error) {
 	// Try to open any already existing file, otherwise create new file.
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -77,10 +170,13 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	// Check that the server supports ranged requests and that the
 	// existing file is smaller than what we want to download.
 	logger.Infof("existing file size: %d", size)
+	ctx, sw := client.WatchStall(ctx, downloader.StallTimeout)
+	defer sw.Stop(&err)
 	ok, length, err := downloader.CanResume(ctx, url)
 	if err != nil {
 		logger.Errorf("CanResume: %v", err)
 	}
+	sw.Progress()
 	req, err := downloader.NewRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -109,8 +205,9 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 		return err
 	}
 	defer resp.Body.Close()
+	sw.Progress()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("downloading %s: unexpected status %s", url, resp.Status)
+		return &statusError{url: url, status: resp.Status, code: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusOK && size > 0 {
 		// The server ignored the Range header and is sending the whole file;
@@ -121,6 +218,7 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 			return err
 		}
 	}
+	resumedAt := size
 	// The total is what is already on disk plus what the server will send.
 	total := int64(-1)
 	if resp.ContentLength >= 0 {
@@ -128,37 +226,44 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	}
 	bar := progress.NewBar(fmt.Sprintf("Downloading %s", filepath.Base(dst)), total, size)
 	// Continue hashing the file as we download it.
-	n, err := io.Copy(io.MultiWriter(hash, f, bar), resp.Body)
+	n, err := io.Copy(io.MultiWriter(hash, f, bar), sw.Reader(resp.Body))
 	if err != nil {
 		bar.Abort()
-		return fmt.Errorf("downloading %s: %v", url, err)
+		return fmt.Errorf("downloading %s: %w", url, err)
 	}
 	bar.Finish()
 	// Verify the checksum of the fully downloaded file.
 	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
+		f.Close()         // Windows cannot delete an open file.
 		os.RemoveAll(dst) // delete the bad file
-		return fmt.Errorf("checksum doesn't match: got %s, want %s", sum, chksum)
+		err := fmt.Errorf("%w: got %s, want %s", errChecksum, sum, chksum)
+		if resumedAt > 0 {
+			err = fmt.Errorf("%w (%w at byte %d)", err, errResumed, resumedAt)
+		}
+		return err
 	}
 	logger.Infof("Successfully downloaded %s bytes", humanize.IBytes(uint64(n)))
 	return nil
 }
 
-// Downloads a package from Google Cloud Storage
-func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) error {
-	client, err := storage.NewClient(ctx)
+// packageGCS downloads a package from Google Cloud Storage.
+func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, downloader *client.Downloader) (err error) {
+	ctx, sw := client.WatchStall(ctx, downloader.StallTimeout)
+	defer sw.Stop(&err)
+	gcs, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer gcs.Close()
 
-	r, err := client.Bucket(bucket).Object(object).NewReader(ctx)
+	r, err := gcs.Bucket(bucket).Object(object).NewReader(ctx)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
 
 	logger.Infof("Downloading gs://%s/%s", bucket, object)
-	return download(r, r.Attrs.Size, dst, chksum)
+	return download(sw.Reader(r), r.Attrs.Size, dst, chksum)
 }
 
 // FromRepo downloads a package from a repo. It returns the path to the
@@ -213,9 +318,8 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	}
 	bar.Finish()
 
-	if hex.EncodeToString(hash.Sum(nil)) != chksum {
-		fmt.Println(hex.EncodeToString(hash.Sum(nil)), chksum)
-		return errors.New("checksum of downloaded file does not match expected checksum")
+	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
+		return fmt.Errorf("%w: got %s, want %s", errChecksum, sum, chksum)
 	}
 
 	logger.Infof("Successfully downloaded %s", humanize.IBytes(uint64(b)))
