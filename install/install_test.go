@@ -17,6 +17,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -222,6 +224,174 @@ func TestInstallPkg(t *testing.T) {
 		if _, err := oswrap.Stat(want); err != nil {
 			t.Errorf("Expected test file %s does not exist", want)
 		}
+	}
+}
+
+// tree returns the files and directories under root, mapping each slash-
+// separated relative path to its contents, or to "/" for a directory.
+func tree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	got := make(map[string]string)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == root {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			got[filepath.ToSlash(rel)] = "/"
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		got[filepath.ToSlash(rel)] = string(b)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	return got
+}
+
+// writeGoo writes a package archive at path holding files, which maps
+// slash-separated names to contents.
+func writeGoo(t *testing.T, path string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	for name, body := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []io.Closer{tw, gw, f} {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestInstallPkgRollback(t *testing.T) {
+	pkgFiles := map[string]string{"keep": "new", "sub/added": "added"}
+	before := map[string]string{"keep": "old"}
+	for _, tc := range []struct {
+		desc      string
+		files     map[string]string // Package Files, with destinations relative to dst.
+		installer string            // A missing installer makes the install fail.
+		want      map[string]string // The tree of dst after the install; nil means before.
+	}{
+		{
+			desc:  "success",
+			files: map[string]string{"./": "."},
+			want:  map[string]string{"keep": "new", "sub": "/", "sub/added": "added"},
+		},
+		{
+			desc:      "installer fails",
+			files:     map[string]string{"./": "."},
+			installer: "missing-installer",
+		},
+		{
+			// The second mapping writes sub/added again after the first
+			// created it; its original state is still "missing".
+			desc:      "installer fails after a path is written twice",
+			files:     map[string]string{"sub": "sub", "sub/added": "sub/added"},
+			installer: "missing-installer",
+		},
+		{
+			desc:      "installer fails after creating parent directories",
+			files:     map[string]string{"./": "a/b", "keep": "p/q/keep"},
+			installer: "missing-installer",
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			dst := t.TempDir()
+			for name, body := range before {
+				if err := os.WriteFile(filepath.Join(dst, name), []byte(body), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pkg := filepath.Join(t.TempDir(), "test.goo")
+			writeGoo(t, pkg, pkgFiles)
+			ps := goolib.PkgSpec{Files: map[string]string{}, Install: goolib.ExecFile{Path: tc.installer}}
+			for src, rel := range tc.files {
+				ps.Files[src] = filepath.Join(dst, rel)
+			}
+
+			_, err = installPkg(pkg, &ps, false, false, db)
+			want := tc.want
+			if want == nil {
+				want = before
+			}
+			if gotErr, wantErr := err != nil, tc.installer != ""; gotErr != wantErr {
+				t.Errorf("installPkg(%q) = %v, want error %t", pkg, err, wantErr)
+			}
+			if diff := cmp.Diff(want, tree(t, dst)); diff != "" {
+				t.Errorf("installPkg(%q) left an unexpected tree in dst (-want +got):\n%s", pkg, diff)
+			}
+		})
+	}
+}
+
+func TestUndo(t *testing.T) {
+	for _, tc := range []struct {
+		desc   string
+		commit bool
+		want   map[string]string
+	}{
+		{desc: "rollback", want: map[string]string{"old": "old"}},
+		{desc: "commit", commit: true, want: map[string]string{"old": "new", "empty": "new", "a": "/", "a/b": "/", "a/b/new": "new"}},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "old"), []byte("old"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(root, "empty"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			var u undo
+			write := func(rel string) {
+				t.Helper()
+				p := filepath.Join(root, rel)
+				if err := u.mkdirAll(filepath.Dir(p), 0755); err != nil {
+					t.Fatalf("mkdirAll(%q) = %v", filepath.Dir(p), err)
+				}
+				if err := u.prepare(p); err != nil {
+					t.Fatalf("prepare(%q) = %v", p, err)
+				}
+				if err := os.WriteFile(p, []byte("new"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Each path is written twice; the second write must not replace
+			// the record of its original state.
+			for _, rel := range []string{"old", "a/b/new", "old", "a/b/new", "empty"} {
+				write(rel)
+			}
+			if tc.commit {
+				u.commit()
+			} else {
+				// The empty directory that a file replaced is not recreated.
+				u.rollback()
+			}
+			if diff := cmp.Diff(tc.want, tree(t, root)); diff != "" {
+				t.Errorf("tree after %s (-want +got):\n%s", tc.desc, diff)
+			}
+		})
 	}
 }
 
@@ -573,14 +743,14 @@ func TestMakeInstallFunction(t *testing.T) {
 	f.Close()
 
 	// Test 1: Conflict without force -> Success by default
-	fnBlock := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm)
+	fnBlock := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm, &undo{})
 	errBlock := fnBlock(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errBlock != nil {
 		t.Errorf("expected no conflict error by default, got %v", errBlock)
 	}
 
 	// Test 2: Conflict with force -> Success
-	fnForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm)
+	fnForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm, &undo{})
 	errForce := fnForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errForce != nil {
 		t.Errorf("expected no error with force, got %v", errForce)
@@ -589,14 +759,14 @@ func TestMakeInstallFunction(t *testing.T) {
 	// Test 3: Conflict without force in strict mode -> Error
 	settings.StrictConflicts = true
 	defer func() { settings.StrictConflicts = false }()
-	fnStrict := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm)
+	fnStrict := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, false, cm, &undo{})
 	errStrict := fnStrict(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errStrict == nil {
 		t.Errorf("expected conflict error in strict mode, got nil")
 	}
 
 	// Test 4: Conflict with force in strict mode -> Success
-	fnStrictForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm)
+	fnStrictForce := makeInstallFunction(srcDir, dstDir, make(map[string]string), false, true, cm, &undo{})
 	errStrictForce := fnStrictForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errStrictForce != nil {
 		t.Errorf("expected no error with force in strict mode, got %v", errStrictForce)
