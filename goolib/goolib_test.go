@@ -31,7 +31,7 @@ func TestScriptInterpreter(t *testing.T) {
 		script string
 		eitp   string
 	}{
-		{"/file/path/script.ps1", "powershell"},
+		{"/file/path/script.ps1", "powershell.exe"},
 		{"/file/path/script.cmd", "cmd"},
 		{"/file/path/script.bat", "cmd"},
 	}
