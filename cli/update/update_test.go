@@ -111,6 +111,27 @@ func TestUpdates(t *testing.T) {
 			},
 			want: nil,
 		},
+		{
+			name: "upgrade via Provides with renamed package",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "PaintDotNet", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "paint-net",
+							Version:  "2.0",
+							Arch:     "x86_32",
+							Provides: []string{"PaintDotNet"},
+							Replaces: []string{"PaintDotNet"},
+						}},
+					},
+				},
+			},
+			want: []goolib.PackageInfo{{Name: "paint-net", Arch: "x86_32", Ver: "2.0"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings.Initialize(t.TempDir(), false)

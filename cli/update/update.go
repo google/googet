@@ -166,7 +166,7 @@ func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 		}
 		fmt.Printf("  %s.%s, %s --> %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
 		logger.Infof("%s for package %s.%s, %s installed and %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
-		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: spec.Version})
+		ud = append(ud, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version})
 	}
 	return ud
 }
