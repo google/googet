@@ -16,6 +16,7 @@ package download
 
 import (
 	"archive/tar"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -28,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/dustin/go-humanize"
@@ -38,19 +40,43 @@ import (
 	"github.com/google/logger"
 )
 
+// maxAttempts is how many times Package tries a download before giving up.
+// The partial file of an HTTP download is kept, so a later run resumes it.
+const maxAttempts = 3
+
+// retryDelay returns how long to wait before the given retry, counting from 1.
+var retryDelay = func(retry int) time.Duration {
+	return time.Second << (retry - 1)
+}
+
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
+// A failed or stalled download is tried up to 3 times in all. An HTTP
+// download resumes from the partial file when the server supports it.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
-
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
-	if isGCSURL {
+	try := func() error {
+		if !isGCSURL {
+			return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
+		}
 		if err := oswrap.RemoveAll(dst); err != nil {
 			return err
 		}
-		return packageGCS(ctx, bucket, object, dst, chksum)
+		return packageGCS(ctx, bucket, object, dst, chksum, downloader)
 	}
-
-	return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
+	for attempt := 1; ; attempt++ {
+		err := try()
+		if err == nil || ctx.Err() != nil || attempt == maxAttempts {
+			return err
+		}
+		d := retryDelay(attempt)
+		logger.Warningf("Downloading %s failed (attempt %d of %d), retrying in %v: %v", pkgURL, attempt, maxAttempts, d, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d):
+		}
+	}
 }
 
 // packageHTTP downloads a package from an HTTP(S) server.
@@ -81,6 +107,8 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	if err != nil {
 		logger.Errorf("CanResume: %v", err)
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	req, err := downloader.NewRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -127,15 +155,18 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 		total = size + resp.ContentLength
 	}
 	bar := progress.NewBar(fmt.Sprintf("Downloading %s", filepath.Base(dst)), total, size)
+	body := client.NewStallReader(resp.Body, downloader.StallTimeout, func() { cancel(client.ErrStalled) })
+	defer body.Close()
 	// Continue hashing the file as we download it.
-	n, err := io.Copy(io.MultiWriter(hash, f, bar), resp.Body)
+	n, err := io.Copy(io.MultiWriter(hash, f, bar), body)
 	if err != nil {
 		bar.Abort()
-		return fmt.Errorf("downloading %s: %v", url, err)
+		return fmt.Errorf("downloading %s: %w", url, err)
 	}
 	bar.Finish()
 	// Verify the checksum of the fully downloaded file.
 	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
+		f.Close()         // Windows cannot delete an open file.
 		os.RemoveAll(dst) // delete the bad file
 		return fmt.Errorf("checksum doesn't match: got %s, want %s", sum, chksum)
 	}
@@ -143,22 +174,31 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	return nil
 }
 
-// Downloads a package from Google Cloud Storage
-func packageGCS(ctx context.Context, bucket, object string, dst, chksum string) error {
-	client, err := storage.NewClient(ctx)
+// packageGCS downloads a package from Google Cloud Storage.
+func packageGCS(ctx context.Context, bucket, object string, dst, chksum string, downloader *client.Downloader) error {
+	gcs, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer gcs.Close()
 
-	r, err := client.Bucket(bucket).Object(object).NewReader(ctx)
+	// The GCS client has no response header timeout, so opening the object
+	// is bounded here as well as reading it.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timeout := cmp.Or(downloader.StallTimeout, client.DefaultStallTimeout)
+	stall := func() { cancel(client.ErrStalled) }
+	t := time.AfterFunc(timeout, stall)
+	r, err := gcs.Bucket(bucket).Object(object).NewReader(ctx)
+	t.Stop()
 	if err != nil {
-		return err
+		return cmp.Or(context.Cause(ctx), err)
 	}
-	defer r.Close()
+	body := client.NewStallReader(r, timeout, stall)
+	defer body.Close()
 
 	logger.Infof("Downloading gs://%s/%s", bucket, object)
-	return download(r, r.Attrs.Size, dst, chksum)
+	return download(body, r.Attrs.Size, dst, chksum)
 }
 
 // FromRepo downloads a package from a repo. It returns the path to the
@@ -214,7 +254,6 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	bar.Finish()
 
 	if hex.EncodeToString(hash.Sum(nil)) != chksum {
-		fmt.Println(hex.EncodeToString(hash.Sum(nil)), chksum)
 		return errors.New("checksum of downloaded file does not match expected checksum")
 	}
 
