@@ -112,7 +112,7 @@ func TestUpdates(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "upgrade via Provides with renamed package",
+			name: "update to renamed package using provides",
 			state: client.GooGetState{
 				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
 			},
@@ -125,12 +125,32 @@ func TestUpdates(t *testing.T) {
 							Version:  "1.1",
 							Arch:     "x86_32",
 							Provides: []string{"foo"},
-							Replaces: []string{"foo"},
 						}},
 					},
 				},
 			},
 			want: []goolib.PackageInfo{{Name: "bar", Arch: "x86_32", Ver: "1.1"}},
+		},
+		{
+			name: "no updates when renamed package is already installed",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "1.1", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "1.1",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: nil,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

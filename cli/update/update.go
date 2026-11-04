@@ -164,8 +164,8 @@ func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 		if c == -1 {
 			op = "Downgrade"
 		}
-		fmt.Printf("  %s.%s, %s --> %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
-		logger.Infof("%s for package %s.%s, %s installed and %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Version, r)
+		fmt.Printf("  %s.%s, %s --> %s.%s, %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
+		logger.Infof("%s for package %s.%s, %s installed and %s.%s, %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
 		ud = append(ud, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version})
 	}
 	return ud
