@@ -140,6 +140,11 @@ func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 			logger.Info(err)
 			continue
 		}
+		newPI := goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}
+		if _, err := state.GetPackageState(newPI); err == nil {
+			logger.Infof("%s.%s - %s already installed", spec.Name, spec.Arch, spec.Version)
+			continue
+		}
 		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, p.PackageSpec.Version)
 		if err != nil {
 			logger.Error(err)
@@ -166,7 +171,7 @@ func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 		}
 		fmt.Printf("  %s.%s, %s --> %s.%s, %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
 		logger.Infof("%s for package %s.%s, %s installed and %s.%s, %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
-		ud = append(ud, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version})
+		ud = append(ud, newPI)
 	}
 	return ud
 }
