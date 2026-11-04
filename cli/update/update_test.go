@@ -152,6 +152,46 @@ func TestUpdates(t *testing.T) {
 			},
 			want: nil,
 		},
+		{
+			name: "no updates when renamed package is at a lower version",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "0.9",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "update to renamed package at lower version when priority is high enough",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Canary,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "0.9",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: []goolib.PackageInfo{{Name: "bar", Arch: "x86_32", Ver: "0.9"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings.Initialize(t.TempDir(), false)
