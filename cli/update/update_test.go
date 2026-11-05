@@ -111,6 +111,129 @@ func TestUpdates(t *testing.T) {
 			},
 			want: nil,
 		},
+		{
+			name: "update to renamed package using provides",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "1.1",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: []goolib.PackageInfo{{Name: "bar", Arch: "x86_32", Ver: "1.1"}},
+		},
+		{
+			name: "no updates when renamed package is already installed at same version",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "1.1", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "1.1",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "no updates when renamed package is already installed at higher version",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "1.2", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "1.1",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "update is queued only once when renamed package is already installed at lower version",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+				{PackageSpec: &goolib.PkgSpec{Name: "bar", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "1.1",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: []goolib.PackageInfo{{Name: "bar", Arch: "x86_32", Ver: "1.1"}},
+		},
+		{
+			name: "no updates when renamed package is at a lower version",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Default,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "0.9",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: nil,
+		},
+		{
+			name: "update to renamed package at lower version when priority is high enough",
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "foo", Version: "1.0", Arch: "x86_32"}},
+			},
+			rm: client.RepoMap{
+				"stable": client.Repo{
+					Priority: priority.Canary,
+					Packages: []goolib.RepoSpec{
+						{PackageSpec: &goolib.PkgSpec{
+							Name:     "bar",
+							Version:  "0.9",
+							Arch:     "x86_32",
+							Provides: []string{"foo"},
+						}},
+					},
+				},
+			},
+			want: []goolib.PackageInfo{{Name: "bar", Arch: "x86_32", Ver: "0.9"}},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings.Initialize(t.TempDir(), false)
