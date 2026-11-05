@@ -115,6 +115,8 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		r, err := client.WhatRepo(pi, rm)
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
+			exitCode = subcommands.ExitFailure
+			continue
 		}
 		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, cmd.dbOnly, cmd.force, downloader, db); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
