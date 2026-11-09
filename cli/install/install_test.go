@@ -153,6 +153,26 @@ func TestInstall(t *testing.T) {
 			wantInstalled: []string{"A.noarch.1", "B.noarch.2"},
 			wantState:     []string{"A.noarch.1", "B.noarch.2"},
 		},
+		{
+			desc: "install-by-provided-name",
+			args: []string{"virt"},
+			packages: []goolib.PkgSpec{
+				{Name: "B", Arch: "noarch", Version: "2", Provides: []string{"virt"}},
+			},
+			wantInstalled: []string{"B.noarch.2"},
+			wantState:     []string{"B.noarch.2"},
+		},
+		{
+			desc: "no-reinstall-by-provided-name-when-provider-installed",
+			args: []string{"virt"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "B", Arch: "noarch", Version: "2", Provides: []string{"virt"}}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "B", Arch: "noarch", Version: "2", Provides: []string{"virt"}},
+			},
+			wantState: []string{"B.noarch.2"},
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Set up the installer.
@@ -313,6 +333,30 @@ func TestInstallDryRun(t *testing.T) {
 				"B.noarch.2.0.0",
 				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
 			},
+		},
+		{
+			desc: "provided name",
+			args: []string{"virt"},
+			packages: []goolib.PkgSpec{
+				{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}},
+			},
+			wantStrs: []string{
+				"The following packages will be installed:",
+				"B.noarch.2.0.0",
+				"Dry run: Would install B.noarch.2.0.0 and its dependencies if not already installed.",
+			},
+		},
+		{
+			desc: "provided name, provider already installed",
+			args: []string{"virt"},
+			state: client.GooGetState{
+				{PackageSpec: &goolib.PkgSpec{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}}},
+			},
+			packages: []goolib.PkgSpec{
+				{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}},
+			},
+			wantStrs: []string{"B.noarch.2.0.0 or a newer version is already installed"},
+			notStrs:  []string{"The following packages will be installed:"},
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
