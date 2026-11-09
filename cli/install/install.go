@@ -205,6 +205,12 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs, installedArch, isLocked); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
 		}
+		// The requested name may be provided by another package, so continue
+		// with that package's own name.
+		if spec.Name != pi.Name {
+			logger.Infof("%s is provided by %s.%s %s", pi.Name, spec.Name, pi.Arch, spec.Version)
+		}
+		pi.Name = spec.Name
 		pi.Ver = spec.Version
 	}
 	if _, err := goolib.ParseVersion(pi.Ver); err != nil {
