@@ -143,6 +143,16 @@ func TestInstall(t *testing.T) {
 			wantInstalled: []string{"B.noarch.2"},
 			wantState:     []string{"B.noarch.2"},
 		},
+		{
+			desc: "install-dep-satisfied-by-provider",
+			args: []string{"A"},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1", PkgDependencies: map[string]string{"virt": "0.0.0"}},
+				{Name: "B", Arch: "noarch", Version: "2", Provides: []string{"virt"}},
+			},
+			wantInstalled: []string{"A.noarch.1", "B.noarch.2"},
+			wantState:     []string{"A.noarch.1", "B.noarch.2"},
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Set up the installer.
@@ -285,6 +295,20 @@ func TestInstallDryRun(t *testing.T) {
 			},
 			wantStrs: []string{
 				"The following packages will be installed:", // Changed
+				"A.noarch.1.0.0",
+				"B.noarch.2.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
+			},
+		},
+		{
+			desc: "dependency satisfied by provider",
+			args: []string{"A"},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1.0.0", PkgDependencies: map[string]string{"virt": "0.0.0"}},
+				{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}},
+			},
+			wantStrs: []string{
+				"The following packages will be installed:",
 				"A.noarch.1.0.0",
 				"B.noarch.2.0.0",
 				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
