@@ -503,6 +503,35 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 	}
 }
 
+func TestListDeps_SatisfiedByProvider(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	rm := client.RepoMap{
+		"repo1": client.Repo{
+			Priority: priority.Value(500),
+			Packages: []goolib.RepoSpec{
+				{PackageSpec: &goolib.PkgSpec{Name: "consumer_pkg", Version: "1.0.0@1", Arch: "x86_64",
+					PkgDependencies: map[string]string{"libvirt": "0.0.0"}}},
+				{PackageSpec: &goolib.PkgSpec{Name: "provider_pkg", Version: "2.0.0@1", Arch: "noarch",
+					Provides: []string{"libvirt"}}},
+			},
+		},
+	}
+	pi := goolib.PackageInfo{Name: "consumer_pkg", Arch: "x86_64", Ver: "1.0.0@1"}
+	got, err := ListDeps(pi, rm, "repo1", []string{"x86_64", "noarch"}, db)
+	if err != nil {
+		t.Fatalf("ListDeps: %v", err)
+	}
+	want := []goolib.PackageInfo{pi, {Name: "provider_pkg", Arch: "noarch", Ver: "2.0.0@1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListDeps = %v, want %v", got, want)
+	}
+}
+
 func TestBuildConflictMap(t *testing.T) {
 	settings.Initialize(t.TempDir(), false)
 	state := []client.PackageState{
