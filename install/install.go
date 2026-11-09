@@ -626,6 +626,10 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 		if err != nil {
 			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
+		// Pass the required version so that FindRepoLatest only returns a
+		// package that meets it, either directly or through a versioned
+		// Provides entry, as installDeps does.
+		di.Ver = v
 		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs, installedArch, isLocked)
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, arch, di.Ver, err)
@@ -637,13 +641,6 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 		// continue with that package's own name and arch.
 		di.Name = spec.Name
 		di.Arch = arch
-		c, err := goolib.Compare(spec.Version, v)
-		if err != nil {
-			return nil, err
-		}
-		if c == -1 {
-			return nil, fmt.Errorf("cannot resolve dependency, %s.%s version %s or greater not installed and not available in any repo", pi.Name, pi.Arch, pi.Ver)
-		}
 		di.Ver = spec.Version
 		dl, err = listDeps(di, rm, repo, dl, archs, db)
 		if err != nil {

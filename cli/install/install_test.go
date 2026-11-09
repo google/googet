@@ -335,6 +335,20 @@ func TestInstallDryRun(t *testing.T) {
 			},
 		},
 		{
+			desc: "dependency satisfied by versioned provides",
+			args: []string{"A"},
+			packages: []goolib.PkgSpec{
+				{Name: "A", Arch: "noarch", Version: "1.0.0", PkgDependencies: map[string]string{"virt": "3.0.0"}},
+				{Name: "B", Arch: "noarch", Version: "1.0.0", Provides: []string{"virt=5.0.0"}},
+			},
+			wantStrs: []string{
+				"The following packages will be installed:",
+				"A.noarch.1.0.0",
+				"B.noarch.1.0.0",
+				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
+			},
+		},
+		{
 			desc: "provided name",
 			args: []string{"virt"},
 			packages: []goolib.PkgSpec{
