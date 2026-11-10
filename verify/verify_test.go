@@ -15,6 +15,7 @@ package verify
 
 import (
 	"bytes"
+	"context"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -110,6 +111,48 @@ func TestExtractVerify(t *testing.T) {
 			want := `verify command "missing.ps1" not found in package`
 			if err == nil || err.Error() != want {
 				t.Errorf("extractVerify with missing command: error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestCommandCachedPackage(t *testing.T) {
+	// The verify script must be runnable by goolib.Exec on the test OS.
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skipf("goolib.Exec does not support %s", runtime.GOOS)
+	}
+	script, body := "verify.sh", "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		script, body = "verify.cmd", "@exit /b 0\r\n"
+	}
+	for _, format := range goolib.CompressionFormats {
+		t.Run(format, func(t *testing.T) {
+			var pkg bytes.Buffer
+			testutil.WritePackage(t, &pkg, format, []testutil.File{
+				{Name: script, Mode: 0755, Body: []byte(body)},
+			})
+			local := filepath.Join(t.TempDir(), "foo.noarch.1.0.0@1.goo")
+			if err := os.WriteFile(local, pkg.Bytes(), 0644); err != nil {
+				t.Fatal(err)
+			}
+			// A cached package whose checksum matches is verified from the local
+			// file without downloading, so no downloader is needed.
+			ps := client.PackageState{
+				LocalPath: local,
+				Checksum:  goolib.Checksum(bytes.NewReader(pkg.Bytes())),
+				PackageSpec: &goolib.PkgSpec{
+					Name:    "foo",
+					Arch:    "noarch",
+					Version: "1.0.0@1",
+					Verify:  goolib.ExecFile{Path: script},
+				},
+			}
+			ok, err := Command(context.Background(), ps, nil)
+			if err != nil {
+				t.Fatalf("Command: %v", err)
+			}
+			if !ok {
+				t.Error("Command = false, want true")
 			}
 		})
 	}
