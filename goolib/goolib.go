@@ -15,7 +15,6 @@ limitations under the License.
 package goolib
 
 import (
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -145,12 +144,13 @@ func Checksum(r io.Reader) string {
 }
 
 // ExtractPkgSpec pulls and unmarshals the package spec file from a
-// reader.
+// reader containing a gzip or zstd compressed package.
 func ExtractPkgSpec(r io.Reader) (*PkgSpec, error) {
-	zr, err := gzip.NewReader(r)
+	zr, err := NewPackageReader(r)
 	if err != nil {
 		return nil, err
 	}
+	defer zr.Close()
 	return ReadPackageSpec(zr)
 }
 

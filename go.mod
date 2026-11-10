@@ -9,6 +9,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/logger v1.1.2
 	github.com/google/subcommands v1.2.0
+	github.com/klauspost/compress v1.20.3
 	github.com/olekukonko/tablewriter v1.1.5
 	github.com/yusufpapurcu/wmi v1.2.4
 	golang.org/x/oauth2 v0.37.0

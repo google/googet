@@ -16,7 +16,6 @@ package download
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -285,12 +284,11 @@ func ExtractPkg(src string) (dst string, err error) {
 	}
 	defer f.Close()
 
-	gr, err := gzip.NewReader(f)
+	gr, err := goolib.NewPackageReader(f)
 	if err != nil {
-		if !os.IsExist(err) {
-			return "", err
-		}
+		return "", err
 	}
+	defer gr.Close()
 	tr := tar.NewReader(gr)
 
 	for {
