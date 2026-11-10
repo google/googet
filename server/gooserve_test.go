@@ -34,14 +34,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestRunSyncMixedCompression(t *testing.T) {
-	// TODO: runSync does not close the package readers it opens, so on Windows
-	// the files stay locked and t.TempDir cleanup would fail. Clean up best
-	// effort here, and switch to t.TempDir once runSync closes them.
-	root, err := os.MkdirTemp("", "gooserve")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(root) })
+	// t.TempDir cleanup fails on Windows if runSync leaves package files open.
+	root := t.TempDir()
 	pkgDir := filepath.Join(root, "packages")
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
 		t.Fatal(err)

@@ -138,6 +138,7 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 				return
 			}
 			spec, err := goolib.ExtractPkgSpec(r)
+			r.Close()
 			if err != nil {
 				logger.Error(err)
 				return
@@ -151,6 +152,7 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 				return
 			}
 			chksum := goolib.Checksum(r)
+			r.Close()
 
 			repoContents.add(pkgPath, chksum, spec)
 		}(pkgPath)
