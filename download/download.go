@@ -302,17 +302,10 @@ func ExtractPkg(src string) (dst string, err error) {
 			return "", fmt.Errorf("error opening file: %v", err)
 		}
 
-		name := filepath.Clean(header.Name)
-		absDst, err := filepath.Abs(dst)
+		path, err := goolib.JoinWithin(dst, filepath.Clean(header.Name))
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("error unpacking package: %v", err)
 		}
-		absPath := filepath.Join(absDst, name)
-		if !strings.HasPrefix(absPath, absDst) {
-			return "", fmt.Errorf("error unpacking package, file contains path traversal: %q", name)
-		}
-
-		path := filepath.Join(dst, name)
 		if header.FileInfo().IsDir() {
 			if err := oswrap.MkdirAll(path, 0755); err != nil {
 				return "", err

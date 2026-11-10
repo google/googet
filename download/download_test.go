@@ -225,6 +225,42 @@ func TestPackageHTTP(t *testing.T) {
 	})
 }
 
+func TestExtractPkgSiblingTraversal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "foo.goo")
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	// ExtractPkg extracts foo.goo to dir/foo, so this entry targets the sibling
+	// dir/foo-evil, whose path has dir/foo as a string prefix.
+	body := []byte("escaped")
+	if err := tw.WriteHeader(&tar.Header{Name: "../foo-evil/x", Mode: 0644, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ExtractPkg(src); err == nil || !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("ExtractPkg error = %v, want a path traversal error", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "foo-evil", "x")); !os.IsNotExist(err) {
+		t.Errorf("ExtractPkg wrote outside the destination directory: stat error = %v", err)
+	}
+}
+
 func TestLatest(t *testing.T) {
 	// Each package payload names its own arch so the test can tell which
 	// spec was downloaded.
