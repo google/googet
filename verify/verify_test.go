@@ -14,14 +14,17 @@ limitations under the License.
 package verify
 
 import (
+	"bytes"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
 )
 
@@ -67,5 +70,47 @@ func TestFiles(t *testing.T) {
 		if verify != tt.verify {
 			t.Errorf("%q: unexpected verification result, want: %t, got: %t", tt.testCase, tt.verify, verify)
 		}
+	}
+}
+
+func TestExtractVerify(t *testing.T) {
+	files := []testutil.File{
+		{Name: "payload.txt", Mode: 0644, Body: []byte("payload")},
+		{Name: "verify.ps1", Mode: 0750, Body: []byte("exit 0")},
+	}
+	for _, format := range goolib.CompressionFormats {
+		t.Run(format, func(t *testing.T) {
+			var pkg bytes.Buffer
+			testutil.WritePackage(t, &pkg, format, files)
+
+			dir := filepath.Join(t.TempDir(), "verify")
+			if err := extractVerify(bytes.NewReader(pkg.Bytes()), "verify.ps1", dir); err != nil {
+				t.Fatalf("extractVerify: %v", err)
+			}
+			path := filepath.Join(dir, "verify.ps1")
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "exit 0" {
+				t.Errorf("verify file contents = %q, want %q", got, "exit 0")
+			}
+			// Windows does not keep Unix permission bits.
+			if runtime.GOOS != "windows" {
+				fi, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fi.Mode().Perm() != 0750 {
+					t.Errorf("verify file mode = %v, want %v", fi.Mode().Perm(), os.FileMode(0750))
+				}
+			}
+
+			err = extractVerify(bytes.NewReader(pkg.Bytes()), "missing.ps1", t.TempDir())
+			want := `verify command "missing.ps1" not found in package`
+			if err == nil || err.Error() != want {
+				t.Errorf("extractVerify with missing command: error = %v, want %q", err, want)
+			}
+		})
 	}
 }

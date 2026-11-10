@@ -3,7 +3,6 @@ package testutil
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -25,6 +24,13 @@ import (
 // "name.noarch.version". Returns a RepoSpec for the goo package.
 func GenGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 	t.Helper()
+	return GenGooCompressed(t, dir, dst, ps, goolib.CompressionGzip)
+}
+
+// GenGooCompressed is like GenGoo, but compresses the package with format,
+// which must be one of goolib.CompressionFormats.
+func GenGooCompressed(t *testing.T, dir, dst string, ps goolib.PkgSpec, format string) goolib.RepoSpec {
+	t.Helper()
 	ps.Files = map[string]string{ps.Name: filepath.Join(dst, ps.Name)}
 	b, err := json.Marshal(ps)
 	if err != nil {
@@ -36,29 +42,48 @@ func GenGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 	}
 	defer f.Close()
 	h := sha256.New()
-	gw := gzip.NewWriter(io.MultiWriter(h, f))
-	tw := tar.NewWriter(gw)
 	modTime := time.Now()
-	for _, x := range []struct {
-		name    string
-		content []byte
-	}{
-		{ps.Name, []byte(ps.String())},
-		{ps.Name + ".pkgspec", b},
-	} {
-		if err := tw.WriteHeader(&tar.Header{Name: x.name, Mode: 0644, Size: int64(len(x.content)), ModTime: modTime}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write(x.content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tw.Close()
-	gw.Close()
+	WritePackage(t, io.MultiWriter(h, f), format, []File{
+		{Name: ps.Name, Mode: 0644, Body: []byte(ps.String()), ModTime: modTime},
+		{Name: ps.Name + ".pkgspec", Mode: 0644, Body: b, ModTime: modTime},
+	})
 	return goolib.RepoSpec{
 		Checksum:    fmt.Sprintf("%x", h.Sum(nil)),
 		Source:      filepath.Base(f.Name()),
 		PackageSpec: &ps,
+	}
+}
+
+// File is a regular file entry in a package archive written by WritePackage.
+type File struct {
+	Name    string
+	Mode    int64
+	Body    []byte
+	ModTime time.Time
+}
+
+// WritePackage writes files to w as a tar archive compressed with format,
+// which must be one of goolib.CompressionFormats.
+func WritePackage(t *testing.T, w io.Writer, format string, files []File) {
+	t.Helper()
+	cw, err := goolib.NewPackageWriter(w, format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw := tar.NewWriter(cw)
+	for _, f := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: f.Name, Mode: f.Mode, Size: int64(len(f.Body)), ModTime: f.ModTime}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(f.Body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("error closing tar writer: %v", err)
+	}
+	if err := cw.Close(); err != nil {
+		t.Fatalf("error closing %s writer: %v", format, err)
 	}
 }
 

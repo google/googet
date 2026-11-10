@@ -16,7 +16,6 @@ package verify
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -37,10 +36,11 @@ const (
 )
 
 func extractVerify(r io.Reader, verify, dir string) error {
-	zr, err := gzip.NewReader(r)
+	zr, err := goolib.NewPackageReader(r)
 	if err != nil {
 		return err
 	}
+	defer zr.Close()
 	tr := tar.NewReader(zr)
 	for {
 		header, err := tr.Next()
