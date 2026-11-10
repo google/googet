@@ -54,10 +54,14 @@ func extractVerify(r io.Reader, verify, dir string) error {
 			continue
 		}
 
+		path, err := goolib.JoinWithin(dir, verify)
+		if err != nil {
+			return fmt.Errorf("invalid verify command: %v", err)
+		}
 		if err := oswrap.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
-		f, err := oswrap.OpenFile(filepath.Join(dir, verify), os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))
+		f, err := oswrap.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))
 		if err != nil {
 			return err
 		}
