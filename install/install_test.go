@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -590,8 +591,8 @@ func TestListDeps_SelfDependency(t *testing.T) {
 				t.Fatalf("ListDeps: %v", err)
 			}
 			want := append([]goolib.PackageInfo{pi}, tc.want...)
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("ListDeps = %v, want %v", got, want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("ListDeps mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -672,12 +673,20 @@ func TestListDeps_VersionRequirement(t *testing.T) {
 			want: []goolib.PackageInfo{{Name: "provider_pkg", Arch: "noarch", Ver: "1.0.0"}},
 		},
 		{
+			desc: "unversioned provides meets any required version",
+			dep:  map[string]string{"virt": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "provider_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"virt"}},
+			},
+			want: []goolib.PackageInfo{{Name: "provider_pkg", Arch: "noarch", Ver: "1.0.0"}},
+		},
+		{
 			desc: "versioned provides below requirement",
 			dep:  map[string]string{"virt": "3.0.0"},
 			pkgs: []*goolib.PkgSpec{
 				{Name: "provider_pkg", Version: "4.0.0", Arch: "noarch", Provides: []string{"virt=2.0.0"}},
 			},
-			wantErr: "cannot resolve dependency virt",
+			wantErr: "cannot resolve dependency virt version 3.0.0 or greater",
 		},
 		{
 			desc: "direct dependency meets requirement",
@@ -693,7 +702,7 @@ func TestListDeps_VersionRequirement(t *testing.T) {
 			pkgs: []*goolib.PkgSpec{
 				{Name: "dep_pkg", Version: "1.0.0", Arch: "noarch"},
 			},
-			wantErr: "cannot resolve dependency dep_pkg",
+			wantErr: "cannot resolve dependency dep_pkg version 3.0.0 or greater",
 		},
 		{
 			desc: "direct dependency below requirement, provider meets it",
@@ -730,8 +739,8 @@ func TestListDeps_VersionRequirement(t *testing.T) {
 				t.Fatalf("ListDeps: %v", err)
 			}
 			want := append([]goolib.PackageInfo{pi}, tc.want...)
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("ListDeps = %v, want %v", got, want)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("ListDeps mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
