@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
@@ -152,45 +153,46 @@ func (g *GooDB) RemovePkg(pkgName, arch string) error {
 }
 
 // FetchPkg exports a single package from the googet database
-func (g *GooDB) FetchPkg(pkgName string) (client.PackageState, error) {
-	var pkgState client.PackageState
-
+func (g *GooDB) FetchPkg(pi goolib.PackageInfo) (client.PackageState, error) {
 	selectSpecQuery :=
 		`SELECT 
 			pkg_json
 		FROM
 			InstalledPackages
 		WHERE pkg_name = ?
-		ORDER BY pkg_name
+		ORDER BY pkg_arch, pkg_ver
 		`
-	spec, err := g.db.Query(selectSpecQuery, pkgName)
+	spec, err := g.db.Query(selectSpecQuery, pi.Name)
 	if err != nil {
-		return client.PackageState{}, nil
+		return client.PackageState{}, err
 	}
 	defer spec.Close()
+
+	var lastPkgState client.PackageState
 	for spec.Next() {
 		var jsonState string
-		err = spec.Scan(
-			&jsonState,
-		)
-		if err != nil {
-			return pkgState, err
+		if err := spec.Scan(&jsonState); err != nil {
+			return client.PackageState{}, err
 		}
-		err = json.Unmarshal([]byte(jsonState), &pkgState)
-		if err != nil {
-			return pkgState, err
+		var pkgState client.PackageState
+		if err := json.Unmarshal([]byte(jsonState), &pkgState); err != nil {
+			return client.PackageState{}, err
 		}
+		if pkgState.Match(pi) {
+			return pkgState, nil
+		}
+		lastPkgState = pkgState
 	}
-	return pkgState, nil
+	return lastPkgState, nil
 }
 
 // FetchPkgs exports all of the current packages in the googet database
 func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 	var state client.GooGetState
-	query := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name`
+	query := `SELECT pkg_json FROM InstalledPackages ORDER BY pkg_name, pkg_arch`
 	var args []any
 	if pkgName != "" {
-		query = `SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE ? ORDER BY pkg_name`
+		query = `SELECT pkg_json FROM InstalledPackages WHERE pkg_name LIKE ? ORDER BY pkg_name, pkg_arch`
 		args = []any{pkgName}
 	}
 	rows, err := g.db.Query(query, args...)
@@ -210,6 +212,20 @@ func (g *GooDB) FetchPkgs(pkgName string) (client.GooGetState, error) {
 		state = append(state, pkgState)
 	}
 	return state, nil
+}
+
+// InstalledLockState returns the architecture, lock status, and version of the installed package.
+// If the package is not installed, it returns empty string and false.
+func (g *GooDB) InstalledLockState(pkgName string) (installedArch string, isLocked bool, ver string, pkgFound bool, err error) {
+	pkgs, err := g.FetchPkgs(pkgName)
+	if err != nil {
+		return "", false, "", false, err
+	}
+	if len(pkgs) == 0 {
+		return "", false, "", false, nil
+	}
+	// Assume only one arch is installed, or pick the first one.
+	return pkgs[0].PackageSpec.Arch, pkgs[0].PackageSpec.LockArch, pkgs[0].PackageSpec.Version, true, nil
 }
 
 // readState reads the JSON installed package state from the given path,

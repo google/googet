@@ -105,7 +105,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 					Arch: p.PackageSpec.Arch,
 					Ver:  p.PackageSpec.Version,
 				}
-				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, cmd.dbOnly, downloader, db); err != nil {
+				if err := install.FromRepo(ctx, pi, u, cache, rm, settings.Archs, cmd.dbOnly, false, downloader, db); err != nil {
 					logger.Errorf("Error installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 					exitCode = subcommands.ExitFailure
 					continue

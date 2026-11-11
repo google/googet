@@ -34,7 +34,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/google/googet/v2/priority"
-	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/pkg/twwarp"
 )
 
 type build struct {
@@ -76,9 +76,12 @@ var validArch = []string{"noarch", "x86_64", "x86_32", "arm", "arm64"}
 
 // PkgSpec is an individual package specification.
 type PkgSpec struct {
-	Name            string
-	Version         string
-	Arch            string
+	Name    string
+	Version string
+	Arch    string
+	// LockArch, if true, prevents upgrading an installed package to a different architecture
+	// unless the newer candidate version sets LockArch to false (or leaves it default).
+	LockArch        bool              `json:",omitempty"`
 	ReleaseNotes    []string          `json:",omitempty"`
 	Description     string            `json:",omitempty"`
 	License         string            `json:",omitempty"`
@@ -96,6 +99,10 @@ type PkgSpec struct {
 	Files           map[string]string `json:",omitempty"`
 	// The Display Name of the entry in "Add/Remove programs" for matching
 	ExternalProgramName string
+	// ExecutableNames contains binary executable filenames (e.g. "excel.exe" or "chrome.exe").
+	ExecutableNames []string `json:",omitempty"`
+	// InstallPath contains default target installation directory path (e.g. "C:\Program Files\Vendor").
+	InstallPath string `json:",omitempty"`
 }
 
 func (ps PkgSpec) String() string {
@@ -468,6 +475,7 @@ func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
 		{"Owners", ps.Owners},
 		{"Source", ps.Source},
 		{"Description", ps.Description},
+		{"InstallPath", ps.InstallPath},
 		{"Dependencies", ""},
 		{"ReleaseNotes", ""},
 	}
@@ -488,7 +496,7 @@ func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
 			return
 		}
 		for _, line := range lines {
-			sl, _ := tablewriter.WrapString(line, 76-width)
+			sl, _ := twwarp.WrapString(line, 76-width)
 			for _, l := range sl {
 				write(label, l)
 				label = ""

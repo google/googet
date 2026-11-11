@@ -43,12 +43,13 @@ type installCmd struct {
 	dbOnly     bool
 	sources    string
 	dryRun     bool
+	force      bool
 }
 
 func (*installCmd) Name() string     { return "install" }
 func (*installCmd) Synopsis() string { return "download and install a package and its dependencies" }
 func (*installCmd) Usage() string {
-	return fmt.Sprintf("%s install [-reinstall] [-sources repo1,repo2...] [-dry_run] <name>...\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf("%s install [-reinstall] [-sources repo1,repo2...] [-dry_run] [-force] <name>...\n", filepath.Base(os.Args[0]))
 }
 
 func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
@@ -57,6 +58,7 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform install system actions")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be installed but do not install")
+	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files (only required if StrictConflicts is enabled in config)")
 }
 
 func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...any) subcommands.ExitStatus {
@@ -91,11 +93,12 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 		confirm:         settings.Confirm,
 		downloader:      downloader,
 		dryRun:          cmd.dryRun,
+		force:           cmd.force,
 	}
 
 	// We only need to build sources and download indexes if there are any
 	// non-file goo arguments passed to the install command (usually the case).
-	if !allFileGoos(flag.Args()) {
+	if !allFileGoos(flags.Args()) {
 		repos, err := repo.BuildSources(cmd.sources)
 		if err != nil {
 			logger.Errorf("Failed to initialize repos: %v", err)
@@ -151,6 +154,7 @@ type installer struct {
 	redownload      bool               // ignore cached downloads when reinstalling
 	confirm         bool               // prompt before changes
 	dryRun          bool               // show what would be done
+	force           bool               // force overwrite resulting from conflicts
 }
 
 // installFromFile installs a package from the specified file path.
@@ -164,7 +168,7 @@ func (i *installer) installFromFile(path string) error {
 		fmt.Printf("Not installing %s...\n", base)
 		return nil
 	}
-	if err := install.FromDisk(path, i.cache, i.dbOnly, i.shouldReinstall, i.db); err != nil {
+	if err := install.FromDisk(path, i.cache, i.dbOnly, i.force, i.shouldReinstall, i.db); err != nil {
 		return fmt.Errorf("installing %s: %v", path, err)
 	}
 	return nil
@@ -174,7 +178,7 @@ func (i *installer) installFromFile(path string) error {
 func (i *installer) installFromRepo(ctx context.Context, name string, archs []string) error {
 	pi := goolib.PkgNameSplit(name)
 	if i.shouldReinstall {
-		ps, err := i.db.FetchPkg(pi.Name)
+		ps, err := i.db.FetchPkg(pi)
 		if err != nil {
 			return fmt.Errorf("unable to fetch %v: %v", pi.Name, err)
 		}
@@ -194,7 +198,11 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 	if pi.Ver == "" {
 		var err error
 		var spec *goolib.PkgSpec
-		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs); err != nil {
+		installedArch, isLocked, _, _, err := i.db.InstalledLockState(pi.Name)
+		if err != nil {
+			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
+		}
+		if spec, _, pi.Arch, err = client.FindRepoLatest(pi, i.repoMap, archs, installedArch, isLocked); err != nil {
 			return fmt.Errorf("can't resolve version for package %q: %v", pi.Name, err)
 		}
 		pi.Ver = spec.Version
@@ -229,7 +237,7 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		fmt.Println("canceling install...")
 		return nil
 	}
-	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.downloader, i.db); err != nil {
+	if err := install.FromRepo(ctx, pi, r, i.cache, i.repoMap, archs, i.dbOnly, i.force, i.downloader, i.db); err != nil {
 		return fmt.Errorf("installing %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}
 
@@ -251,14 +259,14 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 			return nil
 		}
 	}
-	if err := install.Reinstall(ctx, ps, i.redownload, i.downloader); err != nil {
+	if err := install.Reinstall(ctx, ps, i.redownload, i.force, i.downloader, i.db); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
 	}
 	return nil
 }
 
 func (i *installer) enumerateDeps(pi goolib.PackageInfo, r string, archs []string, dryRun bool) (*bytes.Buffer, error) {
-	dl, err := install.ListDeps(pi, i.repoMap, r, archs)
+	dl, err := install.ListDeps(pi, i.repoMap, r, archs, i.db)
 	if err != nil {
 		return nil, fmt.Errorf("error listing dependencies for %s.%s.%s: %v", pi.Name, pi.Arch, pi.Ver, err)
 	}

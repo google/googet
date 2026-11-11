@@ -40,18 +40,20 @@ type updateCmd struct {
 	dbOnly  bool
 	sources string
 	dryRun  bool
+	force   bool
 }
 
 func (*updateCmd) Name() string     { return "update" }
 func (*updateCmd) Synopsis() string { return "update all packages to the latest version available" }
 func (*updateCmd) Usage() string {
-	return fmt.Sprintf("%s update [-sources repo1,repo2...] [-dry_run]\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf("%s update [-sources repo1,repo2...] [-dry_run] [-force]\n", filepath.Base(os.Args[0]))
 }
 
 func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform install system actions")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "check for updates and print them, but do not prompt to install")
+	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files (only required if StrictConflicts is enabled in config)")
 }
 
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
@@ -90,7 +92,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	}
 
 	rm := downloader.AvailableVersions(ctx, repos, cache, settings.CacheLife)
-	ud := updates(state.PackageMap(), rm)
+	ud := updates(state, rm)
 	if ud == nil {
 		fmt.Println("No updates available for any installed packages.")
 		return subcommands.ExitSuccess
@@ -113,8 +115,10 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		r, err := client.WhatRepo(pi, rm)
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)
+			exitCode = subcommands.ExitFailure
+			continue
 		}
-		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, cmd.dbOnly, downloader, db); err != nil {
+		if err := install.FromRepo(ctx, pi, r, cache, rm, settings.Archs, cmd.dbOnly, cmd.force, downloader, db); err != nil {
 			logger.Errorf("Error updating %s %s %s: %v", pi.Arch, pi.Name, pi.Ver, err)
 			exitCode = subcommands.ExitFailure
 			continue
@@ -124,44 +128,54 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 	return exitCode
 }
 
-func updates(pm client.PackageMap, rm client.RepoMap) []goolib.PackageInfo {
+func updates(state client.GooGetState, rm client.RepoMap) []goolib.PackageInfo {
 	fmt.Println("Searching for available updates...")
 	var ud []goolib.PackageInfo
-	for p, ver := range pm {
-		pi := goolib.PkgNameSplit(p)
-		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs)
+	for _, p := range state {
+		if p.PackageSpec == nil {
+			continue
+		}
+		pi := goolib.PackageInfo{Name: p.PackageSpec.Name, Arch: p.PackageSpec.Arch}
+		spec, r, _, err := client.FindRepoLatest(pi, rm, settings.Archs, p.PackageSpec.Arch, p.PackageSpec.LockArch)
 		if err != nil {
 			// This error is because this installed package is not available in a repo.
 			logger.Info(err)
 			continue
 		}
-		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, ver)
+		if p.PackageSpec.Name != spec.Name {
+			// Check if package identified via "Provides" is already installed (at any version).
+			if _, err := state.GetPackageState(goolib.PackageInfo{Name: spec.Name}); err == nil {
+				logger.Infof("%s.%s - %s already installed", spec.Name, spec.Arch, spec.Version)
+				continue
+			}
+		}
+		c, err := goolib.ComparePriorityVersion(rm[r].Priority, spec.Version, priority.Default, p.PackageSpec.Version)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
 		if c < 1 {
-			logger.Infof("%s - highest priority version already installed", p)
+			logger.Infof("%s.%s - highest priority version already installed", p.PackageSpec.Name, p.PackageSpec.Arch)
 			continue
 		}
 		// The versions might actually be the same even though the priorities are different,
 		// so do another check to skip reinstall of the same version.
-		c, err = goolib.Compare(spec.Version, ver)
+		c, err = goolib.Compare(spec.Version, p.PackageSpec.Version)
 		if err != nil {
 			logger.Error(err)
 			continue
 		}
 		if c == 0 {
-			logger.Infof("%s - same version installed", p)
+			logger.Infof("%s.%s - same version installed", p.PackageSpec.Name, p.PackageSpec.Arch)
 			continue
 		}
 		op := "Upgrade"
 		if c == -1 {
 			op = "Downgrade"
 		}
-		fmt.Printf("  %s, %s --> %s from %s\n", p, ver, spec.Version, r)
-		logger.Infof("%s for package %s, %s installed and %s available from %s.", op, p, ver, spec.Version, r)
-		ud = append(ud, goolib.PackageInfo{Name: pi.Name, Arch: pi.Arch, Ver: spec.Version})
+		fmt.Printf("  %s.%s, %s --> %s.%s, %s from %s\n", p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
+		logger.Infof("%s for package %s.%s, %s installed and %s.%s, %s available from %s.", op, p.PackageSpec.Name, p.PackageSpec.Arch, p.PackageSpec.Version, spec.Name, spec.Arch, spec.Version, r)
+		ud = append(ud, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version})
 	}
 	return ud
 }

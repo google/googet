@@ -397,27 +397,24 @@ func width() (int, error) {
 	return int(p[0].AddressWidth), nil
 }
 
-// InstallableArchs returns a slice of archs supported by this machine.
+// InstallableArchs returns a slice of archs supported by this machine,
+// ordered by preference (native architecture first, followed by compatible architectures, and lastly "noarch").
 // WMI errors are logged but not returned.
 func InstallableArchs() ([]string, error) {
 	switch {
 	case runtime.GOARCH == "386":
 		// Check if this is indeed a 32bit system.
 		aw, err := width()
-		if err != nil {
-			return []string{"noarch", "x86_32"}, nil
+		if err != nil || int(aw) == 32 {
+			return []string{"x86_32", "noarch"}, nil
 		}
-		if int(aw) == 32 {
-			return []string{"noarch", "x86_32"}, nil
-		}
-		return []string{"noarch", "x86_64", "x86_32"}, nil
+		return []string{"x86_64", "x86_32", "noarch"}, nil
 	case runtime.GOARCH == "amd64":
-		// TODO: Add check for 32bit support, make sure it works with servers and client OS's.
-		return []string{"noarch", "x86_32", "x86_64"}, nil
+		return []string{"x86_64", "x86_32", "noarch"}, nil
 	case runtime.GOARCH == "arm":
-		return []string{"noarch", "arm"}, nil
+		return []string{"arm", "noarch"}, nil
 	case runtime.GOARCH == "arm64":
-		return []string{"noarch", "x86_32", "x86_64", "arm64"}, nil
+		return []string{"arm64", "x86_64", "x86_32", "noarch"}, nil
 	default:
 		return nil, fmt.Errorf("runtime %s not supported", runtime.GOARCH)
 	}

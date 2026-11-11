@@ -29,6 +29,12 @@ var (
 	ProxyServer string
 	// AllowUnsafeURL allows HTTP repos; set from googet.conf.
 	AllowUnsafeURL bool
+	// StrictConflicts enables strict enforcement of file ownership conflicts.
+	StrictConflicts bool
+	// Progress enables the download progress bar and install spinner on
+	// interactive terminals; set from googet.conf (default true) and
+	// overridden by an explicit -progress flag.
+	Progress = true
 )
 
 // Initialize reads the initial settings.
@@ -76,11 +82,14 @@ func RepoDir() string {
 
 // conf represents a googet configuration file.
 type conf struct {
-	Archs          []string
-	CacheLife      string
-	LockFileMaxAge string
-	ProxyServer    string
-	AllowUnsafeURL bool
+	Archs           []string
+	CacheLife       string
+	LockFileMaxAge  string
+	ProxyServer     string
+	AllowUnsafeURL  bool
+	StrictConflicts bool
+	// Progress is a pointer so an absent key keeps the default of true.
+	Progress *bool
 }
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
@@ -138,4 +147,9 @@ func readConf(filename string) {
 	}
 
 	AllowUnsafeURL = gc.AllowUnsafeURL
+	StrictConflicts = gc.StrictConflicts
+	Progress = true
+	if gc.Progress != nil {
+		Progress = *gc.Progress
+	}
 }

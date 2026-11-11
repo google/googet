@@ -71,7 +71,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
-		ps, err := db.FetchPkg(pi.Name)
+		ps, err := db.FetchPkg(pi)
 		if err != nil {
 			logger.Errorf("Package %q not installed, cannot verify.", arg)
 			continue
@@ -97,7 +97,7 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 			msg := fmt.Sprintf("Verification failed for %s, reinstalling...", pkg)
 			logger.Info(msg)
 			fmt.Println(msg)
-			if err := install.Reinstall(ctx, ps, false, downloader); err != nil {
+			if err := install.Reinstall(ctx, ps, false, false, downloader, db); err != nil {
 				logger.Errorf("Error reinstalling %s, %v", pi.Name, err)
 			}
 		} else if !v {

@@ -84,7 +84,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 
 func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader *client.Downloader, db *googetdb.GooDB) error {
 	pi := goolib.PkgNameSplit(pkgName)
-	ps, err := db.FetchPkg(pi.Name)
+	ps, err := db.FetchPkg(pi)
 	if err != nil {
 		return err
 	}

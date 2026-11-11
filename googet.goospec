@@ -1,4 +1,4 @@
-{{$version := "3.2.1@0" -}}
+{{$version := "3.4.3@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,7 +15,19 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
-    "3.2.1 - Remove offsets for semver to better support upgrading versions from X.X.X to Y.Y"
+    "3.4.2  - Fix: Fix semver versioning to not push version numbers by 1 decimal place.
+    "3.4.2  - Fix: 'googet update' installs the replacement package when an installed package is now provided by a package with a different name.",
+    "       - Security: Bump github.com/go-jose/go-jose/v4 to v4.1.6 to fix CVE-2026-116587.",
+    "3.4.1  - Fix: Honor the requested arch in 'googet download <name>.<arch>' when no version is given.",
+    "3.4.0  - Feat: Add a download progress bar and install spinner on interactive terminals; installer output is still shown live.",
+    "       - Add the -progress flag and progress googet.conf option (default true) to disable it; -verbose also disables it.",
+    "       - Fix: Restart a resumed download from the beginning when the server ignores the Range request.",
+    "3.3.3  - Feat: Add ExecutableNames and InstallPath fields to GooGet PkgSpec.",
+    "3.3.2  - Feat: introduce StrictConflicts setting to optionally enforce file ownership conflict errors.",
+    "3.3.1  - Fix: Prevent path traversal vulnerabilities in file unpacking and add workflow permissions.",
+    "3.3.0  - Refactor: Update FindRepoLatest to prioritize repo priority, version, and architecture with lock support.",
+    "3.3.0  - Refactor: Add file ownership conflict checks to prevent overwrites.",
+    "3.2.1  - Refactor: Update GooDB.FetchPkg to accept goolib.PackageInfo.",
     "3.2.0  - Add Provides functionality and field to the GooGet PkgSpec.",
     "3.1.0  - Introduce a dry_run flag for update, install, and remove subcommands.",
     "3.0.0  - Replace googet state file with sqlite database. Add json output for installed command.",

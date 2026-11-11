@@ -85,8 +85,8 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 	for _, arg := range flags.Args() {
 		pi := goolib.PkgNameSplit(arg)
 		if pi.Ver == "" {
-			if _, _, err := download.Latest(ctx, pi.Name, dir, rm, settings.Archs, downloader); err != nil {
-				logger.Errorf("error downloading %s, %v", pi.Name, err)
+			if _, _, err := download.Latest(ctx, pi, dir, rm, settings.Archs, downloader); err != nil {
+				logger.Errorf("error downloading %s, %v", arg, err)
 				exitCode = subcommands.ExitFailure
 			}
 			continue
