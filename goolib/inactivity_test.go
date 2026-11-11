@@ -707,3 +707,9 @@ func TestWalkServiceTree(t *testing.T) {
 		})
 	}
 }
+
+func TestInactivityModeDefault(t *testing.T) {
+	if InactivityMode != InactivityEnforce {
+		t.Errorf("InactivityMode = %q by default, want %q", InactivityMode, InactivityEnforce)
+	}
+}

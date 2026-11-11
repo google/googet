@@ -114,17 +114,17 @@ const (
 
 // InactivityMode is what Run does when a command exceeds InactivityTimeout or
 // meets the stuck-dialog condition of ErrDialog.
-// InactivityEnforce kills it and all of its descendants, but never while it
-// shows a dialog a user can answer, including on a locked console or a
-// disconnected RDP session. InactivityOff disables the limit, and
+// InactivityEnforce, the default, kills it and all of its descendants, but
+// never while it shows a dialog a user can answer, including on a locked
+// console or a disconnected RDP session. InactivityOff disables the limit, and
 // InactivityMonitor or any other value logs a warning for each stretch of
-// inactivity or stuck dialog, and another one if activity resumes. Work by
-// descendants that break away from the job, and by other services, WMI or
-// scheduled tasks the command hands work to, is not seen as activity.
-// InactivityEnforce can then kill the command while that work carries on,
-// which is why InactivityMonitor is the default. googet sets it from the
-// inactivitymode key in googet.conf, and goopack sets it to InactivityOff.
-var InactivityMode = InactivityMonitor
+// inactivity or stuck dialog, and another one if activity resumes, for example
+// during a staged rollout. Work by descendants that break away from the job,
+// and by other services, WMI or scheduled tasks the command hands work to, is
+// not seen as activity, so InactivityEnforce can kill the command while that
+// work carries on. googet sets it from the inactivitymode key in googet.conf,
+// and goopack sets it to InactivityOff.
+var InactivityMode = InactivityEnforce
 
 // ErrDialog is wrapped by the error Run returns when it kills a command that
 // showed a dialog nobody could answer (as in session 0 or on a window station
