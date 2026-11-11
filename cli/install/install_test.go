@@ -292,7 +292,7 @@ func TestInstallDryRun(t *testing.T) {
 				"A.noarch.1.0.0",
 				"Dry run: Would install A.noarch.1.0.0 and its dependencies if not already installed.",
 			},
-			notStrs: []string{"Installing "},
+			notStrs: []string{"Installing ", "Note: selecting"},
 		},
 		{
 			desc: "package already installed",
@@ -341,6 +341,7 @@ func TestInstallDryRun(t *testing.T) {
 				{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}},
 			},
 			wantStrs: []string{
+				"Note: selecting B.noarch.2.0.0, which provides virt",
 				"The following packages will be installed:",
 				"B.noarch.2.0.0",
 				"Dry run: Would install B.noarch.2.0.0 and its dependencies if not already installed.",
@@ -355,8 +356,11 @@ func TestInstallDryRun(t *testing.T) {
 			packages: []goolib.PkgSpec{
 				{Name: "B", Arch: "noarch", Version: "2.0.0", Provides: []string{"virt"}},
 			},
-			wantStrs: []string{"B.noarch.2.0.0 or a newer version is already installed"},
-			notStrs:  []string{"The following packages will be installed:"},
+			wantStrs: []string{
+				"Note: selecting B.noarch.2.0.0, which provides virt",
+				"B.noarch.2.0.0 or a newer version is already installed",
+			},
+			notStrs: []string{"The following packages will be installed:"},
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {

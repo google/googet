@@ -208,7 +208,8 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		// The requested name may be provided by another package, so continue
 		// with that package's own name.
 		if spec.Name != pi.Name {
-			logger.Infof("%s is provided by %s.%s %s", pi.Name, spec.Name, pi.Arch, spec.Version)
+			logger.Infof("Selecting %s.%s.%s, which provides %s", spec.Name, pi.Arch, spec.Version, pi.Name)
+			fmt.Printf("Note: selecting %s.%s.%s, which provides %s\n", spec.Name, pi.Arch, spec.Version, pi.Name)
 		}
 		pi.Name = spec.Name
 		pi.Ver = spec.Version
