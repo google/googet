@@ -619,7 +619,7 @@ func TestExtractPkg(t *testing.T) {
 		"empty":            "",
 	}
 	trees := make(map[string]map[string]extractedFile)
-	for _, format := range goolib.CompressionFormats {
+	for _, format := range goolib.CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			dst, err := ExtractPkg(writePkg(t, format, files))
 			if err != nil {
@@ -651,7 +651,7 @@ func TestExtractPkgPathTraversal(t *testing.T) {
 	// directory itself and fail for an unrelated reason.
 	for _, name := range []string{"foo/../../escaped", "../escaped"} {
 		files := []testutil.File{{Name: name, Mode: 0600, Body: []byte("this is a test file")}}
-		for _, format := range goolib.CompressionFormats {
+		for _, format := range goolib.CompressionFormats() {
 			t.Run(format+" "+name, func(t *testing.T) {
 				src := writePkg(t, format, files)
 				_, err := ExtractPkg(src)

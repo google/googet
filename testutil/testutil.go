@@ -28,7 +28,7 @@ func GenGoo(t *testing.T, dir, dst string, ps goolib.PkgSpec) goolib.RepoSpec {
 }
 
 // GenGooCompressed is like GenGoo, but compresses the package with format,
-// which must be one of goolib.CompressionFormats.
+// which must be one of goolib.CompressionFormats().
 func GenGooCompressed(t *testing.T, dir, dst string, ps goolib.PkgSpec, format string) goolib.RepoSpec {
 	t.Helper()
 	ps.Files = map[string]string{ps.Name: filepath.Join(dst, ps.Name)}
@@ -63,7 +63,7 @@ type File struct {
 }
 
 // WritePackage writes files to w as a tar archive compressed with format,
-// which must be one of goolib.CompressionFormats.
+// which must be one of goolib.CompressionFormats().
 func WritePackage(t *testing.T, w io.Writer, format string, files []File) {
 	t.Helper()
 	cw, err := goolib.NewPackageWriter(w, format)
