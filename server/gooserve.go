@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,11 @@ func getReader(ctx context.Context, client *storage.Client, rootLoc, packageLoc,
 	}
 }
 
+// syncConcurrency bounds how many packages runSync reads at once. Reading a
+// zstd package allocates its decoder window (8 MiB for goopack output, up to
+// 128 MiB), so an unbounded scan could exhaust memory. Tests override it.
+var syncConcurrency = runtime.NumCPU()
+
 func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 	logger.Info("Beginning sync run")
 
@@ -125,10 +131,15 @@ func runSync(ctx context.Context, rootLoc, packageLoc string) error {
 
 	repoContents = &repoPackages{}
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, syncConcurrency)
 	for _, pkgPath := range pkgs {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(pkgPath string) {
-			defer wg.Done()
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
 
 			var r io.ReadCloser
 

@@ -40,9 +40,13 @@ func TestRunSyncMixedCompression(t *testing.T) {
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	// Use fewer workers than packages so the concurrency limit is exercised.
+	defer func(n int) { syncConcurrency = n }(syncConcurrency)
+	syncConcurrency = 2
+	formats := goolib.CompressionFormats()
 	var want []goolib.RepoSpec
 	for i := 0; i < 8; i++ {
-		format := goolib.CompressionFormats[i%len(goolib.CompressionFormats)]
+		format := formats[i%len(formats)]
 		ps := goolib.PkgSpec{Name: fmt.Sprintf("pkg%d", i), Version: "1.0.0@1", Arch: "noarch"}
 		rs := testutil.GenGooCompressed(t, pkgDir, t.TempDir(), ps, format)
 		rs.Source = filepath.Join(pkgDir, rs.Source)

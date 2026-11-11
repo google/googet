@@ -17,9 +17,12 @@ import (
 	"bytes"
 	"context"
 	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/googet/v2/client"
@@ -79,7 +82,7 @@ func TestExtractVerify(t *testing.T) {
 		{Name: "payload.txt", Mode: 0644, Body: []byte("payload")},
 		{Name: "verify.ps1", Mode: 0750, Body: []byte("exit 0")},
 	}
-	for _, format := range goolib.CompressionFormats {
+	for _, format := range goolib.CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			var pkg bytes.Buffer
 			testutil.WritePackage(t, &pkg, format, files)
@@ -116,7 +119,7 @@ func TestExtractVerify(t *testing.T) {
 	}
 }
 
-func TestCommandCachedPackage(t *testing.T) {
+func TestCommandLocalPackage(t *testing.T) {
 	// The verify script must be runnable by goolib.Exec on the test OS.
 	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		t.Skipf("goolib.Exec does not support %s", runtime.GOOS)
@@ -125,34 +128,64 @@ func TestCommandCachedPackage(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		script, body = "verify.cmd", "@exit /b 0\r\n"
 	}
-	for _, format := range goolib.CompressionFormats {
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range goolib.CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			var pkg bytes.Buffer
 			testutil.WritePackage(t, &pkg, format, []testutil.File{
 				{Name: script, Mode: 0755, Body: []byte(body)},
 			})
-			local := filepath.Join(t.TempDir(), "foo.noarch.1.0.0@1.goo")
-			if err := os.WriteFile(local, pkg.Bytes(), 0644); err != nil {
-				t.Fatal(err)
-			}
-			// A cached package whose checksum matches is verified from the local
-			// file without downloading, so no downloader is needed.
-			ps := client.PackageState{
-				LocalPath: local,
-				Checksum:  goolib.Checksum(bytes.NewReader(pkg.Bytes())),
-				PackageSpec: &goolib.PkgSpec{
-					Name:    "foo",
-					Arch:    "noarch",
-					Version: "1.0.0@1",
-					Verify:  goolib.ExecFile{Path: script},
-				},
-			}
-			ok, err := Command(context.Background(), ps, nil)
-			if err != nil {
-				t.Fatalf("Command: %v", err)
-			}
-			if !ok {
-				t.Error("Command = false, want true")
+			var downloads atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				downloads.Add(1)
+				w.Write(pkg.Bytes())
+			}))
+			t.Cleanup(srv.Close)
+			for _, tc := range []struct {
+				name          string
+				local         []byte // Contents of the cached package; nil means none.
+				wantDownloads int32
+			}{
+				// A cached package whose checksum matches is verified from the
+				// local file.
+				{"cache hit", pkg.Bytes(), 0},
+				// Otherwise the package is downloaded again.
+				{"cache miss", nil, 1},
+				{"stale cache", []byte("not the package"), 1},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					local := filepath.Join(t.TempDir(), "foo.noarch.1.0.0@1.goo")
+					if tc.local != nil {
+						if err := os.WriteFile(local, tc.local, 0644); err != nil {
+							t.Fatal(err)
+						}
+					}
+					ps := client.PackageState{
+						LocalPath:   local,
+						DownloadURL: srv.URL + "/foo.noarch.1.0.0@1.goo",
+						Checksum:    goolib.Checksum(bytes.NewReader(pkg.Bytes())),
+						PackageSpec: &goolib.PkgSpec{
+							Name:    "foo",
+							Arch:    "noarch",
+							Version: "1.0.0@1",
+							Verify:  goolib.ExecFile{Path: script},
+						},
+					}
+					downloads.Store(0)
+					ok, err := Command(context.Background(), ps, downloader)
+					if err != nil {
+						t.Fatalf("Command: %v", err)
+					}
+					if !ok {
+						t.Error("Command = false, want true")
+					}
+					if got := downloads.Load(); got != tc.wantDownloads {
+						t.Errorf("downloads = %d, want %d", got, tc.wantDownloads)
+					}
+				})
 			}
 		})
 	}

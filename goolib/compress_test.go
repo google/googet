@@ -20,9 +20,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"math/bits"
 	"math/rand"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -112,7 +112,7 @@ func randomBytes(n int) []byte {
 }
 
 func TestPackageRoundTrip(t *testing.T) {
-	for _, format := range CompressionFormats {
+	for _, format := range CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			got, err := readTar(compressedTar(t, format, testEntries))
 			if err != nil {
@@ -263,12 +263,14 @@ func zstdRawFrame(windowDescriptor byte, payload []byte) []byte {
 }
 
 func TestPackageReaderWindowCap(t *testing.T) {
-	if maxZstdWindow&(maxZstdWindow-1) != 0 {
-		t.Fatalf("maxZstdWindow = %d, test assumes a power of two", maxZstdWindow)
+	// The cap is part of googet's contract with package builders (it matches
+	// the zstd CLI's default), so pin it rather than deriving cases from it.
+	if maxZstdWindow != 128<<20 {
+		t.Fatalf("maxZstdWindow = %d, want %d", maxZstdWindow, 128<<20)
 	}
 	// Window_Descriptor holds Exponent in the high 5 bits and Mantissa in the
 	// low 3 bits, with windowSize = 2^(10+Exponent) * (1 + Mantissa/8).
-	atCap := byte(bits.Len(maxZstdWindow)-1-10) << 3
+	const atCap = 0x88 // 2^27 = 128 MiB.
 	payload := []byte("window cap payload")
 
 	t.Run("at cap", func(t *testing.T) {
@@ -290,10 +292,11 @@ func TestPackageReaderWindowCap(t *testing.T) {
 		name             string
 		windowDescriptor byte
 	}{
-		{"just above cap", atCap + 1},
+		{"144 MiB, just above cap", 0x89},
+		{"256 MiB", 0x90},
 		// The cap must stay below the library default of zstd.MaxWindowSize.
-		{"512 MiB library default", (29 - 10) << 3},
-		{"1 GiB", (30 - 10) << 3},
+		{"512 MiB library default", 0x98},
+		{"1 GiB", 0xa0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var before, after runtime.MemStats
@@ -325,7 +328,7 @@ func TestPackageWriterUnknownFormat(t *testing.T) {
 			if w != nil {
 				t.Errorf("NewPackageWriter(%q) returned a non-nil writer with error %v", format, err)
 			}
-			for _, allowed := range CompressionFormats {
+			for _, allowed := range CompressionFormats() {
 				if !strings.Contains(err.Error(), allowed) {
 					t.Errorf("NewPackageWriter(%q) error %q does not name allowed format %q", format, err, allowed)
 				}
@@ -338,7 +341,7 @@ func TestPackageWriterUnknownFormat(t *testing.T) {
 			}
 		})
 	}
-	for _, format := range CompressionFormats {
+	for _, format := range CompressionFormats() {
 		if err := ValidateCompression(format); err != nil {
 			t.Errorf("ValidateCompression(%q) = %v, want nil", format, err)
 		}
@@ -357,7 +360,11 @@ func (c *closeRecorder) Close() error {
 }
 
 func TestPackageReaderClose(t *testing.T) {
-	for _, format := range CompressionFormats {
+	// The library's default decoder concurrency is min(4, GOMAXPROCS), so on a
+	// single-CPU runner dropping WithDecoderConcurrency(1) would go unnoticed.
+	// Force GOMAXPROCS > 1 to keep the goroutine check meaningful.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
+	for _, format := range CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			// Use enough incompressible data that an asynchronous decoder
 			// could not finish before the first Read returns.
@@ -393,7 +400,7 @@ func TestPackageReaderClose(t *testing.T) {
 
 func TestExtractPkgSpecCompressed(t *testing.T) {
 	want := &PkgSpec{Name: "test", Version: "1.2.3@4", Arch: "noarch"}
-	for _, format := range CompressionFormats {
+	for _, format := range CompressionFormats() {
 		t.Run(format, func(t *testing.T) {
 			var buf bytes.Buffer
 			w, err := NewPackageWriter(&buf, format)
@@ -512,7 +519,7 @@ func TestPackageReaderSingleSegmentWindowCap(t *testing.T) {
 		name string
 		fcs  uint64
 	}{
-		{"just above cap", maxZstdWindow + 1},
+		{"just above cap", 128<<20 + 1},
 		{"1 GiB", 1 << 30},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -558,8 +565,26 @@ func TestPackageWriterZstdLevel(t *testing.T) {
 	if err := enc.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// The encoder is deterministic, so identical bytes pin the level and window.
+	// The encoder is deterministic, so identical bytes pin the level; the window
+	// is pinned separately because the reference encoder uses zstdWindow too.
+	if zstdWindow != 8<<20 {
+		t.Errorf("zstdWindow = %d, want %d", zstdWindow, 8<<20)
+	}
 	if !bytes.Equal(got.Bytes(), want.Bytes()) {
 		t.Errorf("NewPackageWriter(zstd) output (%d bytes) differs from SpeedBestCompression with an %d byte window (%d bytes)", got.Len(), zstdWindow, want.Len())
+	}
+}
+
+func TestCompressionFormatsIsCopy(t *testing.T) {
+	// Restore the list if the copy guarantee regresses, so only this test fails.
+	orig := slices.Clone(compressionFormats)
+	t.Cleanup(func() { compressionFormats = orig })
+	formats := CompressionFormats()
+	formats[0] = "xz"
+	if err := ValidateCompression("xz"); err == nil {
+		t.Error("ValidateCompression(\"xz\") succeeded after modifying the CompressionFormats result, want error")
+	}
+	if got := CompressionFormats(); got[0] != CompressionGzip {
+		t.Errorf("CompressionFormats()[0] = %q after modifying an earlier result, want %q", got[0], CompressionGzip)
 	}
 }

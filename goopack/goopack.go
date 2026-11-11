@@ -33,7 +33,7 @@ import (
 
 var (
 	outputDir   = flag.String("output_dir", "", "where to put the built package")
-	compression = flag.String("compression", goolib.CompressionGzip, fmt.Sprintf("package compression format, one of %q; zstd packages need googet 3.5.0 or later to install", goolib.CompressionFormats))
+	compression = flag.String("compression", goolib.CompressionGzip, fmt.Sprintf("package compression format, one of %q; zstd packages need googet 3.5.0 or later to install", goolib.CompressionFormats()))
 )
 
 type fileMap map[string][]string

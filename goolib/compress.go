@@ -31,8 +31,13 @@ const (
 	CompressionZstd = "zstd"
 )
 
-// CompressionFormats lists the accepted package compression formats.
-var CompressionFormats = []string{CompressionGzip, CompressionZstd}
+var compressionFormats = []string{CompressionGzip, CompressionZstd}
+
+// CompressionFormats returns the accepted package compression formats. The
+// result is a copy, so callers may modify it.
+func CompressionFormats() []string {
+	return slices.Clone(compressionFormats)
+}
 
 // maxZstdWindow caps the window size a zstd package may declare. Packages can
 // come from untrusted sources (local files and gooserve directory scans are not
@@ -46,13 +51,13 @@ const maxZstdWindow = 128 << 20
 // maxZstdWindow.
 const zstdWindow = 8 << 20
 
-// ValidateCompression returns an error if format is not one of
-// CompressionFormats. Matching is exact and case-sensitive.
+// ValidateCompression returns an error if format is not one of the formats
+// CompressionFormats returns. Matching is exact and case-sensitive.
 func ValidateCompression(format string) error {
-	if slices.Contains(CompressionFormats, format) {
+	if slices.Contains(compressionFormats, format) {
 		return nil
 	}
-	return fmt.Errorf("unsupported compression %q, must be one of %q", format, CompressionFormats)
+	return fmt.Errorf("unsupported compression %q, must be one of %q", format, compressionFormats)
 }
 
 // isZstd reports whether b starts with a zstd frame magic number or a zstd
@@ -100,7 +105,7 @@ func NewPackageReader(r io.Reader) (io.ReadCloser, error) {
 }
 
 // NewPackageWriter returns a writer that compresses a GooGet package to w
-// using format, which must be one of CompressionFormats. The caller must Close
+// using format, which must be one of CompressionFormats(). The caller must Close
 // the writer to flush it. Close does not close w.
 func NewPackageWriter(w io.Writer, format string) (io.WriteCloser, error) {
 	switch format {
@@ -114,6 +119,10 @@ func NewPackageWriter(w io.Writer, format string) (io.WriteCloser, error) {
 		return zstd.NewWriter(w,
 			zstd.WithEncoderLevel(zstd.SpeedBestCompression),
 			zstd.WithWindowSize(zstdWindow))
+	default:
+		if err := ValidateCompression(format); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("compression %q has no writer", format)
 	}
-	return nil, ValidateCompression(format)
 }
