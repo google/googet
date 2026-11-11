@@ -302,7 +302,7 @@ func ExtractPkg(src string) (dst string, err error) {
 			return "", fmt.Errorf("error opening file: %v", err)
 		}
 
-		path, err := goolib.JoinWithin(dst, filepath.Clean(header.Name))
+		path, err := goolib.JoinWithin(dst, header.Name)
 		if err != nil {
 			return "", fmt.Errorf("error unpacking package: %v", err)
 		}
