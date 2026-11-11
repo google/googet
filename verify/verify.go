@@ -37,6 +37,10 @@ const (
 )
 
 func extractVerify(r io.Reader, verify, dir string) error {
+	path, err := goolib.JoinWithin(dir, verify)
+	if err != nil {
+		return fmt.Errorf("invalid verify command: %v", err)
+	}
 	zr, err := gzip.NewReader(r)
 	if err != nil {
 		return err
@@ -54,10 +58,6 @@ func extractVerify(r io.Reader, verify, dir string) error {
 			continue
 		}
 
-		path, err := goolib.JoinWithin(dir, verify)
-		if err != nil {
-			return fmt.Errorf("invalid verify command: %v", err)
-		}
 		if err := oswrap.MkdirAll(dir, 0755); err != nil {
 			return err
 		}

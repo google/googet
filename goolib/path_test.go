@@ -82,17 +82,12 @@ func TestJoinWithinWindows(t *testing.T) {
 		{name: `..\file`, wantErr: true},
 		{name: `a\..\..\file`, wantErr: true},
 		{name: `..\pkg-evil\file`, wantErr: true},
+		// Volume and UNC prefixes in a later element are not special to
+		// filepath.Join, so they stay under dir as ordinary path elements.
+		{name: `C:\file`, want: dir + `\C:\file`},
+		{name: `C:foo`, want: dir + `\C:foo`},
+		{name: `\\server\share\file`, want: dir + `\server\share\file`},
 	})
-	// Drive and UNC names must never resolve outside dir.
-	for _, name := range []string{`C:\file`, `\\server\share\file`} {
-		got, err := JoinWithin(dir, name)
-		if err != nil {
-			continue
-		}
-		if rel, rerr := filepath.Rel(dir, got); rerr != nil || strings.HasPrefix(rel, "..") {
-			t.Errorf("JoinWithin(%q, %q) = %q, which is outside dir", dir, name, got)
-		}
-	}
 }
 
 func TestJoinWithinRelativeDir(t *testing.T) {

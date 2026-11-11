@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,8 +43,8 @@ func TestExtractVerifyOutsideDir(t *testing.T) {
 
 	root := t.TempDir()
 	dir := filepath.Join(root, "pkg")
-	if err := extractVerify(&buf, "../evil.ps1", dir); err == nil {
-		t.Error("extractVerify with a verify path outside dir succeeded, want error")
+	if err := extractVerify(&buf, "../evil.ps1", dir); err == nil || !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("extractVerify error = %v, want a path traversal error", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "evil.ps1")); !os.IsNotExist(err) {
 		t.Errorf("extractVerify wrote outside its directory: stat error = %v", err)
