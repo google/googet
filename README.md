@@ -41,7 +41,7 @@ cachelife: 10m
 stalltimeout: 5m
 installtimeout: 4h
 inactivitytimeout: 5m
-inactivitymode: monitor
+inactivitymode: enforce
 ```
 
 `stalltimeout` (a Go duration such as `5m` or `30s`, default `2m`; zero or
@@ -92,9 +92,11 @@ A process started by one of them counts only while its chain of parents up to
 that service process is still running. Work by descendants that break away from
 the job or by other services, WMI or scheduled tasks does not count; a command
 waiting for such work looks inactive, so `enforce` kills it while that work
-carries on. `inactivitymode` is `monitor` (the default) to log a warning when
-the command goes inactive and when it becomes active again, `enforce` to kill
-the command, or `off`; the `inactivitymode` value is not case-sensitive.
+carries on. `inactivitymode` is `enforce` (the default) to kill the command,
+`monitor` to log a warning when the command goes inactive and when it becomes
+active again (for example during a staged rollout), or `off`; the
+`inactivitymode` value is not case-sensitive, and an invalid value logs an
+error and uses `monitor`.
 
 Any standard Windows dialog (window class `#32770`, which some progress windows
 also use) or owned window with a modal frame counts as a dialog. `enforce` does
