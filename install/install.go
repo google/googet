@@ -632,7 +632,7 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 		di.Ver = v
 		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs, installedArch, isLocked)
 		if err != nil {
-			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, arch, di.Ver, err)
+			return nil, fmt.Errorf("cannot resolve dependency %s version %s or greater: %v", d, v, err)
 		}
 		if spec.Name == pi.Name && arch == pi.Arch {
 			return nil, fmt.Errorf("dependency %s of %s.%s resolves to the package itself", d, pi.Name, pi.Arch)
