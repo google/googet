@@ -42,7 +42,7 @@ func TestParseVersion(t *testing.T) {
 		{"1.2.3@4", mkVer("1.2.3", 4)},
 		{"1.2.3", mkVer("1.2.3", 0)},
 		{"1.02.3", mkVer("1.2.3", 0)},
-		{"1.2@7", mkVer("0.1.2", 7)},
+		{"1.2@7", mkVer("1.2.0", 7)},
 		{"1.2.0", mkVer("1.2.0", 0)},
 		{"1.2.3+1", mkVer("1.2.3+1", 0)},
 		{"1.2.03-1", mkVer("1.2.3-1", 0)},
@@ -267,8 +267,8 @@ func TestWritePackageSpec(t *testing.T) {
 }
 
 func TestSortVersions(t *testing.T) {
-	got := SortVersions([]string{"1.2.3@4", "1.5.0", "1.0.0", "1.0", "1.2.A", "1.2.3@1"})
-	want := []string{"1.0", "1.0.0", "1.2.3@1", "1.2.3@4", "1.5.0"}
+	got := SortVersions([]string{"1.2.3@4", "1.5.0", "1.0.0", "1.1", "1.2.A", "1.2.3@1"})
+	want := []string{"1.0.0", "1.1", "1.2.3@1", "1.2.3@4", "1.5.0"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("did not get expected list: got %v, want %v", got, want)
 	}

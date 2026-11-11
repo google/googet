@@ -15,7 +15,7 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
-    "3.4.2  - Fix: Fix semver versioning to not push version numbers by 1 decimal place.
+    "3.4.3  - Fix: Fix semver versioning to not push version numbers by 1 decimal place.
     "3.4.2  - Fix: 'googet update' installs the replacement package when an installed package is now provided by a package with a different name.",
     "       - Security: Bump github.com/go-jose/go-jose/v4 to v4.1.6 to fix CVE-2026-116587.",
     "3.4.1  - Fix: Honor the requested arch in 'googet download <name>.<arch>' when no version is given.",
