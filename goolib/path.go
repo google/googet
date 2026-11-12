@@ -38,5 +38,7 @@ func JoinWithin(dir, name string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal: %q is outside %q", name, dir)
 	}
-	return filepath.Join(dir, name), nil
+	// Join the checked relative path rather than name, so the result is the
+	// path that was checked even for a drive-relative dir such as "C:".
+	return filepath.Join(dir, rel), nil
 }

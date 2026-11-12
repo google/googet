@@ -90,6 +90,22 @@ func TestJoinWithinWindows(t *testing.T) {
 	})
 }
 
+func TestJoinWithinDriveRelativeDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("drive-relative paths exist only on Windows")
+	}
+	// filepath.Join("C:", `\foo`) is the drive root C:\foo, but the check
+	// resolves "C:" to the current directory on C:, so the result must stay
+	// relative to that directory.
+	got, err := JoinWithin("C:", `\foo`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "C:foo"; got != want {
+		t.Errorf("JoinWithin(%q, %q) = %q, want %q", "C:", `\foo`, got, want)
+	}
+}
+
 func TestJoinWithinRelativeDir(t *testing.T) {
 	checkJoinWithin(t, "pkg", []joinWithinCase{
 		{name: "a/file", want: filepath.Join("pkg", "a", "file")},

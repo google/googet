@@ -592,7 +592,13 @@ func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *goo
 	insFiles := make(map[string]string)
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)
-		src = filepath.Join(dir, src)
+		// Specs from a repo index or the database are not normalized like
+		// those read from a package, so the source must stay inside dir.
+		p, err := goolib.JoinWithin(dir, src)
+		if err != nil {
+			return nil, fmt.Errorf("invalid file source: %v", err)
+		}
+		src = p
 		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly, force, conflictMap)); err != nil {
 			return nil, err
 		}
