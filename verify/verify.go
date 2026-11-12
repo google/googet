@@ -58,7 +58,7 @@ func extractVerify(r io.Reader, verify, dir string) error {
 			continue
 		}
 
-		if err := oswrap.MkdirAll(dir, 0755); err != nil {
+		if err := oswrap.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
 		}
 		f, err := oswrap.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))

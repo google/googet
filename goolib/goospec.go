@@ -417,11 +417,14 @@ func (ps *PkgSpec) verify() error {
 	if filepath.IsAbs(ps.Uninstall.Path) {
 		return fmt.Errorf("%q is an absolute path, expected relative", ps.Uninstall.Path)
 	}
+	if filepath.IsAbs(ps.Verify.Path) {
+		return fmt.Errorf("%q is an absolute path, expected relative", ps.Verify.Path)
+	}
 	return nil
 }
 
 func (ps *PkgSpec) normalize() {
-	for _, str := range []*string{&ps.Install.Path, &ps.Uninstall.Path} {
+	for _, str := range []*string{&ps.Install.Path, &ps.Uninstall.Path, &ps.Verify.Path} {
 		if filepath.IsAbs(*str) {
 			continue
 		}

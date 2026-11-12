@@ -24,11 +24,43 @@ import (
 )
 
 func TestExtractVerifyOutsideDir(t *testing.T) {
+	body := []byte("exit 0")
+	buf := gooArchive(t, "../evil.ps1", body)
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "pkg")
+	if err := extractVerify(buf, "../evil.ps1", dir); err == nil || !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("extractVerify error = %v, want a path traversal error", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "evil.ps1")); !os.IsNotExist(err) {
+		t.Errorf("extractVerify wrote outside its directory: stat error = %v", err)
+	}
+}
+
+func TestExtractVerifySubdirectory(t *testing.T) {
+	body := []byte("exit 0")
+	buf := gooArchive(t, "scripts/verify.ps1", body)
+
+	dir := filepath.Join(t.TempDir(), "pkg")
+	if err := extractVerify(buf, "scripts/verify.ps1", dir); err != nil {
+		t.Fatalf("extractVerify: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "scripts", "verify.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(body) {
+		t.Errorf("verify script = %q, want %q", got, body)
+	}
+}
+
+// gooArchive returns a gzip-compressed tar archive holding one file.
+func gooArchive(t *testing.T, name string, body []byte) *bytes.Buffer {
+	t.Helper()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
-	body := []byte("exit 0")
-	if err := tw.WriteHeader(&tar.Header{Name: "../evil.ps1", Mode: 0755, Size: int64(len(body))}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tw.Write(body); err != nil {
@@ -40,13 +72,5 @@ func TestExtractVerifyOutsideDir(t *testing.T) {
 	if err := gw.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	root := t.TempDir()
-	dir := filepath.Join(root, "pkg")
-	if err := extractVerify(&buf, "../evil.ps1", dir); err == nil || !strings.Contains(err.Error(), "path traversal") {
-		t.Errorf("extractVerify error = %v, want a path traversal error", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "evil.ps1")); !os.IsNotExist(err) {
-		t.Errorf("extractVerify wrote outside its directory: stat error = %v", err)
-	}
+	return &buf
 }
