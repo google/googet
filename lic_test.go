@@ -38,11 +38,24 @@ func TestThirdPartyLicensesCurrent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("update_third_party_licenses.sh runs in the Linux CI job")
 	}
+	// Bazel and Blaze run tests in a sandbox without the script, the licence
+	// tree, a Go toolchain or network access, so the check only makes sense
+	// in a plain "go test" run from a checkout.
+	if os.Getenv("TEST_SRCDIR") != "" {
+		t.Skip("skipping third-party licence regeneration in a Bazel/Blaze sandbox")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
-	if goproxy, err := exec.Command("go", "env", "GOPROXY").Output(); err == nil && string(bytes.TrimSpace(goproxy)) == "off" {
+	goproxy, err := exec.Command("go", "env", "GOPROXY").Output()
+	if err != nil {
+		t.Skipf("go toolchain not available: %v", err)
+	}
+	if string(bytes.TrimSpace(goproxy)) == "off" {
 		t.Skip("skipping third-party licence regeneration when GOPROXY=off")
+	}
+	if _, err := os.Stat("update_third_party_licenses.sh"); err != nil {
+		t.Fatalf("update_third_party_licenses.sh missing from checkout: %v", err)
 	}
 
 	outDir := filepath.Join(t.TempDir(), "THIRD_PARTY_LICENSES")
