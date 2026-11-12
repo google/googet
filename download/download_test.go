@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
@@ -79,12 +83,16 @@ func TestDownloadUnknownSize(t *testing.T) {
 
 // rangeServer serves payload, advertising range support on HEAD. When
 // honorRange is false it answers ranged GETs with the whole file and 200 OK,
-// as some proxies do.
-func rangeServer(t *testing.T, payload []byte, honorRange bool, requests *[]string) *httptest.Server {
+// as some proxies do. When rejectHEAD is true it answers HEAD with 405.
+func rangeServer(t *testing.T, payload []byte, honorRange, rejectHEAD bool, requests *[]string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*requests = append(*requests, r.Method+" "+r.Header.Get("Range"))
 		w.Header().Set("Accept-Ranges", "bytes")
+		if r.Method == http.MethodHead && rejectHEAD {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		if r.Method == http.MethodHead {
 			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 			return
@@ -94,6 +102,11 @@ func rangeServer(t *testing.T, payload []byte, honorRange bool, requests *[]stri
 			if err != nil {
 				t.Errorf("bad Range header %q: %v", rng, err)
 				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if start >= len(payload) {
+				w.Header().Set("Content-Range", "bytes */"+strconv.Itoa(len(payload)))
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 				return
 			}
 			w.Header().Set("Content-Length", strconv.Itoa(len(payload)-start))
@@ -117,6 +130,7 @@ func TestPackageHTTP(t *testing.T) {
 		desc       string
 		existing   []byte // Contents written to dst before the download.
 		honorRange bool
+		rejectHEAD bool
 		wantGETs   []string
 	}{
 		{
@@ -137,6 +151,28 @@ func TestPackageHTTP(t *testing.T) {
 			wantGETs: []string{"GET bytes=400-"},
 		},
 		{
+			// A failed HEAD may only mean the server rejects HEAD, so the
+			// partial file is still resumed.
+			desc:       "HEAD rejected",
+			existing:   payload[:400],
+			honorRange: true,
+			rejectHEAD: true,
+			wantGETs:   []string{"GET bytes=400-"},
+		},
+		{
+			desc:       "HEAD rejected and server ignores range",
+			existing:   payload[:400],
+			rejectHEAD: true,
+			wantGETs:   []string{"GET bytes=400-"},
+		},
+		{
+			desc:       "HEAD rejected and existing file not smaller",
+			existing:   bytes.Repeat([]byte("x"), len(payload)),
+			honorRange: true,
+			rejectHEAD: true,
+			wantGETs:   []string{"GET bytes=1000-", "GET "},
+		},
+		{
 			desc:     "already downloaded",
 			existing: payload,
 			wantGETs: nil,
@@ -144,7 +180,7 @@ func TestPackageHTTP(t *testing.T) {
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			var requests []string
-			srv := rangeServer(t, payload, tc.honorRange, &requests)
+			srv := rangeServer(t, payload, tc.honorRange, tc.rejectHEAD, &requests)
 			defer srv.Close()
 
 			dst := filepath.Join(t.TempDir(), "pkg.goo")
@@ -174,6 +210,19 @@ func TestPackageHTTP(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("checksum mismatch removes file", func(t *testing.T) {
+		var requests []string
+		srv := rangeServer(t, payload, true, false, &requests)
+		defer srv.Close()
+		dst := filepath.Join(t.TempDir(), "pkg.goo")
+		if err := packageHTTP(context.Background(), srv.URL+"/pkg.goo", dst, "badsum", downloader); err == nil {
+			t.Fatal("packageHTTP() with bad checksum = nil, want error")
+		}
+		if _, err := os.Stat(dst); !os.IsNotExist(err) {
+			t.Errorf("os.Stat(dst) after checksum mismatch = %v, want IsNotExist", err)
+		}
+	})
 }
 
 func TestLatest(t *testing.T) {
@@ -267,6 +316,240 @@ func TestLatest(t *testing.T) {
 				t.Errorf("Latest(%+v) downloaded %q, want %q", tc.pi, got, want)
 			}
 		})
+	}
+}
+
+// step scripts one GET response of stepServer. The zero value sends the
+// whole requested range.
+type step struct {
+	hang    bool          // Stall before sending headers.
+	status  int           // If nonzero, send only this status.
+	stall   int           // If nonzero, stall after sending this many bytes.
+	trickle time.Duration // If nonzero, send 50-byte chunks this far apart.
+}
+
+// stepServer serves payload with range support, answering the i-th GET as
+// steps[i] describes and every later GET in full. It records the Range
+// header of every GET in ranges, which is safe to read once the server is
+// closed.
+func stepServer(payload []byte, steps []step, ranges *[]string) *httptest.Server {
+	var mu sync.Mutex
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			return
+		}
+		mu.Lock()
+		var s step
+		if i := len(*ranges); i < len(steps) {
+			s = steps[i]
+		}
+		*ranges = append(*ranges, r.Header.Get("Range"))
+		mu.Unlock()
+		if s.hang {
+			<-r.Context().Done()
+			return
+		}
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+			return
+		}
+		start, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(r.Header.Get("Range"), "bytes="), "-"))
+		body := payload[start:]
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		switch {
+		case s.trickle != 0:
+			for chunk := range slices.Chunk(body, 50) {
+				w.Write(chunk)
+				w.(http.Flusher).Flush()
+				time.Sleep(s.trickle)
+			}
+		case s.stall != 0:
+			w.Write(body[:s.stall])
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		default:
+			w.Write(body)
+		}
+	}))
+}
+
+// stallDownloader returns a Downloader whose response headers and bodies
+// stall after timeout, without changing the transport of http.DefaultClient.
+func stallDownloader(timeout time.Duration) *client.Downloader {
+	return &client.Downloader{
+		HTTPClient:   &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: timeout}},
+		StallTimeout: timeout,
+	}
+}
+
+// setRetryDelay replaces retryDelay for the rest of the test.
+func setRetryDelay(t *testing.T, d func(int) time.Duration) {
+	t.Helper()
+	old := retryDelay
+	retryDelay = d
+	t.Cleanup(func() { retryDelay = old })
+}
+
+func TestPackageRetries(t *testing.T) {
+	if d1, d2 := retryDelay(1), retryDelay(2); d1 != time.Second || d2 != 2*time.Second {
+		t.Fatalf("retryDelay(1), retryDelay(2) = %v, %v; want 1s, 2s", d1, d2)
+	}
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	const timeout = 400 * time.Millisecond
+	downloader := stallDownloader(timeout)
+
+	for _, tc := range []struct {
+		desc       string
+		steps      []step
+		wantRanges []string
+		wantErr    bool
+	}{
+		{
+			desc:       "stall mid-body resumes",
+			steps:      []step{{stall: 400}},
+			wantRanges: []string{"bytes=0-", "bytes=400-"},
+		},
+		{
+			desc:       "stall before headers is retried",
+			steps:      []step{{hang: true}},
+			wantRanges: []string{"bytes=0-", "bytes=0-"},
+		},
+		{
+			// The body takes 2x the timeout but never pauses for long.
+			desc:       "slow but progressing body is not interrupted",
+			steps:      []step{{trickle: timeout / 10}},
+			wantRanges: []string{"bytes=0-"},
+		},
+		{
+			desc:       "any error is retried until maxAttempts",
+			steps:      slices.Repeat([]step{{status: http.StatusNotFound}}, maxAttempts),
+			wantRanges: slices.Repeat([]string{"bytes=0-"}, maxAttempts),
+			wantErr:    true,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			var ranges []string
+			srv := stepServer(payload, tc.steps, &ranges)
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader)
+			srv.Close()
+			switch {
+			case tc.wantErr:
+				if err == nil {
+					t.Error("Package() = nil, want an error")
+				}
+			case err != nil:
+				t.Fatalf("Package() = %v, want nil", err)
+			default:
+				got, err := os.ReadFile(dst)
+				if err != nil {
+					t.Fatalf("reading downloaded file: %v", err)
+				}
+				if !bytes.Equal(got, payload) {
+					t.Errorf("downloaded %d bytes, want %d bytes matching the payload", len(got), len(payload))
+				}
+			}
+			if !slices.Equal(ranges, tc.wantRanges) {
+				t.Errorf("GET ranges = %q, want %q", ranges, tc.wantRanges)
+			}
+		})
+	}
+}
+
+func TestPackageGCSRetries(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		if attempts.Add(1) == 1 {
+			w.Write(payload[:200])
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		w.Write(payload)
+	}))
+	defer srv.Close()
+	t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+
+	dst := filepath.Join(t.TempDir(), "pkg.goo")
+	if err := Package(context.Background(), "gs://bkt/pkg.goo", dst, chksum, stallDownloader(250*time.Millisecond)); err != nil {
+		t.Fatalf("Package(gs://bkt/pkg.goo) = %v, want nil", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading downloaded file: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("downloaded %d bytes, want %d bytes matching the payload", len(got), len(payload))
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("GCS attempts = %d, want 2", got)
+	}
+}
+
+func TestPackageResumesAfterGivingUp(t *testing.T) {
+	var gotRetries []int
+	setRetryDelay(t, func(retry int) time.Duration {
+		gotRetries = append(gotRetries, retry)
+		return 0
+	})
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	downloader := stallDownloader(200 * time.Millisecond)
+	var ranges []string
+	srv := stepServer(payload, slices.Repeat([]step{{stall: 100}}, maxAttempts), &ranges)
+	dst := filepath.Join(t.TempDir(), "pkg.goo")
+	err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader)
+	if !errors.Is(err, client.ErrStalled) {
+		t.Errorf("first Package() = %v, want ErrStalled", err)
+	}
+	if !slices.Equal(gotRetries, []int{1, 2}) {
+		t.Errorf("retryDelay calls = %v, want [1 2]", gotRetries)
+	}
+	// A later run, such as the next googet invocation, resumes the partial
+	// file.
+	err = Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader)
+	srv.Close()
+	if err != nil {
+		t.Fatalf("second Package() = %v, want nil", err)
+	}
+	wantRanges := []string{"bytes=0-", "bytes=100-", "bytes=200-", "bytes=300-"}
+	if !slices.Equal(ranges, wantRanges) {
+		t.Errorf("GET ranges = %q, want %q", ranges, wantRanges)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading downloaded file: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("downloaded %d bytes, want %d bytes matching the payload", len(got), len(payload))
+	}
+}
+
+func TestPackageStopsOnCancel(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration {
+		t.Error("Package() retried after its context was canceled")
+		return 0
+	})
+	var ranges []string
+	srv := stepServer(nil, []step{{hang: true}}, &ranges)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	err := Package(ctx, srv.URL+"/pkg.goo", filepath.Join(t.TempDir(), "pkg.goo"), "sum", stallDownloader(time.Hour))
+	srv.Close()
+	if !errors.Is(err, context.Canceled) || errors.Is(err, client.ErrStalled) {
+		t.Errorf("Package() = %v, want context.Canceled and not ErrStalled", err)
+	}
+	if len(ranges) > 1 {
+		t.Errorf("got %d GET requests, want at most 1", len(ranges))
 	}
 }
 

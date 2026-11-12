@@ -38,7 +38,13 @@ Place a file named googet.conf in the googet root, which by default is
 proxyserver: http://address_to_proxy:port
 archs: [noarch, x86_64]
 cachelife: 10m
+stalltimeout: 5m
 ```
+
+`stalltimeout` (a Go duration such as `5m` or `30s`, default `2m`; zero or
+negative values keep the default) is how long googet waits for a server to
+respond, or for more data during a download, before it treats the transfer as
+stalled. Raise it if your proxy scans large files before responding.
 
 ## Repo file
 

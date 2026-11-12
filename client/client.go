@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -122,6 +123,12 @@ type RepoMap map[string]Repo
 type Downloader struct {
 	HTTPClient       *http.Client
 	UsingProxyServer bool
+	// StallTimeout is how long a response body may deliver no data, or a GCS
+	// object take to open, before the transfer is canceled. NewDownloader
+	// sets it, along with the response header timeout, to the package-level
+	// StallTimeout; zero or less falls back to StallTimeout in OpenGCS and
+	// NewStallReader.
+	StallTimeout time.Duration
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
@@ -135,6 +142,7 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		}
 		proxy = http.ProxyURL(proxyURL)
 	}
+	timeout := stallTimeout(0)
 	httpClient.Transport = &http.Transport{
 		Proxy: proxy,
 		DialContext: (&net.Dialer{
@@ -146,8 +154,15 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		// Response bodies are guarded by NewStallReader; this bounds the
+		// wait for the response headers.
+		ResponseHeaderTimeout: timeout,
 	}
-	return &Downloader{HTTPClient: httpClient, UsingProxyServer: proxyServer != ""}, nil
+	return &Downloader{
+		HTTPClient:       httpClient,
+		UsingProxyServer: proxyServer != "",
+		StallTimeout:     timeout,
+	}, nil
 }
 
 // AvailableVersions builds a RepoMap from a list of sources.
@@ -237,7 +252,7 @@ func (d *Downloader) CanResume(ctx context.Context, url string) (bool, int64, er
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, 0, err
+		return false, 0, fmt.Errorf("HEAD request returned status: %q", resp.Status)
 	}
 	if resp.Header.Get("Accept-Ranges") == "bytes" && resp.ContentLength >= 0 {
 		return true, resp.ContentLength, nil
@@ -261,6 +276,8 @@ func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, erro
 }
 
 func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	indexURL := repoURL + "/index.gz"
 	trimmedIndexURL := strings.TrimPrefix(indexURL, "oauth-")
 	ct := "application/x-gzip"
@@ -282,7 +299,7 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}
-	return decode(res.Body, ct, repoURL, cf)
+	return decode(NewStallReader(res.Body, d.StallTimeout, func() { cancel(ErrStalled) }), ct, repoURL, cf)
 }
 
 func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
@@ -304,17 +321,19 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 
 	indexPath := object + "index.gz"
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
-	if r, err := bkt.Object(indexPath).NewReader(ctx); err == nil {
+	r, _, err := d.OpenGCS(ctx, bkt.Object(indexPath))
+	if err == nil {
 		return decode(r, "application/x-gzip", url, cf)
 	}
 
-	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code != http.StatusNotFound {
+	var gErr *googleapi.Error
+	if !errors.Is(err, storage.ErrObjectNotExist) && (!errors.As(err, &gErr) || gErr.Code != http.StatusNotFound) {
 		return nil, err
 	}
 
 	logger.Info("Failed to read gzipped index, trying plain JSON.")
 	indexPath = object + "index"
-	r, err := bkt.Object(indexPath).NewReader(ctx)
+	r, _, err = d.OpenGCS(ctx, bkt.Object(indexPath))
 	if err != nil {
 		return nil, err
 	}
@@ -340,8 +359,14 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 	}
 
 	var m []goolib.RepoSpec
-	for dec.More() {
-		if err := dec.Decode(&m); err != nil {
+	// Decode until io.EOF rather than looping on dec.More, which reports false
+	// on a read error and so would let a stalled or truncated index be cached.
+	for {
+		err := dec.Decode(&m)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
 			return nil, err
 		}
 	}

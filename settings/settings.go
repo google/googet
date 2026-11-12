@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"gopkg.in/yaml.v3"
@@ -85,6 +86,7 @@ type conf struct {
 	Archs           []string
 	CacheLife       string
 	LockFileMaxAge  string
+	StallTimeout    string
 	ProxyServer     string
 	AllowUnsafeURL  bool
 	StrictConflicts bool
@@ -139,6 +141,19 @@ func readConf(filename string) {
 			logger.Error(err)
 		} else {
 			LockFileMaxAge = lfma
+		}
+	}
+
+	// A stall timeout of zero or less means the default.
+	client.StallTimeout = client.DefaultStallTimeout
+	if gc.StallTimeout != "" {
+		st, err := time.ParseDuration(gc.StallTimeout)
+		if err != nil {
+			logger.Errorf("Invalid stalltimeout %q: %v", gc.StallTimeout, err)
+		} else if st > 0 {
+			client.StallTimeout = st
+		} else {
+			logger.Warningf("Ignoring non-positive stalltimeout %q; using default %v", gc.StallTimeout, client.DefaultStallTimeout)
 		}
 	}
 
