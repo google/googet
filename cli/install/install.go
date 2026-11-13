@@ -113,6 +113,9 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 
 	var errs error
 	for _, arg := range flags.Args() {
+		if goolib.Interrupted() != nil {
+			return subcommands.ExitFailure
+		}
 		if filepath.Ext(arg) == ".goo" {
 			if err := i.installFromFile(arg); err != nil {
 				logger.Errorf("Error installing %q from file: %v", arg, err)
