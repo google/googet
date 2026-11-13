@@ -19,13 +19,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -825,5 +831,239 @@ func TestFindRepoLatest_LockArch(t *testing.T) {
 				t.Errorf("got arch %q, want %q", spec.Arch, tt.wantArch)
 			}
 		})
+	}
+}
+
+func TestNewDownloaderDoesNotModifyDefaultClient(t *testing.T) {
+	defaultClient, defaultTransport := http.DefaultClient, http.DefaultClient.Transport
+	t.Cleanup(func() {
+		http.DefaultClient = defaultClient
+		defaultClient.Transport = defaultTransport
+	})
+	const proxyURL = "http://proxy.example:3128"
+	var clients []*http.Client
+	for _, proxy := range []string{"", proxyURL} {
+		d, err := NewDownloader(proxy)
+		if err != nil {
+			t.Fatalf("NewDownloader(%q) failed: %v", proxy, err)
+		}
+		if http.DefaultClient != defaultClient || http.DefaultClient.Transport != defaultTransport {
+			t.Errorf("NewDownloader(%q) modified http.DefaultClient", proxy)
+		}
+		if d.HTTPClient == http.DefaultClient {
+			t.Errorf("NewDownloader(%q).HTTPClient is http.DefaultClient", proxy)
+		}
+		clients = append(clients, d.HTTPClient)
+	}
+	if clients[0] == clients[1] {
+		t.Error("two Downloaders share an http.Client")
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://repo.example/index", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := clients[1].Transport.(*http.Transport).Proxy(req); err != nil || got.String() != proxyURL {
+		t.Errorf("Proxy() = %v, %v, want %s, nil", got, err, proxyURL)
+	}
+}
+
+// trackedBody records whether a response body was closed.
+type trackedBody struct {
+	io.ReadCloser
+	closed atomic.Bool
+}
+
+func (b *trackedBody) Close() error {
+	b.closed.Store(true)
+	return b.ReadCloser.Close()
+}
+
+// countingTransport counts round trips and wraps response bodies in a
+// trackedBody.
+type countingTransport struct {
+	base   http.RoundTripper
+	trips  atomic.Int32
+	mu     sync.Mutex
+	bodies []*trackedBody
+}
+
+func (c *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.trips.Add(1)
+	resp, err := c.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	b := &trackedBody{ReadCloser: resp.Body}
+	resp.Body = b
+	c.mu.Lock()
+	c.bodies = append(c.bodies, b)
+	c.mu.Unlock()
+	return resp, nil
+}
+
+func TestUnmarshalRepoPackagesHTTPClosesBodies(t *testing.T) {
+	for _, tc := range []struct {
+		desc        string
+		indexExists bool
+		wantErr     bool
+	}{
+		{"index.gz missing", true, false},
+		{"index.gz and index missing", false, true},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/index" && tc.indexExists {
+					w.Write([]byte("[]"))
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			ct := &countingTransport{base: &http.Transport{}}
+			d := &Downloader{HTTPClient: &http.Client{Transport: ct}, StallTimeout: 5 * time.Second}
+			_, err := d.unmarshalRepoPackagesHTTP(context.Background(), srv.URL, filepath.Join(t.TempDir(), "cache.rs"))
+			if (err != nil) != tc.wantErr {
+				t.Errorf("unmarshalRepoPackagesHTTP() = %v, want error %t", err, tc.wantErr)
+			}
+			if len(ct.bodies) != 2 {
+				t.Fatalf("unmarshalRepoPackagesHTTP() made %d requests, want 2", len(ct.bodies))
+			}
+			for i, b := range ct.bodies {
+				if !b.closed.Load() {
+					t.Errorf("response %d body not closed", i)
+				}
+			}
+		})
+	}
+}
+
+func TestGetRetry(t *testing.T) {
+	stall := func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }
+	for _, tc := range []struct {
+		desc      string
+		handler   func(first bool, w http.ResponseWriter, r *http.Request)
+		cancel    bool
+		wantTrips int32
+		wantErr   error
+	}{
+		{
+			desc:      "header timeout is not retried",
+			handler:   func(_ bool, w http.ResponseWriter, r *http.Request) { stall(w, r) },
+			wantTrips: 1,
+		},
+		{
+			desc: "dropped connection is retried",
+			handler: func(first bool, w http.ResponseWriter, r *http.Request) {
+				if !first {
+					w.Write([]byte("ok"))
+					return
+				}
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Errorf("Hijack() failed: %v", err)
+					return
+				}
+				conn.Close()
+			},
+			wantTrips: 2,
+		},
+		{
+			desc:      "canceled context is not retried",
+			handler:   func(_ bool, w http.ResponseWriter, r *http.Request) { stall(w, r) },
+			cancel:    true,
+			wantTrips: 1,
+			wantErr:   context.Canceled,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var reqs atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				first := reqs.Add(1) == 1
+				if tc.cancel {
+					cancel()
+				}
+				tc.handler(first, w, r)
+			}))
+			defer srv.Close()
+			ct := &countingTransport{base: &http.Transport{ResponseHeaderTimeout: 100 * time.Millisecond}}
+			d := &Downloader{HTTPClient: &http.Client{Transport: ct}}
+			resp, err := d.Get(ctx, srv.URL)
+			if err == nil {
+				resp.Body.Close()
+			}
+			if got := ct.trips.Load(); got != tc.wantTrips {
+				t.Errorf("Get() made %d requests, want %d", got, tc.wantTrips)
+			}
+			if wantOK := tc.wantTrips == 2; (err == nil) != wantOK {
+				t.Errorf("Get() = %v, want success %t", err, wantOK)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("Get() = %v, want it to wrap %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestShouldRetry(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired, cancel := context.WithDeadline(context.Background(), time.Now())
+	defer cancel()
+	reset := &url.Error{Op: "Get", URL: "http://repo", Err: errors.New("connection reset by peer")}
+	dialTimeout := &url.Error{Op: "Get", URL: "http://repo", Err: &net.OpError{Op: "dial", Err: os.ErrDeadlineExceeded}}
+	for _, tc := range []struct {
+		desc string
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		{"connection reset", context.Background(), reset, true},
+		{"EOF", context.Background(), &url.Error{Op: "Get", URL: "http://repo", Err: io.EOF}, true},
+		{"canceled context", canceled, reset, false},
+		{"expired context", expired, reset, false},
+		{"dial timeout", context.Background(), dialTimeout, false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := shouldRetry(tc.ctx, tc.err); got != tc.want {
+				t.Errorf("shouldRetry(ctx, %v) with ctx.Err() = %v = %t, want %t", tc.err, tc.ctx.Err(), got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewRequestOauthUsesHTTPClient(t *testing.T) {
+	// The token endpoint is only reachable through the Downloader's proxy.
+	var tokenReqs atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host != "token.invalid" {
+			http.NotFound(w, r)
+			return
+		}
+		tokenReqs.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token": "token", "token_type": "Bearer", "expires_in": 3600}`))
+	}))
+	defer proxy.Close()
+	creds := filepath.Join(t.TempDir(), "creds.json")
+	if err := os.WriteFile(creds, []byte(`{"type": "authorized_user", "client_id": "id", "client_secret": "secret", "refresh_token": "refresh", "token_uri": "http://token.invalid/token"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", creds)
+
+	d, err := NewDownloader(proxy.URL)
+	if err != nil {
+		t.Fatalf("NewDownloader(%q) failed: %v", proxy.URL, err)
+	}
+	req, err := d.NewRequest(context.Background(), http.MethodGet, "oauth-http://repo.invalid/index", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() failed: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer token" {
+		t.Errorf("Authorization header = %q, want %q", got, "Bearer token")
+	}
+	if got := tokenReqs.Load(); got != 1 {
+		t.Errorf("got %d token requests through the proxy, want 1", got)
 	}
 }

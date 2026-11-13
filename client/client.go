@@ -37,6 +37,7 @@ import (
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 )
@@ -121,6 +122,9 @@ type RepoMap map[string]Repo
 
 // Downloader is a wrapper around http.Client
 type Downloader struct {
+	// HTTPClient makes the Downloader's HTTP requests, including the oauth
+	// token requests for "oauth-" URLs. Requests to the GCE metadata server
+	// use the cloud.google.com/go/compute/metadata package's own client.
 	HTTPClient       *http.Client
 	UsingProxyServer bool
 	// StallTimeout is how long a response body may deliver no data, or a GCS
@@ -132,8 +136,8 @@ type Downloader struct {
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
+// The Downloader gets its own http.Client; http.DefaultClient is not modified.
 func NewDownloader(proxyServer string) (*Downloader, error) {
-	httpClient := http.DefaultClient
 	proxy := http.ProxyFromEnvironment
 	if proxyServer != "" {
 		proxyURL, err := url.Parse(proxyServer)
@@ -143,7 +147,7 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		proxy = http.ProxyURL(proxyURL)
 	}
 	timeout := stallTimeout(0)
-	httpClient.Transport = &http.Transport{
+	transport := &http.Transport{
 		Proxy: proxy,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -159,7 +163,7 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		ResponseHeaderTimeout: timeout,
 	}
 	return &Downloader{
-		HTTPClient:       httpClient,
+		HTTPClient:       &http.Client{Transport: transport},
 		UsingProxyServer: proxyServer != "",
 		StallTimeout:     timeout,
 	}, nil
@@ -227,6 +231,9 @@ func (d *Downloader) NewRequest(ctx context.Context, method, url string, body io
 		return nil, err
 	}
 	if useOauth {
+		// Fetch credentials and tokens through d.HTTPClient, so that they use
+		// the configured proxy and timeouts rather than http.DefaultClient.
+		ctx := context.WithValue(ctx, oauth2.HTTPClient, d.HTTPClient)
 		creds, err := google.FindDefaultCredentials(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to obtain creds: %v", err)
@@ -260,19 +267,33 @@ func (d *Downloader) CanResume(ctx context.Context, url string) (bool, int64, er
 	return false, 0, nil
 }
 
-// Get gets a url using an optional proxy server, retrying once on any error.
+// Get gets a url using an optional proxy server. It retries once on a
+// transport error, unless ctx is done or the error is a timeout; see
+// shouldRetry.
 func (d *Downloader) Get(ctx context.Context, path string) (*http.Response, error) {
 	req, err := d.NewRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := d.HTTPClient.Do(req)
-	// We retry on any error once as this mitigates some
-	// connection issues in certain situations.
-	if err == nil {
-		return resp, nil
+	if err == nil || !shouldRetry(ctx, err) {
+		return resp, err
 	}
 	return d.HTTPClient.Do(req)
+}
+
+// shouldRetry reports whether Get should retry a request that failed with
+// err. A single retry mitigates some connection issues, such as a reset or
+// an EOF on a reused connection. Timeouts are not retried, so that a server
+// that stalls before sending the response headers isn't waited on twice;
+// this also covers dial and TLS handshake timeouts. Requests whose context
+// is done are not retried either.
+func shouldRetry(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var netErr net.Error
+	return !errors.As(err, &netErr) || !netErr.Timeout()
 }
 
 func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
@@ -287,6 +308,7 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		indexURL = repoURL + "/index"
 		trimmedIndexURL = strings.TrimPrefix(indexURL, "oauth-")
 		ct = "application/json"
@@ -296,6 +318,7 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 			return nil, err
 		}
 		if res.StatusCode != http.StatusOK {
+			res.Body.Close()
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}

@@ -147,9 +147,6 @@ func setStallTimeout(t *testing.T, d time.Duration) {
 }
 
 func TestNewDownloaderResponseHeaderTimeout(t *testing.T) {
-	oldTransport := http.DefaultClient.Transport
-	t.Cleanup(func() { http.DefaultClient.Transport = oldTransport })
-
 	setStallTimeout(t, 5*time.Minute)
 	d, err := NewDownloader("")
 	if err != nil {
