@@ -343,6 +343,9 @@ func verifyFiles(gs *goolib.GooSpec, fm fileMap) error {
 }
 
 func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
+	// Build steps are developer commands with no googet.conf, so disable the
+	// installer inactivity watchdog before running them.
+	goolib.InactivityMode = goolib.InactivityOff
 	switch {
 	case gs.Build.Linux != "" && runtime.GOOS == "linux":
 		cmd := gs.Build.Linux
@@ -459,6 +462,9 @@ func main() {
 		}
 	}
 	if err := createPackage(gs, baseDir, outDir); err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		goolib.Reraise(goolib.Interrupted())
+		os.Exit(1)
 	}
+	goolib.Reraise(goolib.Interrupted())
 }
