@@ -114,10 +114,15 @@ func addUninstallEntry(dir string, ps *goolib.PkgSpec) error {
 	return nil
 }
 
-func removeUninstallEntry(name string) error {
+// RemoveUninstallEntry removes the "Add or remove programs" entry googet adds
+// for a package with an install command. A missing entry is not an error.
+func RemoveUninstallEntry(name string) error {
 	reg := uninstallBase + "GooGet - " + name
 	logger.Infof("Removing uninstall entry %q from registry.", reg)
-	return registry.DeleteKey(registry.LOCAL_MACHINE, reg)
+	if err := registry.DeleteKey(registry.LOCAL_MACHINE, reg); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // AppAssociation locates and returns registry entry and name of installed application.
@@ -308,17 +313,45 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	return nil
 }
 
+// specUninstall returns the uninstall command whose path comes from the spec,
+// and true: the spec's Uninstall command or, when it has none, the msix or
+// msixbundle install path. Otherwise it returns the spec's (empty) Uninstall
+// command and false, and the uninstaller, if any, comes from the registry.
+//
+// Uninstall resolves a spec path, and its log next to it, inside the
+// extraction directory, so the package must be extracted there. That holds
+// for msix too, although only its name is used to remove the app.
+func specUninstall(ps *goolib.PkgSpec) (goolib.ExecFile, bool) {
+	un := ps.Uninstall
+	if un.Path != "" {
+		return un, true
+	}
+	switch filepath.Ext(ps.Install.Path) {
+	case ".msix", ".msixbundle":
+		un.Path = ps.Install.Path
+		return un, true
+	}
+	return un, false
+}
+
+// UninstallNeedsPackage reports whether Uninstall needs the package extracted
+// into the directory passed to it. On Windows that is when the command's path
+// comes from the spec; see specUninstall.
+func UninstallNeedsPackage(ps *goolib.PkgSpec) bool {
+	_, ok := specUninstall(ps)
+	return ok
+}
+
 // Uninstall performs a system specfic uninstall given a packages PackageState.
 func Uninstall(dir string, state *client.PackageState) error {
 	var filePath string
 	ps := state.PackageSpec
-	un := ps.Uninstall
-	// A path from the spec is relative to dir; one found in the registry below
-	// is the installed program's own uninstaller and may be anywhere.
-	fromSpec := un.Path != ""
+	// A command from the spec is relative to dir; one found in the registry
+	// below is the installed program's own uninstaller and may be anywhere.
+	un, fromSpec := specUninstall(ps)
 	r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
-	// Automatically determine uninstall script if none is specified in spec.
-	if un.Path == "" {
+	// Otherwise look the uninstaller up in the registry.
+	if !fromSpec {
 		switch filepath.Ext(ps.Install.Path) {
 		case ".msi":
 			u := uninstallString(state.InstalledApp.Reg, "msi")
@@ -330,10 +363,6 @@ func Uninstall(dir string, state *client.PackageState) error {
 			un.Path = strings.Replace(commands[0], "\"", "", -1)
 			un.Args = []string{"/qn", "/norestart"}
 			un.Args = append(commands[1:], un.Args...)
-		case ".msix", ".msixbundle":
-			// The install path comes from the spec, so it must stay inside dir.
-			un.Path = ps.Install.Path
-			fromSpec = true
 		default:
 			u := uninstallString(state.InstalledApp.Reg, "")
 			commands := r.FindAllString(u, -1)
@@ -399,7 +428,7 @@ func Uninstall(dir string, state *client.PackageState) error {
 		return err
 	}
 
-	if err := removeUninstallEntry(ps.Name); err != nil {
+	if err := RemoveUninstallEntry(ps.Name); err != nil {
 		logger.Error(err)
 	}
 

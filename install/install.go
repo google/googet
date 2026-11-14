@@ -125,7 +125,11 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, dbOnly bool, d
 			return err
 		}
 		logger.Infof("%s replaces %s, removing", ps, pi)
-		if err := remove.All(ctx, pi, deps, dbOnly, downloader, db); err != nil {
+		mode := remove.RunUninstaller
+		if dbOnly {
+			mode = remove.DBOnly
+		}
+		if err := remove.All(ctx, pi, deps, mode, downloader, db); err != nil {
 			return err
 		}
 	}

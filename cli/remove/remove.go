@@ -18,6 +18,7 @@ package remove
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -35,22 +36,53 @@ import (
 func init() { subcommands.Register(&removeCmd{}, "package management") }
 
 type removeCmd struct {
-	dbOnly bool
-	dryRun bool
+	dbOnly          bool
+	dryRun          bool
+	skipUninstaller bool
 }
 
 func (cmd *removeCmd) Name() string     { return "remove" }
 func (cmd *removeCmd) Synopsis() string { return "uninstall a package" }
 func (cmd *removeCmd) Usage() string {
-	return fmt.Sprintf("%s remove [-dry_run] <name>...\n", os.Args[0])
+	return fmt.Sprintf("%s remove [-dry_run] [-db_only | -skip_uninstaller] <name>...\n", os.Args[0])
 }
 
 func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform uninstall system actions")
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be removed but do not remove")
+	f.BoolVar(&cmd.skipUninstaller, "skip_uninstaller", false, "remove installed files and the DB entry without running the package's uninstall command, so the package is not downloaded again")
+}
+
+// mode returns the removal mode the flags select.
+func (cmd *removeCmd) mode() (remove.Mode, error) {
+	switch {
+	case cmd.dbOnly && cmd.skipUninstaller:
+		return 0, errors.New("-db_only and -skip_uninstaller can't be used together")
+	case cmd.dbOnly:
+		return remove.DBOnly, nil
+	case cmd.skipUninstaller:
+		return remove.SkipUninstaller, nil
+	}
+	return remove.RunUninstaller, nil
+}
+
+// unavailableHint returns advice for removing arg when err shows that an
+// uninstall command needs a package that can't be downloaded, or "" if it
+// doesn't. The package may be arg itself or one that depends on it.
+func unavailableHint(arg string, err error) string {
+	if !errors.Is(err, remove.ErrPackageUnavailable) {
+		return ""
+	}
+	return fmt.Sprintf("To remove %s without running uninstall commands, run 'googet remove -skip_uninstaller %s'. This also skips the uninstall commands of the packages that depend on it, which are removed with it.", arg, arg)
 }
 
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	mode, err := cmd.mode()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		flags.Usage()
+		return subcommands.ExitUsageError
+	}
 	if flags.NArg() == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
@@ -69,8 +101,11 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	status := subcommands.ExitSuccess
 	for _, arg := range flags.Args() {
-		if err := cmd.removeOne(ctx, arg, downloader, db); err != nil {
+		if err := cmd.removeOne(ctx, arg, mode, downloader, db); err != nil {
 			logger.Errorf("error removing %v: %v", arg, err)
+			if hint := unavailableHint(arg, err); hint != "" {
+				fmt.Fprintln(os.Stderr, hint)
+			}
 			status = subcommands.ExitFailure
 			continue
 		}
@@ -82,7 +117,7 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	return status
 }
 
-func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader *client.Downloader, db *googetdb.GooDB) error {
+func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, mode remove.Mode, downloader *client.Downloader, db *googetdb.GooDB) error {
 	pi := goolib.PkgNameSplit(pkgName)
 	ps, err := db.FetchPkg(pi)
 	if err != nil {
@@ -120,5 +155,5 @@ func (cmd *removeCmd) removeOne(ctx context.Context, pkgName string, downloader 
 		}
 	}
 	fmt.Printf("Removing %s and all dependencies...\n", pi.Name)
-	return remove.All(ctx, pi, deps, cmd.dbOnly, downloader, db)
+	return remove.All(ctx, pi, deps, mode, downloader, db)
 }

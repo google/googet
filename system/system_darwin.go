@@ -56,12 +56,19 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 	return nil
 }
 
+// UninstallNeedsPackage reports whether Uninstall needs the package extracted
+// into the directory passed to it. That is only when the spec has an uninstall
+// command, which runs from there.
+func UninstallNeedsPackage(ps *goolib.PkgSpec) bool {
+	return ps.Uninstall.Path != ""
+}
+
 // Uninstall performs a system specfic uninstall given a package extraction directory and a PkgSpec struct.
 func Uninstall(dir string, ps *client.PackageState) error {
-	un := ps.PackageSpec.Uninstall
-	if un.Path == "" {
+	if !UninstallNeedsPackage(ps.PackageSpec) {
 		return nil
 	}
+	un := ps.PackageSpec.Uninstall
 
 	s, err := scriptPath(dir, un.Path, "uninstall")
 	if err != nil {
@@ -79,6 +86,12 @@ func Uninstall(dir string, ps *client.PackageState) error {
 		}
 	}()
 	return goolib.Exec(s, un.Args, un.ExitCodes, out)
+}
+
+// RemoveUninstallEntry is a no-op: googet only adds uninstall entries on
+// Windows.
+func RemoveUninstallEntry(name string) error {
+	return nil
 }
 
 // InstallableArchs returns a slice of archs supported by this machine.
