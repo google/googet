@@ -16,7 +16,6 @@ package verify
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -37,10 +36,11 @@ const (
 )
 
 func extractVerify(r io.Reader, verify, dir string) error {
-	zr, err := gzip.NewReader(r)
+	zr, err := goolib.NewPackageReader(r)
 	if err != nil {
 		return err
 	}
+	defer zr.Close()
 	tr := tar.NewReader(zr)
 	for {
 		header, err := tr.Next()
@@ -119,6 +119,11 @@ func Command(ctx context.Context, ps client.PackageState, downloader *client.Dow
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
+	if err == nil {
+		// f is also closed explicitly before re-extraction so Windows does not
+		// keep the package locked; this covers the early returns.
+		defer f.Close()
+	}
 	var rd bool
 	if os.IsNotExist(err) {
 		logger.Infof("Local package does not exist for %s, pulling from repo...", pkg)
@@ -129,6 +134,12 @@ func Command(ctx context.Context, ps client.PackageState, downloader *client.Dow
 	if !rd && ps.Checksum != "" && goolib.Checksum(f) != ps.Checksum {
 		logger.Info("Local package checksum does not match, pulling from repo...")
 		rd = true
+	}
+	// goolib.Checksum may already have read f; extraction needs it at offset 0.
+	if !rd {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return false, err
+		}
 	}
 
 	dir := strings.TrimSuffix(ps.LocalPath, filepath.Ext(ps.LocalPath))

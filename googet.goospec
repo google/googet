@@ -1,4 +1,4 @@
-{{$version := "3.4.3@0" -}}
+{{$version := "3.5.0@0" -}}
 {
   "name": "googet",
   "version": "{{$version}}",
@@ -15,6 +15,10 @@
     "path": "install.ps1"
   },
   "releaseNotes": [
+    "3.5.0  - Feat: Read zstd-compressed packages (detected from the magic bytes) as well as gzip.",
+    "       - Add the goopack -compression flag (gzip or zstd); gzip remains the default. Older clients cannot read zstd packages.",
+    "       - Fix: 'googet verify' no longer fails with EOF when running the verify command from a cached package.",
+    "       - Fix: gooserve closes package files after indexing them.",
     "3.4.3  - Fix: Fix semver versioning to not push version numbers by 1 decimal place.",
     "3.4.2  - Fix: 'googet update' installs the replacement package when an installed package is now provided by a package with a different name.",
     "       - Security: Bump github.com/go-jose/go-jose/v4 to v4.1.6 to fix CVE-2026-116587.",

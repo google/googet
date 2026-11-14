@@ -33,9 +33,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
 )
 
@@ -553,95 +555,148 @@ func TestPackageStopsOnCancel(t *testing.T) {
 	}
 }
 
-func TestExtractPkg(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer oswrap.RemoveAll(tempDir)
-	tempFile := filepath.Join(tempDir, "test.pkg")
-	f, err := oswrap.Create(tempFile)
+// writePkg writes a package holding files, compressed with format, to a
+// test.pkg file in a new temporary directory and returns its path.
+func writePkg(t *testing.T, format string, files []testutil.File) string {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "test.pkg")
+	f, err := oswrap.Create(src)
 	if err != nil {
 		t.Fatalf("error creating temp file: %v", err)
 	}
-	gw := gzip.NewWriter(f)
-	tw := tar.NewWriter(gw)
-
-	name := "foo/../test"
-	body := "this is a test file"
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0600,
-		Size: int64(len(body)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tw.Write([]byte(body)); err != nil {
-		t.Fatalf("error writing file: %v", err)
-	}
-
-	if err := tw.Close(); err != nil {
-		t.Fatalf("error closing tar: %v", err)
-	}
-	if err := gw.Close(); err != nil {
-		t.Fatalf("error closing gzip: %v", err)
-	}
+	testutil.WritePackage(t, f, format, files)
 	if err := f.Close(); err != nil {
 		t.Fatalf("error closing file: %v", err)
 	}
+	return src
+}
 
-	dst, err := ExtractPkg(tempFile)
-	if err != nil {
-		t.Fatalf("error running ExtractPkg: %v", err)
-	}
+// extractedFile describes a file written by ExtractPkg.
+type extractedFile struct {
+	Body string
+	Mode os.FileMode
+}
 
-	cts, err := os.ReadFile(filepath.Join(dst, filepath.Clean(name)))
+// readTree returns the regular files under dir, keyed by slash-separated
+// relative path.
+func readTree(t *testing.T, dir string) map[string]extractedFile {
+	t.Helper()
+	got := make(map[string]extractedFile)
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		got[filepath.ToSlash(rel)] = extractedFile{Body: string(b), Mode: fi.Mode()}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("error opening test file: %v", err)
+		t.Fatalf("error reading extracted files: %v", err)
 	}
-	if string(cts) != body {
-		t.Errorf("contents of extracted file does not match expected contents: got: %q, want: %q", string(cts), body)
+	return got
+}
+
+func TestExtractPkg(t *testing.T) {
+	files := []testutil.File{
+		{Name: "foo/../test", Mode: 0600, Body: []byte("this is a test file")},
+		{Name: "dir/sub/tool.exe", Mode: 0755, Body: []byte("binary contents")},
+		{Name: "empty", Mode: 0644},
+	}
+	wantBodies := map[string]string{
+		"test":             "this is a test file",
+		"dir/sub/tool.exe": "binary contents",
+		"empty":            "",
+	}
+	trees := make(map[string]map[string]extractedFile)
+	for _, format := range goolib.CompressionFormats() {
+		t.Run(format, func(t *testing.T) {
+			dst, err := ExtractPkg(writePkg(t, format, files))
+			if err != nil {
+				t.Fatalf("error running ExtractPkg: %v", err)
+			}
+			got := readTree(t, dst)
+			gotBodies := make(map[string]string)
+			for name, f := range got {
+				gotBodies[name] = f.Body
+			}
+			if diff := cmp.Diff(wantBodies, gotBodies); diff != "" {
+				t.Errorf("extracted files mismatch (-want +got):\n%s", diff)
+			}
+			trees[format] = got
+		})
+	}
+	// File sets, contents and modes must not depend on the compression format.
+	if t.Failed() {
+		return
+	}
+	if diff := cmp.Diff(trees[goolib.CompressionGzip], trees[goolib.CompressionZstd]); diff != "" {
+		t.Errorf("zstd extraction differs from gzip (-gzip +zstd):\n%s", diff)
 	}
 }
 
 func TestExtractPkgPathTraversal(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
+	// The package extracts to <tmp>/test, so these names resolve outside it.
+	// Avoid names like "foo/../../test" that resolve to the destination
+	// directory itself and fail for an unrelated reason.
+	for _, name := range []string{"foo/../../escaped", "../escaped"} {
+		files := []testutil.File{{Name: name, Mode: 0600, Body: []byte("this is a test file")}}
+		for _, format := range goolib.CompressionFormats() {
+			t.Run(format+" "+name, func(t *testing.T) {
+				src := writePkg(t, format, files)
+				_, err := ExtractPkg(src)
+				if err == nil || !strings.Contains(err.Error(), "path traversal") {
+					t.Fatalf("ExtractPkg error = %v, want path traversal error", err)
+				}
+				if _, err := os.Stat(filepath.Join(filepath.Dir(src), "escaped")); !os.IsNotExist(err) {
+					t.Errorf("ExtractPkg wrote outside the destination directory: stat error = %v", err)
+				}
+			})
+		}
 	}
-	defer oswrap.RemoveAll(tempDir)
-	tempFile := filepath.Join(tempDir, "test.pkg")
-	f, err := oswrap.Create(tempFile)
-	if err != nil {
-		t.Fatalf("error creating temp file: %v", err)
-	}
-	gw := gzip.NewWriter(f)
-	tw := tar.NewWriter(gw)
+}
 
-	name := "foo/../../test"
+func TestExtractPkgNotCompressed(t *testing.T) {
+	var rawTar bytes.Buffer
+	tw := tar.NewWriter(&rawTar)
 	body := "this is a test file"
-	if err := tw.WriteHeader(&tar.Header{
-		Name: name,
-		Mode: 0600,
-		Size: int64(len(body)),
-	}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "test", Mode: 0600, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tw.Write([]byte(body)); err != nil {
-		t.Fatalf("error writing file: %v", err)
+		t.Fatal(err)
 	}
-
 	if err := tw.Close(); err != nil {
-		t.Fatalf("error closing tar: %v", err)
+		t.Fatal(err)
 	}
-	if err := gw.Close(); err != nil {
-		t.Fatalf("error closing gzip: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("error closing file: %v", err)
-	}
-
-	if _, err := ExtractPkg(tempFile); err == nil {
-		t.Fatal("error expected because of path traversal")
+	for _, tc := range []struct {
+		name    string
+		content []byte
+	}{
+		{"uncompressed tar", rawTar.Bytes()},
+		{"garbage", []byte("this is not a package")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "test.pkg")
+			if err := os.WriteFile(src, tc.content, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ExtractPkg(src); !errors.Is(err, gzip.ErrHeader) {
+				t.Errorf("ExtractPkg error = %v, want %v", err, gzip.ErrHeader)
+			}
+			if got := readTree(t, strings.TrimSuffix(src, ".pkg")); len(got) != 0 {
+				t.Errorf("ExtractPkg extracted %v, want no files", got)
+			}
+		})
 	}
 }
