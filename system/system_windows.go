@@ -255,8 +255,18 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 		return nil
 	}
 
+	s, err := scriptPath(dir, in.Path, "install")
+	if err != nil {
+		return err
+	}
+	// Check the log path on its own: a path naming dir itself would otherwise
+	// put the log next to dir.
+	logPath, err := scriptPath(dir, in.Path+".log", "install")
+	if err != nil {
+		return err
+	}
 	logger.Infof("Running install command: %q", in.Path)
-	out, err := oswrap.Create(filepath.Join(dir, in.Path+".log"))
+	out, err := oswrap.Create(logPath)
 	if err != nil {
 		return err
 	}
@@ -265,7 +275,6 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	s := filepath.Join(dir, in.Path)
 	msiLog := filepath.Join(dir, "msi_install.log")
 	ec := append(msiSuccessCodes, in.ExitCodes...)
 	switch filepath.Ext(s) {
@@ -304,6 +313,9 @@ func Uninstall(dir string, state *client.PackageState) error {
 	var filePath string
 	ps := state.PackageSpec
 	un := ps.Uninstall
+	// A path from the spec is relative to dir; one found in the registry below
+	// is the installed program's own uninstaller and may be anywhere.
+	fromSpec := un.Path != ""
 	r := regexp.MustCompile(`[^\s"]+|"([^"]*)"`)
 	// Automatically determine uninstall script if none is specified in spec.
 	if un.Path == "" {
@@ -318,10 +330,10 @@ func Uninstall(dir string, state *client.PackageState) error {
 			un.Path = strings.Replace(commands[0], "\"", "", -1)
 			un.Args = []string{"/qn", "/norestart"}
 			un.Args = append(commands[1:], un.Args...)
-			filePath = un.Path
 		case ".msix", ".msixbundle":
+			// The install path comes from the spec, so it must stay inside dir.
 			un.Path = ps.Install.Path
-			filePath = un.Path
+			fromSpec = true
 		default:
 			u := uninstallString(state.InstalledApp.Reg, "")
 			commands := r.FindAllString(u, -1)
@@ -329,7 +341,6 @@ func Uninstall(dir string, state *client.PackageState) error {
 				// Remove the quotes from the install string since we handle that below
 				un.Path = strings.Replace(commands[0], "\"", "", -1)
 				un.Args = commands[1:]
-				filePath = un.Path
 			}
 		}
 		if un.Path == "" {
@@ -338,10 +349,23 @@ func Uninstall(dir string, state *client.PackageState) error {
 	}
 	logger.Infof("Running uninstall command: %q", un.Path)
 	// logging is only useful for failed uninstall
-	// Only append the directory if the folder structure doesn't exist
-	logPath := fmt.Sprintf("%s.log", un.Path)
-	if _, err := os.Stat(un.Path); errors.Is(err, os.ErrNotExist) {
-		logPath = filepath.Join(dir, logPath)
+	var logPath string
+	if fromSpec {
+		var err error
+		if filePath, err = scriptPath(dir, un.Path, "uninstall"); err != nil {
+			return err
+		}
+		if logPath, err = scriptPath(dir, un.Path+".log", "uninstall"); err != nil {
+			return err
+		}
+	} else {
+		// A registry uninstaller runs from wherever it is installed, and is
+		// logged next to itself, or under dir if its folder doesn't exist.
+		filePath = un.Path
+		logPath = un.Path + ".log"
+		if _, err := os.Stat(un.Path); errors.Is(err, os.ErrNotExist) {
+			logPath = filepath.Join(dir, logPath)
+		}
 	}
 	out, err := oswrap.Create(logPath)
 	if err != nil {
@@ -352,9 +376,6 @@ func Uninstall(dir string, state *client.PackageState) error {
 			logger.Error(err)
 		}
 	}()
-	if filePath == "" {
-		filePath = filepath.Join(dir, un.Path)
-	}
 	ec := append(msiSuccessCodes, un.ExitCodes...)
 	switch filepath.Ext(filePath) {
 	case ".msi":
@@ -372,7 +393,7 @@ func Uninstall(dir string, state *client.PackageState) error {
 		args := append([]string{removeCmd}, un.Args...)
 		err = goolib.Run(exec.Command("powershell", args...), ec, out)
 	default:
-		err = goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
+		err = goolib.Exec(filePath, un.Args, un.ExitCodes, out)
 	}
 	if err != nil {
 		return err
