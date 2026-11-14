@@ -267,10 +267,16 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	return nil
 }
 
+// ExtractDir returns the directory ExtractPkg extracts the package at src
+// into.
+func ExtractDir(src string) string {
+	return strings.TrimSuffix(src, filepath.Ext(src))
+}
+
 // ExtractPkg takes a path to a package and extracts it to a directory based on the
 // package name, it returns the path to the extracted directory.
 func ExtractPkg(src string) (dst string, err error) {
-	dst = strings.TrimSuffix(src, filepath.Ext(src))
+	dst = ExtractDir(src)
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("package extraction paths are invalid: src %s, dst %s", src, dst)
 	}
@@ -302,17 +308,10 @@ func ExtractPkg(src string) (dst string, err error) {
 			return "", fmt.Errorf("error opening file: %v", err)
 		}
 
-		name := filepath.Clean(header.Name)
-		absDst, err := filepath.Abs(dst)
+		path, err := goolib.JoinWithin(dst, header.Name)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("error unpacking package: %v", err)
 		}
-		absPath := filepath.Join(absDst, name)
-		if !strings.HasPrefix(absPath, absDst) {
-			return "", fmt.Errorf("error unpacking package, file contains path traversal: %q", name)
-		}
-
-		path := filepath.Join(dst, name)
 		if header.FileInfo().IsDir() {
 			if err := oswrap.MkdirAll(path, 0755); err != nil {
 				return "", err
