@@ -630,6 +630,9 @@ func TestExtractPkg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error running ExtractPkg: %v", err)
 	}
+	if want := ExtractDir(tempFile); dst != want {
+		t.Errorf("ExtractPkg(%q) extracted to %q, want ExtractDir's %q", tempFile, dst, want)
+	}
 
 	cts, err := os.ReadFile(filepath.Join(dst, filepath.Clean(name)))
 	if err != nil {
@@ -679,5 +682,22 @@ func TestExtractPkgPathTraversal(t *testing.T) {
 
 	if _, err := ExtractPkg(tempFile); err == nil {
 		t.Fatal("error expected because of path traversal")
+	}
+}
+
+func TestExtractDir(t *testing.T) {
+	dir := filepath.Join("cache", "dir.d")
+	for _, tc := range []struct {
+		src, want string
+	}{
+		{filepath.Join(dir, "foo.noarch.1.0.0@1.goo"), filepath.Join(dir, "foo.noarch.1.0.0@1")},
+		{filepath.Join(dir, "test.pkg"), filepath.Join(dir, "test")},
+		// With no extension, the directory is the package path itself.
+		{filepath.Join(dir, "foo"), filepath.Join(dir, "foo")},
+		{"", ""},
+	} {
+		if got := ExtractDir(tc.src); got != tc.want {
+			t.Errorf("ExtractDir(%q) = %q, want %q", tc.src, got, tc.want)
+		}
 	}
 }

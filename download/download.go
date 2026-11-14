@@ -267,10 +267,16 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	return nil
 }
 
+// ExtractDir returns the directory ExtractPkg extracts the package at src
+// into.
+func ExtractDir(src string) string {
+	return strings.TrimSuffix(src, filepath.Ext(src))
+}
+
 // ExtractPkg takes a path to a package and extracts it to a directory based on the
 // package name, it returns the path to the extracted directory.
 func ExtractPkg(src string) (dst string, err error) {
-	dst = strings.TrimSuffix(src, filepath.Ext(src))
+	dst = ExtractDir(src)
 	if src == "" || dst == "" {
 		return "", fmt.Errorf("package extraction paths are invalid: src %s, dst %s", src, dst)
 	}
