@@ -213,7 +213,8 @@ func TestOpenGCS(t *testing.T) {
 			defer cancel()
 			srv := httptest.NewServer(tc.handler)
 			defer srv.Close()
-			gcs, err := storage.NewClient(ctx, option.WithEndpoint(srv.URL), option.WithoutAuthentication())
+			t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+			gcs, err := storage.NewClient(ctx, option.WithoutAuthentication())
 			if err != nil {
 				t.Fatalf("storage.NewClient() failed: %v", err)
 			}
