@@ -286,3 +286,38 @@ func TestAddPkgPreservesExecutableNamesAndInstallPath(t *testing.T) {
 		t.Errorf("InstallPath mismatch: got %q, want %q", gotSpec.InstallPath, ps.PackageSpec.InstallPath)
 	}
 }
+
+func TestAddPkgPreservesURLFields(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%q) failed: %v", dbFile, err)
+	}
+	defer db.Close()
+
+	ps := client.PackageState{
+		PackageSpec: &goolib.PkgSpec{
+			Name:       "gimp",
+			Arch:       "x86_64",
+			Version:    "1.0.0@1",
+			Homepage:   "https://www.gimp.org/",
+			HelpURL:    "https://docs.gimp.org/",
+			Bugtracker: "https://gitlab.gnome.org/GNOME/gimp/-/issues",
+		},
+		InstallDate: 123456789,
+	}
+	if err := db.AddPkg(ps); err != nil {
+		t.Fatalf("db.AddPkg(%v) failed: %v", ps, err)
+	}
+
+	pkgs, err := db.FetchPkgs("")
+	if err != nil {
+		t.Fatalf("db.FetchPkgs(\"\") failed: %v", err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("db.FetchPkgs(\"\") returned %d packages, want 1", len(pkgs))
+	}
+	if diff := cmp.Diff(ps.PackageSpec, pkgs[0].PackageSpec); diff != "" {
+		t.Errorf("db.FetchPkgs(\"\") PackageSpec diff (-want +got):\n%s", diff)
+	}
+}

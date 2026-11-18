@@ -613,6 +613,39 @@ ReleaseNotes : 1977.06.01 - initial development
              : 1980.12.01 - published
 `,
 		},
+		{
+			desc: "with-urls",
+			ps: PkgSpec{
+				Name:         "gimp",
+				Version:      "2.10.38@1",
+				Arch:         "x86_64",
+				Authors:      "The GIMP Team",
+				Owners:       "someone",
+				Description:  "The Free and Open Source Image Editor - GNU Image Manipulation Program (GIMP).",
+				Homepage:     "https://www.gimp.org/",
+				HelpURL:      "https://docs.gimp.org/",
+				Bugtracker:   "https://gitlab.gnome.org/GNOME/gimp/-/issues",
+				ReleaseNotes: []string{"2.10.38 - initial release"},
+			},
+			repo: "https://gooserver.com/repos/testing",
+			want: `
+Name         : gimp
+Arch         : x86_64
+Version      : 2.10.38@1
+Repo         : testing
+Authors      : The GIMP Team
+Owners       : someone
+Source       : 
+Description  : The Free and Open Source Image Editor - GNU Image Manipulation
+             : Program (GIMP).
+InstallPath  : 
+Homepage     : https://www.gimp.org/
+HelpURL      : https://docs.gimp.org/
+Bugtracker   : https://gitlab.gnome.org/GNOME/gimp/-/issues
+Dependencies : None
+ReleaseNotes : 2.10.38 - initial release
+`,
+		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			var b bytes.Buffer
@@ -646,5 +679,27 @@ func TestPkgSpec_ExecutableNamesAndInstallPath(t *testing.T) {
 	}
 	if got.InstallPath != ps.InstallPath {
 		t.Errorf("InstallPath mismatch: got %q, want %q", got.InstallPath, ps.InstallPath)
+	}
+}
+
+func TestPkgSpec_URLFields(t *testing.T) {
+	ps := &PkgSpec{
+		Name:       "test_pkg",
+		Arch:       "x86_64",
+		Version:    "1.0.0@1",
+		Homepage:   "https://example.com/home",
+		HelpURL:    "https://example.com/help",
+		Bugtracker: "https://example.com/bugs",
+	}
+	data, err := MarshalPackageSpec(ps)
+	if err != nil {
+		t.Fatalf("MarshalPackageSpec(%v) failed: %v", ps, err)
+	}
+	got, err := UnmarshalPackageSpec(data)
+	if err != nil {
+		t.Fatalf("UnmarshalPackageSpec(%s) failed: %v", data, err)
+	}
+	if diff := cmp.Diff(ps, got); diff != "" {
+		t.Errorf("UnmarshalPackageSpec(MarshalPackageSpec(%v)) diff (-want +got):\n%s", ps, diff)
 	}
 }

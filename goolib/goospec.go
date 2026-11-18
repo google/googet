@@ -103,6 +103,12 @@ type PkgSpec struct {
 	ExecutableNames []string `json:",omitempty"`
 	// InstallPath contains default target installation directory path (e.g. "C:\Program Files\Vendor").
 	InstallPath string `json:",omitempty"`
+	// Homepage contains the package's homepage URL.
+	Homepage string `json:",omitempty"`
+	// HelpURL contains the package's documentation or support URL.
+	HelpURL string `json:",omitempty"`
+	// Bugtracker contains the package's bug tracker or issue reporting URL.
+	Bugtracker string `json:",omitempty"`
 }
 
 func (ps PkgSpec) String() string {
@@ -464,9 +470,10 @@ func UnmarshalPackageSpec(data []byte) (*PkgSpec, error) {
 // PrettyPrint writes a formatted description of the PkgSpec to w.
 // fromRepo indicates which repo the package was sourced from.
 func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
-	pkgInfo := []struct {
+	type infoField struct {
 		name, value string
-	}{
+	}
+	pkgInfo := []infoField{
 		{"Name", ps.Name},
 		{"Arch", ps.Arch},
 		{"Version", ps.Version},
@@ -476,9 +483,20 @@ func (ps PkgSpec) PrettyPrint(w io.Writer, fromRepo string) {
 		{"Source", ps.Source},
 		{"Description", ps.Description},
 		{"InstallPath", ps.InstallPath},
-		{"Dependencies", ""},
-		{"ReleaseNotes", ""},
 	}
+	if ps.Homepage != "" {
+		pkgInfo = append(pkgInfo, infoField{"Homepage", ps.Homepage})
+	}
+	if ps.HelpURL != "" {
+		pkgInfo = append(pkgInfo, infoField{"HelpURL", ps.HelpURL})
+	}
+	if ps.Bugtracker != "" {
+		pkgInfo = append(pkgInfo, infoField{"Bugtracker", ps.Bugtracker})
+	}
+	pkgInfo = append(pkgInfo,
+		infoField{"Dependencies", ""},
+		infoField{"ReleaseNotes", ""},
+	)
 	var width int
 	for _, pi := range pkgInfo {
 		if len(pi.name) > width {
