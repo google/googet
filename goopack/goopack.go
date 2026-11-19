@@ -16,7 +16,6 @@ package main
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"flag"
 	"fmt"
 	"io"
@@ -33,7 +32,8 @@ import (
 )
 
 var (
-	outputDir = flag.String("output_dir", "", "where to put the built package")
+	outputDir   = flag.String("output_dir", "", "where to put the built package")
+	compression = flag.String("compression", goolib.CompressionGzip, fmt.Sprintf("package compression format, one of %q; zstd packages need googet 3.5.0 or later to install", goolib.CompressionFormats()))
 )
 
 type fileMap map[string][]string
@@ -248,7 +248,11 @@ func writeFiles(tw *tar.Writer, fm fileMap) error {
 	return nil
 }
 
-func packageFiles(fm fileMap, gs *goolib.GooSpec, dir string) (err error) {
+func packageFiles(fm fileMap, gs *goolib.GooSpec, dir, compression string) (err error) {
+	// Validate before creating the file so a bad format leaves no empty package behind.
+	if err := goolib.ValidateCompression(compression); err != nil {
+		return err
+	}
 	pn := goolib.PackageInfo{Name: gs.PackageSpec.Name, Arch: gs.PackageSpec.Arch, Ver: gs.PackageSpec.Version}.PkgName()
 	f, err := oswrap.Create(filepath.Join(dir, pn))
 	if err != nil {
@@ -260,7 +264,10 @@ func packageFiles(fm fileMap, gs *goolib.GooSpec, dir string) (err error) {
 			err = cErr
 		}
 	}()
-	gw := gzip.NewWriter(f)
+	gw, err := goolib.NewPackageWriter(f, compression)
+	if err != nil {
+		return err
+	}
 	defer func() {
 		cErr := gw.Close()
 		if cErr != nil && err == nil {
@@ -342,7 +349,7 @@ func verifyFiles(gs *goolib.GooSpec, fm fileMap) error {
 	return nil
 }
 
-func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
+func createPackage(gs *goolib.GooSpec, baseDir, outDir, compression string) error {
 	switch {
 	case gs.Build.Linux != "" && runtime.GOOS == "linux":
 		cmd := gs.Build.Linux
@@ -368,7 +375,7 @@ func createPackage(gs *goolib.GooSpec, baseDir, outDir string) error {
 	if err := verifyFiles(gs, fm); err != nil {
 		return err
 	}
-	return packageFiles(fm, gs, outDir)
+	return packageFiles(fm, gs, outDir, compression)
 }
 
 const (
@@ -436,6 +443,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	if err := goolib.ValidateCompression(*compression); err != nil {
+		log.Fatal(err)
+	}
+
 	outDir := *outputDir
 	if outDir == "" {
 		var err error
@@ -458,7 +469,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if err := createPackage(gs, baseDir, outDir); err != nil {
+	if err := createPackage(gs, baseDir, outDir, *compression); err != nil {
 		log.Fatal(err)
 	}
 }

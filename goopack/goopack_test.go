@@ -16,15 +16,19 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 )
@@ -203,5 +207,121 @@ func TestAddFlags(t *testing.T) {
 		if got != value {
 			t.Errorf("flag %q value %q!=%q", fn, got, value)
 		}
+	}
+}
+
+// packageFixture returns a single-folder fileMap, so that writeFiles emits
+// entries in a deterministic order, and a GooSpec for it.
+func packageFixture(t *testing.T) (fileMap, *goolib.GooSpec) {
+	t.Helper()
+	src := t.TempDir()
+	f := filepath.Join(src, "payload.bin")
+	if err := os.WriteFile(f, bytes.Repeat([]byte("goopack payload "), 4096), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gs := &goolib.GooSpec{PackageSpec: &goolib.PkgSpec{Name: "test", Version: "1.2.3@4", Arch: "noarch"}}
+	return fileMap{"bin": []string{f}}, gs
+}
+
+// readPackage returns the contents of the package that packageFiles wrote to
+// dir for gs.
+func readPackage(t *testing.T, gs *goolib.GooSpec, dir string) []byte {
+	t.Helper()
+	pn := goolib.PackageInfo{Name: gs.PackageSpec.Name, Arch: gs.PackageSpec.Arch, Ver: gs.PackageSpec.Version}.PkgName()
+	b, err := os.ReadFile(filepath.Join(dir, pn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestPackageFilesCompression(t *testing.T) {
+	for _, tc := range []struct {
+		format string
+		magic  []byte
+	}{
+		{goolib.CompressionGzip, []byte{0x1f, 0x8b}},
+		{goolib.CompressionZstd, []byte{0x28, 0xb5, 0x2f, 0xfd}},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			fm, gs := packageFixture(t)
+			dir := t.TempDir()
+			if err := packageFiles(fm, gs, dir, tc.format); err != nil {
+				t.Fatalf("packageFiles: %v", err)
+			}
+			b := readPackage(t, gs, dir)
+			if !bytes.HasPrefix(b, tc.magic) {
+				t.Errorf("package starts with % x, want prefix % x", b[:min(len(b), 4)], tc.magic)
+			}
+			spec, err := goolib.ExtractPkgSpec(bytes.NewReader(b))
+			if err != nil {
+				t.Fatalf("ExtractPkgSpec: %v", err)
+			}
+			if diff := cmp.Diff(gs.PackageSpec, spec); diff != "" {
+				t.Errorf("package spec mismatch (-want +got):\n%s", diff)
+			}
+
+			rc, err := goolib.NewPackageReader(bytes.NewReader(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rc.Close()
+			var names []string
+			tr := tar.NewReader(rc)
+			for {
+				h, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				names = append(names, h.Name)
+			}
+			if diff := cmp.Diff([]string{"bin/payload.bin", "test.pkgspec"}, names); diff != "" {
+				t.Errorf("package entries mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestPackageFilesDefaultIsPlainGzip checks that, without -compression,
+// goopack still writes packages that clients older than zstd support read with
+// gzip.NewReader directly.
+func TestPackageFilesDefaultIsPlainGzip(t *testing.T) {
+	def := flag.Lookup("compression").DefValue
+	if def != goolib.CompressionGzip {
+		t.Fatalf("-compression default = %q, want %q", def, goolib.CompressionGzip)
+	}
+	fm, gs := packageFixture(t)
+	dir := t.TempDir()
+	if err := packageFiles(fm, gs, dir, def); err != nil {
+		t.Fatalf("packageFiles: %v", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(readPackage(t, gs, dir)))
+	if err != nil {
+		t.Fatalf("default package is not gzip: %v", err)
+	}
+	ps, err := goolib.ReadPackageSpec(zr)
+	if err != nil {
+		t.Fatalf("ReadPackageSpec: %v", err)
+	}
+	if diff := cmp.Diff(gs.PackageSpec, ps); diff != "" {
+		t.Errorf("package spec mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestPackageFilesInvalidCompression(t *testing.T) {
+	fm, gs := packageFixture(t)
+	dir := t.TempDir()
+	if err := packageFiles(fm, gs, dir, "xz"); err == nil {
+		t.Fatal("packageFiles with compression \"xz\" succeeded, want error")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("packageFiles left %d entries in the output dir, want none", len(entries))
 	}
 }
