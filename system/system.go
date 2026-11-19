@@ -27,6 +27,17 @@ import (
 	"github.com/google/logger"
 )
 
+// scriptPath resolves a spec script path under dir for op ("install" and so
+// on). Specs from a repo index or the database are not normalized like those
+// read from a package, so the path must not escape dir.
+func scriptPath(dir, name, op string) (string, error) {
+	p, err := goolib.JoinWithin(dir, name)
+	if err != nil {
+		return "", fmt.Errorf("invalid %s command: %v", op, err)
+	}
+	return p, nil
+}
+
 // Verify runs a verify command given a package extraction directory and a PkgSpec struct.
 func Verify(dir string, ps *goolib.PkgSpec) error {
 	v := ps.Verify
@@ -34,6 +45,10 @@ func Verify(dir string, ps *goolib.PkgSpec) error {
 		return nil
 	}
 
+	s, err := scriptPath(dir, v.Path, "verify")
+	if err != nil {
+		return err
+	}
 	logger.Infof("Running verify command: %q", v.Path)
 	out, err := oswrap.Create(filepath.Join(dir, "googet_verify.log"))
 	if err != nil {
@@ -44,7 +59,7 @@ func Verify(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	return goolib.Exec(filepath.Join(dir, v.Path), v.Args, v.ExitCodes, out)
+	return goolib.Exec(s, v.Args, v.ExitCodes, out)
 }
 
 // isLockFileStale checks if the lock file is older than maxAge.

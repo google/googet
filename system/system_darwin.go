@@ -36,6 +36,10 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 		return nil
 	}
 
+	s, err := scriptPath(dir, in.Path, "install")
+	if err != nil {
+		return err
+	}
 	logger.Infof("Running install command: %q", in.Path)
 	out, err := oswrap.Create(filepath.Join(dir, "googet_install.log"))
 	if err != nil {
@@ -46,7 +50,7 @@ func Install(dir string, ps *goolib.PkgSpec) error {
 			logger.Error(err)
 		}
 	}()
-	if err := goolib.Exec(filepath.Join(dir, in.Path), in.Args, in.ExitCodes, out); err != nil {
+	if err := goolib.Exec(s, in.Args, in.ExitCodes, out); err != nil {
 		return fmt.Errorf("error running install: %v", err)
 	}
 	return nil
@@ -59,6 +63,10 @@ func Uninstall(dir string, ps *client.PackageState) error {
 		return nil
 	}
 
+	s, err := scriptPath(dir, un.Path, "uninstall")
+	if err != nil {
+		return err
+	}
 	logger.Infof("Running uninstall command: %q", un.Path)
 	// logging is only useful for failed uninstalls
 	out, err := oswrap.Create(filepath.Join(dir, "googet_remove.log"))
@@ -70,7 +78,7 @@ func Uninstall(dir string, ps *client.PackageState) error {
 			logger.Error(err)
 		}
 	}()
-	return goolib.Exec(filepath.Join(dir, un.Path), un.Args, un.ExitCodes, out)
+	return goolib.Exec(s, un.Args, un.ExitCodes, out)
 }
 
 // InstallableArchs returns a slice of archs supported by this machine.
