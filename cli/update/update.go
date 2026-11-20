@@ -112,6 +112,9 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 
 	exitCode := subcommands.ExitSuccess
 	for _, pi := range ud {
+		if goolib.Interrupted() != nil {
+			return subcommands.ExitFailure
+		}
 		r, err := client.WhatRepo(pi, rm)
 		if err != nil {
 			logger.Errorf("Error finding repo: %v.", err)

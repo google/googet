@@ -30,6 +30,9 @@ import (
 )
 
 func uninstallPkg(ctx context.Context, pi goolib.PackageInfo, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
+	}
 	logger.Infof("Executing removal of package %q", pi.Name)
 	ps, err := db.FetchPkg(pi)
 	if err != nil {
@@ -168,6 +171,9 @@ func EnumerateDeps(pi goolib.PackageInfo, db *googetdb.GooDB) (DepMap, []string,
 // All removes a package and all dependent packages. Packages with no dependent packages
 // will be removed first.
 func All(ctx context.Context, pi goolib.PackageInfo, deps DepMap, dbOnly bool, downloader *client.Downloader, db *googetdb.GooDB) error {
+	if goolib.Interrupted() != nil {
+		return goolib.ErrInterrupted
+	}
 	// deps includes an entry for pi itself, but we don't need to iterate over it
 	// because pi is always uninstalled at the end.
 	delete(deps, pi.Name+"."+pi.Arch)

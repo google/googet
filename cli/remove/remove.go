@@ -69,6 +69,9 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	}
 	status := subcommands.ExitSuccess
 	for _, arg := range flags.Args() {
+		if goolib.Interrupted() != nil {
+			return subcommands.ExitFailure
+		}
 		if err := cmd.removeOne(ctx, arg, downloader, db); err != nil {
 			logger.Errorf("error removing %v: %v", arg, err)
 			status = subcommands.ExitFailure
