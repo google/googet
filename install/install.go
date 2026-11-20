@@ -425,15 +425,18 @@ func makeInstallFunction(src, dst string, insFiles map[string]string, dbOnly, fo
 		}
 
 		if dbOnly {
-			if !fi.IsDir() {
-				f, err := oswrap.Open(path)
-				if err != nil {
-					return err
-				}
-				defer f.Close()
-				insFiles[outPath] = goolib.Checksum(f)
+			// Record what a real install would: the payload's checksum for
+			// files, and an empty hash for directories.
+			if fi.IsDir() {
+				insFiles[outPath] = ""
+				return nil
 			}
-			insFiles[outPath] = ""
+			f, err := oswrap.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			insFiles[outPath] = goolib.Checksum(f)
 			return nil
 		}
 		if fi.IsDir() {
