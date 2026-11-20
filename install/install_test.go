@@ -22,8 +22,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -500,6 +502,247 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 		}
 		// Any other error means it TRIED to install it (provider found).
 		t.Logf("Got expected error (confirming resolution success): %v", err)
+	}
+}
+
+func TestListDeps_SatisfiedByProvider(t *testing.T) {
+	settings.Initialize(t.TempDir(), false)
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	rm := client.RepoMap{
+		"repo1": client.Repo{
+			Priority: priority.Value(500),
+			Packages: []goolib.RepoSpec{
+				{PackageSpec: &goolib.PkgSpec{Name: "consumer_pkg", Version: "1.0.0@1", Arch: "x86_64",
+					PkgDependencies: map[string]string{"libvirt": "0.0.0"}}},
+				{PackageSpec: &goolib.PkgSpec{Name: "provider_pkg", Version: "2.0.0@1", Arch: "noarch",
+					Provides: []string{"libvirt"}}},
+			},
+		},
+	}
+	pi := goolib.PackageInfo{Name: "consumer_pkg", Arch: "x86_64", Ver: "1.0.0@1"}
+	got, err := ListDeps(pi, rm, "repo1", []string{"x86_64", "noarch"}, db)
+	if err != nil {
+		t.Fatalf("ListDeps: %v", err)
+	}
+	want := []goolib.PackageInfo{pi, {Name: "provider_pkg", Arch: "noarch", Ver: "2.0.0@1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListDeps = %v, want %v", got, want)
+	}
+}
+
+func TestListDeps_SelfDependency(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		pkgs    []*goolib.PkgSpec // pkgs[0] is passed to ListDeps
+		want    []goolib.PackageInfo
+		wantErr string
+	}{
+		{
+			desc: "depends on a name it provides",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"virt"},
+					PkgDependencies: map[string]string{"virt": "0.0.0"}},
+			},
+			wantErr: "resolves to the package itself",
+		},
+		{
+			desc: "depends on itself",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "noarch",
+					PkgDependencies: map[string]string{"self_pkg": "0.0.0"}},
+			},
+			wantErr: "resolves to the package itself",
+		},
+		{
+			desc: "depends on another arch of itself",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "x86_64",
+					PkgDependencies: map[string]string{"self_pkg.x86_32": "0.0.0"}},
+				{Name: "self_pkg", Version: "1.0.0", Arch: "x86_32"},
+			},
+			want: []goolib.PackageInfo{{Name: "self_pkg", Arch: "x86_32", Ver: "1.0.0"}},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			var specs []goolib.RepoSpec
+			for _, ps := range tc.pkgs {
+				specs = append(specs, goolib.RepoSpec{PackageSpec: ps})
+			}
+			rm := client.RepoMap{"repo1": client.Repo{Priority: priority.Value(500), Packages: specs}}
+			pi := goolib.PackageInfo{Name: tc.pkgs[0].Name, Arch: tc.pkgs[0].Arch, Ver: tc.pkgs[0].Version}
+			got, err := ListDeps(pi, rm, "repo1", []string{"x86_64", "x86_32", "noarch"}, db)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ListDeps = %v, %v; want error containing %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ListDeps: %v", err)
+			}
+			want := append([]goolib.PackageInfo{pi}, tc.want...)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("ListDeps mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestInstallDeps_SelfDependency(t *testing.T) {
+	for _, tc := range []struct {
+		desc     string
+		pkgs     []*goolib.PkgSpec // pkgs[0] is passed to installDeps
+		wantSelf bool              // whether to expect the "resolves to the package itself" error
+	}{
+		{
+			desc: "depends on a name it provides",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"virt"},
+					PkgDependencies: map[string]string{"virt": "0.0.0"}},
+			},
+			wantSelf: true,
+		},
+		{
+			desc: "depends on itself",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "noarch",
+					PkgDependencies: map[string]string{"self_pkg": "0.0.0"}},
+			},
+			wantSelf: true,
+		},
+		{
+			// Resolution succeeds and the install then fails at the download,
+			// because the test repo has no real package files.
+			desc: "depends on another arch of itself",
+			pkgs: []*goolib.PkgSpec{
+				{Name: "self_pkg", Version: "1.0.0", Arch: "x86_64",
+					PkgDependencies: map[string]string{"self_pkg.x86_32": "0.0.0"}},
+				{Name: "self_pkg", Version: "1.0.0", Arch: "x86_32"},
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			var specs []goolib.RepoSpec
+			for _, ps := range tc.pkgs {
+				specs = append(specs, goolib.RepoSpec{PackageSpec: ps})
+			}
+			rm := client.RepoMap{"repo1": client.Repo{Priority: priority.Value(500), Packages: specs}}
+			downloader, err := client.NewDownloader("")
+			if err != nil {
+				t.Fatalf("NewDownloader: %v", err)
+			}
+			err = installDeps(t.Context(), tc.pkgs[0], t.TempDir(), rm, []string{"x86_64", "x86_32", "noarch"}, false, false, downloader, db)
+			const selfErr = "resolves to the package itself"
+			if gotSelf := err != nil && strings.Contains(err.Error(), selfErr); gotSelf != tc.wantSelf {
+				t.Errorf("installDeps = %v; want an error containing %q: %v", err, selfErr, tc.wantSelf)
+			}
+		})
+	}
+}
+
+func TestListDeps_VersionRequirement(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		dep     map[string]string
+		pkgs    []*goolib.PkgSpec
+		want    []goolib.PackageInfo // excluding the consumer itself
+		wantErr string               // substring of the expected error, if any
+	}{
+		{
+			desc: "versioned provides meets requirement, provider package version lower",
+			dep:  map[string]string{"virt": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "provider_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"virt=5.0.0"}},
+			},
+			want: []goolib.PackageInfo{{Name: "provider_pkg", Arch: "noarch", Ver: "1.0.0"}},
+		},
+		{
+			desc: "unversioned provides meets any required version",
+			dep:  map[string]string{"virt": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "provider_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"virt"}},
+			},
+			want: []goolib.PackageInfo{{Name: "provider_pkg", Arch: "noarch", Ver: "1.0.0"}},
+		},
+		{
+			desc: "versioned provides below requirement",
+			dep:  map[string]string{"virt": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "provider_pkg", Version: "4.0.0", Arch: "noarch", Provides: []string{"virt=2.0.0"}},
+			},
+			wantErr: "cannot resolve dependency virt version 3.0.0 or greater",
+		},
+		{
+			desc: "direct dependency meets requirement",
+			dep:  map[string]string{"dep_pkg": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "dep_pkg", Version: "3.1.0", Arch: "noarch"},
+			},
+			want: []goolib.PackageInfo{{Name: "dep_pkg", Arch: "noarch", Ver: "3.1.0"}},
+		},
+		{
+			desc: "direct dependency below requirement",
+			dep:  map[string]string{"dep_pkg": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "dep_pkg", Version: "1.0.0", Arch: "noarch"},
+			},
+			wantErr: "cannot resolve dependency dep_pkg version 3.0.0 or greater",
+		},
+		{
+			desc: "direct dependency below requirement, provider meets it",
+			dep:  map[string]string{"dep_pkg": "3.0.0"},
+			pkgs: []*goolib.PkgSpec{
+				{Name: "dep_pkg", Version: "1.0.0", Arch: "noarch"},
+				{Name: "provider_pkg", Version: "1.0.0", Arch: "noarch", Provides: []string{"dep_pkg=3.0.0"}},
+			},
+			want: []goolib.PackageInfo{{Name: "provider_pkg", Arch: "noarch", Ver: "1.0.0"}},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			consumer := &goolib.PkgSpec{Name: "consumer_pkg", Version: "1.0.0", Arch: "noarch", PkgDependencies: tc.dep}
+			specs := []goolib.RepoSpec{{PackageSpec: consumer}}
+			for _, ps := range tc.pkgs {
+				specs = append(specs, goolib.RepoSpec{PackageSpec: ps})
+			}
+			rm := client.RepoMap{"repo1": client.Repo{Priority: priority.Value(500), Packages: specs}}
+			pi := goolib.PackageInfo{Name: "consumer_pkg", Arch: "noarch", Ver: "1.0.0"}
+			got, err := ListDeps(pi, rm, "repo1", []string{"noarch"}, db)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ListDeps = %v, %v; want error containing %q", got, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ListDeps: %v", err)
+			}
+			want := append([]goolib.PackageInfo{pi}, tc.want...)
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("ListDeps mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
