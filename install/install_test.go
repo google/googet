@@ -15,13 +15,18 @@ package install
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/googet/v2/client"
@@ -274,6 +279,140 @@ func TestCleanOldFiles(t *testing.T) {
 
 	if _, err := oswrap.Stat(notWant); err == nil {
 		t.Errorf("Deprecated file %s not removed", notWant)
+	}
+}
+
+// cleanOldChildEnv, when set, names the directory in which
+// TestCleanOldFilesFilePass runs cleanOldFiles in a child process.
+const cleanOldChildEnv = "GOOGET_TEST_CLEANOLD_DIR"
+
+// cleanOldLogKey is the start of the message cleanOldFiles logs for each
+// stale file it removes in the file pass.
+const cleanOldLogKey = "Cleaning up old file"
+
+// cleanOldLayout returns the old and new InstalledFiles for an upgrade under
+// dst. The new version keeps keep.txt and the locked directory, and drops
+// stale.txt, the staledir directory with its file, and locked/stuck.txt.
+func cleanOldLayout(dst string) (oldFiles, newFiles map[string]string) {
+	p := func(s string) string { return filepath.Join(dst, filepath.FromSlash(s)) }
+	oldFiles = map[string]string{
+		dst:                     "",
+		p("keep.txt"):           "11",
+		p("stale.txt"):          "22",
+		p("staledir"):           "",
+		p("staledir/inner.txt"): "33",
+		p("locked"):             "",
+		p("locked/stuck.txt"):   "44",
+	}
+	newFiles = map[string]string{
+		dst:           "",
+		p("keep.txt"): "11",
+		p("locked"):   "",
+	}
+	return oldFiles, newFiles
+}
+
+// cleanedUpPaths returns the paths named by the cleanOldLogKey lines in out.
+// Each path is unquoted if it was logged quoted.
+func cleanedUpPaths(out string) map[string]bool {
+	paths := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		_, rest, ok := strings.Cut(line, cleanOldLogKey)
+		if !ok {
+			continue
+		}
+		path := strings.TrimSpace(rest)
+		if s, err := strconv.Unquote(path); err == nil {
+			path = s
+		}
+		paths[path] = true
+	}
+	return paths
+}
+
+// TestCleanOldFilesFilePass checks that files the new version no longer ships
+// go through the file pass, which logs each one and reports a failed removal
+// as an error, while directories go through the directory pass.
+//
+// The two passes differ only in what they log, so the test has to read the
+// log. init() installs the package's default logger once, with its log file
+// discarded, info logs on stdout and error logs on stderr. google/logger never
+// replaces an initialized default logger, so the output can't be redirected
+// in-process. Instead the test re-runs itself in a child process that calls
+// cleanOldFiles, and reads the child's stdout and stderr.
+func TestCleanOldFilesFilePass(t *testing.T) {
+	if dst := os.Getenv(cleanOldChildEnv); dst != "" {
+		oldFiles, newFiles := cleanOldLayout(dst)
+		cleanOldFiles(client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "pkg"}, InstalledFiles: oldFiles}, newFiles)
+		return
+	}
+
+	// A file in a read-only directory can't be removed or renamed on unix,
+	// unless running as root. Windows doesn't honor the directory mode.
+	canLock := runtime.GOOS != "windows" && os.Geteuid() != 0
+	dst := t.TempDir()
+	oldFiles, _ := cleanOldLayout(dst)
+	for f, sum := range oldFiles {
+		if sum == "" {
+			if err := os.MkdirAll(f, 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for f, sum := range oldFiles {
+		if sum != "" {
+			if err := os.WriteFile(f, []byte(sum), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	locked := filepath.Join(dst, "locked")
+	stuck := filepath.Join(locked, "stuck.txt")
+	if canLock {
+		if err := os.Chmod(locked, 0555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(locked, 0755) })
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCleanOldFilesFilePass$", "-test.count=1")
+	cmd.Env = append(os.Environ(), cleanOldChildEnv+"="+dst)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("child process: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	cleaned := cleanedUpPaths(stdout.String())
+	for _, f := range []string{"stale.txt", "staledir/inner.txt", "locked/stuck.txt"} {
+		if path := filepath.Join(dst, filepath.FromSlash(f)); !cleaned[path] {
+			t.Errorf("child stdout has no %q line for %s; the stale file didn't take the file pass\nstdout:\n%s", cleanOldLogKey, path, stdout.String())
+		}
+	}
+	for _, d := range []string{"staledir", "locked"} {
+		if path := filepath.Join(dst, d); cleaned[path] {
+			t.Errorf("child stdout has a %q line for %s; directories must take the directory pass", cleanOldLogKey, path)
+		}
+	}
+	for _, f := range []string{"stale.txt", "staledir/inner.txt", "staledir"} {
+		if _, err := os.Stat(filepath.Join(dst, filepath.FromSlash(f))); !os.IsNotExist(err) {
+			t.Errorf("os.Stat(%s) = %v, want IsNotExist", f, err)
+		}
+	}
+	for _, f := range []string{"keep.txt", "locked"} {
+		if _, err := os.Stat(filepath.Join(dst, f)); err != nil {
+			t.Errorf("os.Stat(%s) = %v, want it kept", f, err)
+		}
+	}
+	if canLock {
+		if _, err := os.Stat(stuck); err != nil {
+			t.Fatalf("os.Stat(%s) = %v; the locked file should still exist", stuck, err)
+		}
+		// Only error logs go to stderr; the directory pass logs failures at
+		// info level, on stdout.
+		if !strings.Contains(stderr.String(), stuck) {
+			t.Errorf("child stderr doesn't mention %s; a failed file removal must be logged as an error\nstderr:\n%s", stuck, stderr.String())
+		}
 	}
 }
 
