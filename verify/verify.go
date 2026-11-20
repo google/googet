@@ -18,6 +18,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -112,6 +113,9 @@ func Command(ctx context.Context, ps client.PackageState, downloader *client.Dow
 	if ps.PackageSpec.Verify.Path == "" {
 		return true, nil
 	}
+	if goolib.Interrupted() != nil {
+		return false, goolib.ErrInterrupted
+	}
 	pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
 	logger.Infof("Running verification command for %s", pkg)
 	fmt.Printf("Running verification command for %s...\n", pkg)
@@ -153,26 +157,40 @@ func Command(ctx context.Context, ps client.PackageState, downloader *client.Dow
 	}
 	f.Close()
 
-	// Try just running the extracted command, re-extract the full package on any error.
-	if err := system.Verify(dir, ps.PackageSpec); err == nil {
-		return true, nil
-	}
-
-	if rd {
-		if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
-			return false, fmt.Errorf("error redownloading package: %v", err)
+	// Try running just the extracted verify command, and run it again from the
+	// full package if that is worth it.
+	err = system.Verify(dir, ps.PackageSpec)
+	if retryFromFullPackage(err) {
+		if goolib.Interrupted() != nil {
+			return false, goolib.ErrInterrupted
 		}
+		if rd {
+			if err := download.Package(ctx, ps.DownloadURL, ps.LocalPath, ps.Checksum, downloader); err != nil {
+				return false, fmt.Errorf("error redownloading package: %v", err)
+			}
+		}
+		dir, err = download.ExtractPkg(ps.LocalPath)
+		if err != nil {
+			return false, err
+		}
+		err = system.Verify(dir, ps.PackageSpec)
 	}
-
-	dir, err = download.ExtractPkg(ps.LocalPath)
-	if err != nil {
+	if errors.Is(err, goolib.ErrInterrupted) {
 		return false, err
 	}
-
-	// Any error is deemed a verification failure.
-	if err := system.Verify(dir, ps.PackageSpec); err != nil {
+	// Any other error is deemed a verification failure.
+	if err != nil {
 		logger.Errorf("%q: verify command failed: %v", pkg, err)
 		return false, nil
 	}
 	return true, nil
+}
+
+// retryFromFullPackage reports whether a verify command that failed with err
+// when run alone should run again from the full package, for example because
+// it needs other files from it. A command that timed out, went inactive or
+// blocked on a dialog would likely hang again, and one that was interrupted
+// must not run again since googet is stopping.
+func retryFromFullPackage(err error) bool {
+	return err != nil && !errors.Is(err, goolib.ErrInterrupted) && !errors.Is(err, goolib.ErrTimeout) && !errors.Is(err, goolib.ErrInactive) && !errors.Is(err, goolib.ErrDialog)
 }
