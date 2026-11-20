@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/settings"
 )
 
@@ -17,7 +18,7 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error creating conf file: %v", err)
 	}
-	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false")
+	content := []byte("archs: [noarch, x86_64, arm64]\ncachelife: 10m\nlockfilemaxage: 1x\nallowunsafeurl: true\nprogress: false\ninstalltimeout: 90m")
 	if _, err := f.Write(content); err != nil {
 		t.Fatalf("error writing conf file: %v", err)
 	}
@@ -25,6 +26,8 @@ func TestInitialize(t *testing.T) {
 		t.Fatalf("error closing conf file: %v", err)
 	}
 
+	origTimeout := goolib.Timeout
+	t.Cleanup(func() { goolib.Timeout = origTimeout })
 	settings.Initialize(rootDir, true)
 
 	if got, want := settings.Confirm, true; got != want {
@@ -64,6 +67,39 @@ func TestInitialize(t *testing.T) {
 			t.Errorf("settings.Progress got: %v, want: %v", got, want)
 		}
 	})
+
+	t.Run("Parsing InstallTimeout", func(t *testing.T) {
+		if got, want := goolib.Timeout, 90*time.Minute; got != want {
+			t.Errorf("goolib.Timeout got: %v, want: %v", got, want)
+		}
+	})
+}
+
+func TestInstallTimeoutSettings(t *testing.T) {
+	origTimeout := goolib.Timeout
+	t.Cleanup(func() { goolib.Timeout = origTimeout })
+	for _, tt := range []struct {
+		name string
+		conf string
+		want time.Duration
+	}{
+		{"invalid resets to default", "installtimeout: 1x", goolib.DefaultTimeout},
+		{"absent resets to default", "cachelife: 10m", goolib.DefaultTimeout},
+		{"zero disables", "installtimeout: 0", 0},
+		{"negative disables", "installtimeout: -1s", -time.Second},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rootDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte(tt.conf), 0644); err != nil {
+				t.Fatalf("error writing conf file: %v", err)
+			}
+			goolib.Timeout = 3 * time.Hour
+			settings.Initialize(rootDir, true)
+			if got := goolib.Timeout; got != tt.want {
+				t.Errorf("goolib.Timeout with %q got: %v, want: %v", tt.conf, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestProgressDefault(t *testing.T) {

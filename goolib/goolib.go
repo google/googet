@@ -18,18 +18,76 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/googet/v2/progress"
+	"github.com/google/logger"
 )
+
+// ErrTimeout is wrapped by the error Run returns when it kills a command that
+// ran longer than Timeout.
+var ErrTimeout = errors.New("command timed out")
+
+// ErrInterrupted is wrapped by the error Run returns when a signal
+// interrupted the command, and by the error every later Run call returns
+// without starting its command, including after a signal that arrived while an
+// earlier Run was draining output after its command exited.
+var ErrInterrupted = errors.New("command interrupted")
+
+// interrupt is process-wide and never cleared by design: once set, no more
+// commands run. Tests must trigger it only in subprocesses.
+var (
+	interruptMu sync.Mutex
+	interrupt   os.Signal
+)
+
+// Interrupted returns the first signal caught during a Run call, whether it
+// interrupted the command or arrived while Run drained output after the
+// command exited, or nil if there was none. A caller that stops after an
+// interruption can pass it to Reraise once it has cleaned up, so that it still
+// dies from the signal.
+func Interrupted() os.Signal {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	return interrupt
+}
+
+// setInterrupted records s as the signal returned by Interrupted, unless one
+// is already recorded.
+func setInterrupted(s os.Signal) {
+	interruptMu.Lock()
+	defer interruptMu.Unlock()
+	if interrupt == nil {
+		interrupt = s
+	}
+}
+
+// DefaultTimeout is the default value of Timeout.
+const DefaultTimeout = 4 * time.Hour
+
+// Timeout is how long Run lets a command run before killing it and all of its
+// descendants. Zero or negative disables the limit. It applies to every
+// command Run executes: installers, uninstallers, verify commands and goopack
+// build steps. googet sets it from the installtimeout key in googet.conf.
+var Timeout = DefaultTimeout
+
+// waitDelay bounds how long Run waits for the command's output to be closed
+// after it exits or is killed, since orphaned descendants may hold the pipes
+// open indefinitely.
+var waitDelay = time.Minute
 
 var interpreter = map[string]string{
 	".ps1": "powershell",
@@ -84,10 +142,43 @@ func Exec(s string, args []string, ec []int, w io.Writer) error {
 // stderr. While a progress spinner is active they are still shown as they are
 // produced, a line at a time after clearing the spinner line; nothing is
 // withheld or discarded.
+//
+// The command and its descendants are contained (a Job Object on Windows, a
+// process group elsewhere) and are all killed if the command runs longer than
+// Timeout, in which case the error wraps ErrTimeout.
+//
+// On Unix the command's process group does not receive terminal signals, so
+// SIGINT, SIGTERM, SIGHUP and SIGQUIT that this process receives while the
+// command runs are forwarded to the group, unless they were ignored; a second
+// one kills the group.
+//
+// On Windows the first Ctrl-C or Ctrl-Break (os.Interrupt) that this process
+// receives while the command runs terminates the job at once, and each later
+// one tries again. A console command received the event too but gets no grace
+// period, and a GUI installer gets no console events at all. Console close,
+// logoff and shutdown events are not caught: Windows ends the process a few
+// seconds after them, too soon to finish a cleanup reliably. Outside Run,
+// Ctrl-C still ends this process at once.
+//
+// Once an interrupted command has exited, Run returns an error wrapping
+// ErrInterrupted rather than letting the signal end this process, so that the
+// caller can clean up, and every later call returns such an error at once
+// without starting its command. A signal that arrives once the command itself
+// has exited, while Run still waits for output held open by a descendant, is
+// not passed on: the descendants keep running and Run returns the command's
+// own result, but later calls still fail. Callers must pass Interrupted to
+// Reraise after cleanup to still exit from the signal.
 func Run(c *exec.Cmd, ec []int, w io.Writer) error {
+	if err := interruptedError(c); err != nil {
+		return err
+	}
 	c.Stdout = io.MultiWriter(progress.Stdout(), w)
 	c.Stderr = io.MultiWriter(progress.Stderr(), w)
-	if err := c.Run(); err != nil {
+	c.WaitDelay = waitDelay
+	err := runContained(c, Timeout)
+	// ErrWaitDelay means the command succeeded but a descendant kept its output
+	// open, which is not a failure of the command.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		e, ok := err.(*exec.ExitError)
 		if !ok {
 			return err
@@ -101,6 +192,140 @@ func Run(c *exec.Cmd, ec []int, w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// runContained starts c with its descendants contained and waits for it. If
+// timeout is positive and c runs longer, the command and all of its
+// descendants are killed. If a signal reached the command, the error wraps
+// ErrInterrupted.
+func runContained(c *exec.Cmd, timeout time.Duration) (err error) {
+	// Signals are caught from before the start so that none is missed.
+	sigs := catchSignals(relaySignals...)
+	var release func()
+	defer func() {
+		// Stop the relay before release closes handles it may still use.
+		first, acted := sigs.stop()
+		setInterrupted(first)
+		if release != nil {
+			release()
+		}
+		if acted {
+			err = interruptedError(c)
+		}
+	}()
+	var kill func() error
+	var exited func() bool
+	kill, exited, release, err = startContained(c, sigs)
+	if err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		return c.Wait()
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-t.C:
+		// A command that already exited may still be draining output held open
+		// by a descendant; that is not a timeout.
+		if exited() {
+			return <-done
+		}
+		if err := kill(); err != nil {
+			logger.Errorf("Failed to kill %s after %v: %v", c.Path, timeout, err)
+		}
+		<-done
+		return fmt.Errorf("%w: %s was killed after %v", ErrTimeout, c.Path, timeout)
+	}
+}
+
+// interruptedError returns an error wrapping ErrInterrupted if Interrupted is
+// non-nil, and nil otherwise.
+func interruptedError(c *exec.Cmd) error {
+	if s := Interrupted(); s != nil {
+		return fmt.Errorf("%w: %s (%v)", ErrInterrupted, c.Path, s)
+	}
+	return nil
+}
+
+// signalRelay catches signals while one contained command runs.
+type signalRelay struct {
+	sigs       chan os.Signal
+	firstCh    chan struct{}
+	beforeStop func()
+	// done is closed once the goroutine started by relay has handled every
+	// caught signal; first is the first of them, and acted reports whether
+	// handle acted on any. Both are read only by stop after done.
+	done  chan struct{}
+	first os.Signal
+	acted bool
+}
+
+// catchSignals starts catching sigs. Ignored ones, as under nohup, are left
+// alone so the command still inherits that.
+func catchSignals(sigs ...os.Signal) *signalRelay {
+	r := &signalRelay{
+		sigs:    make(chan os.Signal, 1),
+		firstCh: make(chan struct{}),
+	}
+	for _, s := range sigs {
+		if !signal.Ignored(s) {
+			signal.Notify(r.sigs, s)
+		}
+	}
+	return r
+}
+
+// relay calls handle for each caught signal, in a new goroutine, until stop is
+// called. acted reports whether handle already acted on an earlier signal, and
+// handle reports whether it acted on s.
+func (r *signalRelay) relay(handle func(s os.Signal, acted bool) bool) {
+	r.done = make(chan struct{})
+	go func() {
+		defer close(r.done)
+		for s := range r.sigs {
+			if r.first == nil {
+				r.first = s
+				close(r.firstCh)
+			}
+			if handle(s, r.acted) {
+				r.acted = true
+			}
+		}
+	}()
+}
+
+// waitFirst waits up to d for the relay to receive a signal.
+func (r *signalRelay) waitFirst(d time.Duration) {
+	if r.done == nil {
+		return
+	}
+	select {
+	case <-r.firstCh:
+	case <-time.After(d):
+	}
+}
+
+// stop stops catching signals and returns the first one caught, or nil, and
+// whether handle acted on any. If relay was called, it first waits until
+// every caught signal was handled.
+func (r *signalRelay) stop() (os.Signal, bool) {
+	if r.beforeStop != nil {
+		r.beforeStop()
+	}
+	// No more signals are sent to sigs once Stop returns.
+	signal.Stop(r.sigs)
+	close(r.sigs)
+	if r.done == nil {
+		// Without relay, at most one signal is buffered.
+		return <-r.sigs, false
+	}
+	<-r.done
+	return r.first, r.acted
 }
 
 // PackageInfo describes the name arch and version of a package.
