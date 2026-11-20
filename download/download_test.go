@@ -81,6 +81,51 @@ func TestDownloadUnknownSize(t *testing.T) {
 	}
 }
 
+// failingReader returns data and then err.
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+// TestDownloadFailureRemovesFile checks that download, which the GCS path
+// uses, removes dst on any error, so no empty, partial or corrupt file is left.
+func TestDownloadFailureRemovesFile(t *testing.T) {
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	readErr := errors.New("connection reset")
+	for _, tc := range []struct {
+		desc    string
+		r       io.Reader
+		chksum  string
+		wantErr error
+	}{
+		{desc: "checksum mismatch", r: bytes.NewReader(payload), chksum: "badsum"},
+		{desc: "read fails partway", r: &failingReader{data: payload[:400], err: readErr}, chksum: chksum, wantErr: readErr},
+		{desc: "read fails before any data", r: &failingReader{err: readErr}, chksum: chksum, wantErr: readErr},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			err := download(tc.r, int64(len(payload)), dst, tc.chksum)
+			if err == nil {
+				t.Fatal("download() = nil, want an error")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("download() = %v, want %v", err, tc.wantErr)
+			}
+			assertNoFile(t, dst)
+		})
+	}
+}
+
 // rangeServer serves payload, advertising range support on HEAD. When
 // honorRange is false it answers ranged GETs with the whole file and 200 OK,
 // as some proxies do. When rejectHEAD is true it answers HEAD with 405.
@@ -117,6 +162,79 @@ func rangeServer(t *testing.T, payload []byte, honorRange, rejectHEAD bool, requ
 		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 		w.Write(payload)
 	}))
+}
+
+// methodServer answers HEAD requests with head and GET requests with get,
+// and counts the requests it receives per method.
+type methodServer struct {
+	*httptest.Server
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func newMethodServer(t *testing.T, head, get http.HandlerFunc) *methodServer {
+	t.Helper()
+	s := &methodServer{counts: map[string]int{}}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.counts[r.Method]++
+		s.mu.Unlock()
+		switch r.Method {
+		case http.MethodHead:
+			head(w, r)
+		case http.MethodGet:
+			get(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func (s *methodServer) count(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counts[method]
+}
+
+// statusHandler answers every request with code and no body.
+func statusHandler(code int) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
+}
+
+// headOK answers HEAD with the payload size, advertising range support only
+// when ranges is true.
+func headOK(size int, ranges bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if ranges {
+			w.Header().Set("Accept-Ranges", "bytes")
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(size))
+	}
+}
+
+// resetConn closes the connection before sending any response headers.
+func resetConn(w http.ResponseWriter, _ *http.Request) {
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	if tc, ok := conn.(interface{ SetLinger(int) error }); ok {
+		tc.SetLinger(0) // Send RST rather than FIN.
+	}
+	conn.Close()
+}
+
+// assertNoFile fails the test if path exists.
+func assertNoFile(t *testing.T, path string) {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err == nil {
+		t.Errorf("%s exists with %d bytes after a failed download, want no file", filepath.Base(path), fi.Size())
+	} else if !os.IsNotExist(err) {
+		t.Errorf("os.Stat(%s) = %v, want IsNotExist", path, err)
+	}
 }
 
 func TestPackageHTTP(t *testing.T) {
@@ -223,6 +341,81 @@ func TestPackageHTTP(t *testing.T) {
 			t.Errorf("os.Stat(dst) after checksum mismatch = %v, want IsNotExist", err)
 		}
 	})
+}
+
+// TestPackageHTTPFailureLeavesNoEmptyFile checks that a failed HTTP download
+// never leaves a 0-byte file at dst, however dst came to be empty.
+func TestPackageHTTPFailureLeavesNoEmptyFile(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	for _, tc := range []struct {
+		desc     string
+		existing []byte // Written to dst before the download; nil means no file.
+		head     http.HandlerFunc
+		get      http.HandlerFunc
+	}{
+		{
+			desc: "no file and 404",
+			head: statusHandler(http.StatusNotFound),
+			get:  statusHandler(http.StatusNotFound),
+		},
+		{
+			desc: "no file and connection reset before headers",
+			head: headOK(len(payload), true),
+			get:  resetConn,
+		},
+		{
+			// Without Accept-Ranges, restart() truncates the partial file
+			// before the GET fails.
+			desc:     "partial file truncated by restart then 503",
+			existing: payload[:400],
+			head:     headOK(len(payload), false),
+			get:      statusHandler(http.StatusServiceUnavailable),
+		},
+		{
+			// A full-size file with the wrong checksum is
+			// truncated before the GET fails.
+			desc:     "full-size corrupt file then 404",
+			existing: bytes.Repeat([]byte("x"), len(payload)),
+			head:     headOK(len(payload), true),
+			get:      statusHandler(http.StatusNotFound),
+		},
+		{
+			// An empty file left by an older googet.
+			desc:     "empty file left behind then 404",
+			existing: []byte{},
+			head:     statusHandler(http.StatusNotFound),
+			get:      statusHandler(http.StatusNotFound),
+		},
+		{
+			desc:     "empty file left behind then connection reset",
+			existing: []byte{},
+			head:     headOK(len(payload), true),
+			get:      resetConn,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			srv := newMethodServer(t, tc.head, tc.get)
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			if tc.existing != nil {
+				if err := os.WriteFile(dst, tc.existing, 0644); err != nil {
+					t.Fatalf("writing existing file: %v", err)
+				}
+			}
+			if err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader); err == nil {
+				t.Fatal("Package() = nil, want an error")
+			}
+			if srv.count(http.MethodGet) == 0 {
+				t.Errorf("server got no GET request, want at least 1")
+			}
+			assertNoFile(t, dst)
+		})
+	}
 }
 
 func TestLatest(t *testing.T) {
@@ -495,6 +688,49 @@ func TestPackageGCSRetries(t *testing.T) {
 	}
 }
 
+// TestPackageGCSFailureLeavesNoFile checks end to end through the GCS emulator
+// that dst doesn't exist after the last attempt fails.
+func TestPackageGCSFailureLeavesNoFile(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	for _, tc := range []struct {
+		desc    string
+		handler http.HandlerFunc
+	}{
+		{
+			desc: "checksum mismatch on every attempt",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+				w.Write(bytes.Repeat([]byte("x"), len(payload)))
+			},
+		},
+		{
+			desc: "body cut short on every attempt",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+				w.Write(payload[:400])
+				w.(http.Flusher).Flush()
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					conn.Close()
+				}
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+			dst := filepath.Join(t.TempDir(), "pkg.goo")
+			if err := Package(context.Background(), "gs://bkt/pkg.goo", dst, chksum, stallDownloader(2*time.Second)); err == nil {
+				t.Fatal("Package(gs://bkt/pkg.goo) = nil, want an error")
+			}
+			assertNoFile(t, dst)
+		})
+	}
+}
+
 func TestPackageResumesAfterGivingUp(t *testing.T) {
 	var gotRetries []int
 	setRetryDelay(t, func(retry int) time.Duration {
@@ -513,6 +749,10 @@ func TestPackageResumesAfterGivingUp(t *testing.T) {
 	}
 	if !slices.Equal(gotRetries, []int{1, 2}) {
 		t.Errorf("retryDelay calls = %v, want [1 2]", gotRetries)
+	}
+	// The failed download keeps the non-empty partial file (#216).
+	if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, payload[:300]) {
+		t.Fatalf("partial file after giving up = %d bytes, %v; want the first 300 payload bytes", len(got), err)
 	}
 	// A later run, such as the next googet invocation, resumes the partial
 	// file.

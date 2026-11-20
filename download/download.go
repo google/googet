@@ -78,14 +78,32 @@ func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client
 	}
 }
 
-// packageHTTP downloads a package from an HTTP(S) server.
-func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) error {
+// packageHTTP downloads a package from an HTTP(S) server. A failed download
+// keeps a non-empty partial file so a later attempt can resume it, but never
+// leaves an empty file behind.
+func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) (err error) {
 	// Try to open any already existing file, otherwise create new file.
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	// The file is created, or truncated by restart, before the request is
+	// sent, so a failed request can leave it empty. Check the current size
+	// rather than whether the file existed before, since a partial file can
+	// also be truncated before the request fails.
+	defer func() {
+		if err == nil {
+			return
+		}
+		if fi, sErr := f.Stat(); sErr != nil || fi.Size() != 0 {
+			return
+		}
+		f.Close() // Windows cannot delete an open file.
+		if rErr := os.Remove(dst); rErr != nil {
+			logger.Warningf("Failed to remove empty file %s: %v", dst, rErr)
+		}
+	}()
 	// Hash the contents of the existing file.
 	hash := sha256.New()
 	size, err := io.Copy(hash, f)
@@ -236,7 +254,8 @@ func Latest(ctx context.Context, pi goolib.PackageInfo, dir string, rm client.Re
 }
 
 // download copies r to dst, verifying the SHA256 checksum, and renders a
-// progress bar when enabled.
+// progress bar when enabled. On any error dst is removed, so a failed download
+// leaves no empty, partial or corrupt file behind.
 func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	f, err := oswrap.Create(dst)
 	if err != nil {
@@ -245,6 +264,12 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	defer func() {
 		if cErr := f.Close(); cErr != nil && err == nil {
 			err = cErr
+		}
+		if err == nil {
+			return
+		}
+		if rErr := oswrap.Remove(dst); rErr != nil {
+			logger.Warningf("Failed to remove %s after a failed download: %v", dst, rErr)
 		}
 	}()
 
