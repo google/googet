@@ -125,7 +125,11 @@ func resolveReplacements(ctx context.Context, ps *goolib.PkgSpec, dbOnly bool, d
 			return err
 		}
 		logger.Infof("%s replaces %s, removing", ps, pi)
-		if err := remove.All(ctx, pi, deps, dbOnly, downloader, db); err != nil {
+		mode := remove.RunUninstaller
+		if dbOnly {
+			mode = remove.DBOnly
+		}
+		if err := remove.All(ctx, pi, deps, mode, downloader, db); err != nil {
 			return err
 		}
 	}
@@ -592,7 +596,13 @@ func installPkgInner(pkg string, ps *goolib.PkgSpec, dbOnly, force bool, db *goo
 	insFiles := make(map[string]string)
 	for src, dst := range ps.Files {
 		dst = resolveDst(dst)
-		src = filepath.Join(dir, src)
+		// Specs from a repo index or the database are not normalized like
+		// those read from a package, so the source must stay inside dir.
+		p, err := goolib.JoinWithin(dir, src)
+		if err != nil {
+			return nil, fmt.Errorf("invalid file source: %v", err)
+		}
+		src = p
 		if err := oswrap.Walk(src, makeInstallFunction(src, dst, insFiles, dbOnly, force, conflictMap)); err != nil {
 			return nil, err
 		}

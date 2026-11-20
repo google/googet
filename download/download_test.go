@@ -225,6 +225,42 @@ func TestPackageHTTP(t *testing.T) {
 	})
 }
 
+func TestExtractPkgSiblingTraversal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "foo.goo")
+	f, err := os.Create(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	// ExtractPkg extracts foo.goo to dir/foo, so this entry targets the sibling
+	// dir/foo-evil, whose path has dir/foo as a string prefix.
+	body := []byte("escaped")
+	if err := tw.WriteHeader(&tar.Header{Name: "../foo-evil/x", Mode: 0644, Size: int64(len(body))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ExtractPkg(src); err == nil || !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("ExtractPkg error = %v, want a path traversal error", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "foo-evil", "x")); !os.IsNotExist(err) {
+		t.Errorf("ExtractPkg wrote outside the destination directory: stat error = %v", err)
+	}
+}
+
 func TestLatest(t *testing.T) {
 	// Each package payload names its own arch so the test can tell which
 	// spec was downloaded.
@@ -594,6 +630,9 @@ func TestExtractPkg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error running ExtractPkg: %v", err)
 	}
+	if want := ExtractDir(tempFile); dst != want {
+		t.Errorf("ExtractPkg(%q) extracted to %q, want ExtractDir's %q", tempFile, dst, want)
+	}
 
 	cts, err := os.ReadFile(filepath.Join(dst, filepath.Clean(name)))
 	if err != nil {
@@ -643,5 +682,22 @@ func TestExtractPkgPathTraversal(t *testing.T) {
 
 	if _, err := ExtractPkg(tempFile); err == nil {
 		t.Fatal("error expected because of path traversal")
+	}
+}
+
+func TestExtractDir(t *testing.T) {
+	dir := filepath.Join("cache", "dir.d")
+	for _, tc := range []struct {
+		src, want string
+	}{
+		{filepath.Join(dir, "foo.noarch.1.0.0@1.goo"), filepath.Join(dir, "foo.noarch.1.0.0@1")},
+		{filepath.Join(dir, "test.pkg"), filepath.Join(dir, "test")},
+		// With no extension, the directory is the package path itself.
+		{filepath.Join(dir, "foo"), filepath.Join(dir, "foo")},
+		{"", ""},
+	} {
+		if got := ExtractDir(tc.src); got != tc.want {
+			t.Errorf("ExtractDir(%q) = %q, want %q", tc.src, got, tc.want)
+		}
 	}
 }

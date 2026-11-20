@@ -16,12 +16,16 @@ package install
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/googet/v2/client"
@@ -29,6 +33,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/remove"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 )
@@ -600,5 +605,71 @@ func TestMakeInstallFunction(t *testing.T) {
 	errStrictForce := fnStrictForce(filepath.Join(srcDir, "conflicting_file"), fi, nil)
 	if errStrictForce != nil {
 		t.Errorf("expected no error with force in strict mode, got %v", errStrictForce)
+	}
+}
+
+// A replaced package is removed as dbOnly says: with dbOnly only its database
+// entry goes, otherwise its uninstall command runs. A's uninstall script needs
+// the package, which is not cached and can't be downloaded.
+func TestResolveReplacementsMode(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dbOnly  bool
+		wantErr error
+	}{
+		{"db_only", true, nil},
+		{"run uninstaller", false, remove.ErrPackageUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			d, err := client.NewDownloader("")
+			if err != nil {
+				t.Fatalf("NewDownloader: %v", err)
+			}
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			file := filepath.Join(t.TempDir(), "a.exe")
+			if err := os.WriteFile(file, []byte("a"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.WriteStateToDB(client.GooGetState{{
+				PackageSpec:    &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1.0.0@1", Uninstall: goolib.ExecFile{Path: "uninstall.sh"}},
+				InstalledFiles: map[string]string{file: "chksum"},
+				LocalPath:      filepath.Join(t.TempDir(), "A.noarch.1.0.0@1.goo"),
+				DownloadURL:    srv.URL + "/A.noarch.1.0.0@1.goo",
+				Checksum:       "0000",
+			}}); err != nil {
+				t.Fatalf("WriteStateToDB: %v", err)
+			}
+
+			ps := &goolib.PkgSpec{Name: "B", Arch: "noarch", Version: "1.0.0@1", Replaces: []string{"A"}}
+			err = resolveReplacements(t.Context(), ps, tc.dbOnly, d, db)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("resolveReplacements(dbOnly=%v) = %v, want %v", tc.dbOnly, err, tc.wantErr)
+			}
+			a, err := db.FetchPkg(goolib.PackageInfo{Name: "A", Arch: "noarch"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := a.PackageSpec != nil, tc.wantErr != nil; got != want {
+				t.Errorf("A still installed = %v, want %v", got, want)
+			}
+			// db_only and a failed uninstall both leave A's files in place.
+			if _, err := os.Stat(file); err != nil {
+				t.Errorf("A's installed file was removed: %v", err)
+			}
+			if gotRequests := requests.Load() > 0; gotRequests != !tc.dbOnly {
+				t.Errorf("download requested = %v, want %v", gotRequests, !tc.dbOnly)
+			}
+		})
 	}
 }

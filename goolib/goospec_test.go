@@ -703,3 +703,21 @@ func TestPkgSpec_URLFields(t *testing.T) {
 		t.Errorf("UnmarshalPackageSpec(MarshalPackageSpec(%v)) diff (-want +got):\n%s", ps, diff)
 	}
 }
+
+func TestVerifyPathValidation(t *testing.T) {
+	ps, err := UnmarshalPackageSpec([]byte(`{"name": "pkg", "version": "1.2.3@4", "arch": "noarch", "verify": {"path": "../../verify.ps1"}}`))
+	if err != nil {
+		t.Fatalf("UnmarshalPackageSpec: %v", err)
+	}
+	if want := "verify.ps1"; ps.Verify.Path != want {
+		t.Errorf("Verify.Path = %q, want %q", ps.Verify.Path, want)
+	}
+
+	abs := "/usr/bin/verify"
+	if runtime.GOOS == "windows" {
+		abs = `C:\\Windows\\verify.cmd`
+	}
+	if _, err := UnmarshalPackageSpec([]byte(`{"name": "pkg", "version": "1.2.3@4", "arch": "noarch", "verify": {"path": "` + abs + `"}}`)); err == nil {
+		t.Errorf("UnmarshalPackageSpec accepted absolute verify path %q", abs)
+	}
+}

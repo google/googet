@@ -1,12 +1,18 @@
 package remove
 
 import (
-	"bytes"
 	"context"
+	"errors"
+	"flag"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -14,9 +20,11 @@ import (
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/remove"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
+	"github.com/google/subcommands"
 )
 
 func TestRemoveOne(t *testing.T) {
@@ -94,7 +102,7 @@ func TestRemoveOne(t *testing.T) {
 			}
 			// Remove a package.
 			cmd := removeCmd{}
-			if err := cmd.removeOne(t.Context(), tc.pkgName, downloader, db); err != nil {
+			if err := cmd.removeOne(t.Context(), tc.pkgName, remove.RunUninstaller, downloader, db); err != nil {
 				t.Fatalf("removeOne: %v", err)
 			}
 			// Check that database looks right.
@@ -113,18 +121,41 @@ func TestRemoveOne(t *testing.T) {
 	}
 }
 
-func captureStdout(f func()) string {
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	f()
-
-	w.Close()
-	os.Stdout = oldStdout
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	return buf.String()
+// captureStdio runs fn and returns what it wrote to stdout and stderr. Both
+// pipes are drained while fn runs, so a large write can't block it, and both
+// are restored even if fn stops the test.
+func captureStdio(t *testing.T, fn func()) (stdout, stderr string) {
+	t.Helper()
+	capture := func(f **os.File) (restore func() string) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("os.Pipe: %v", err)
+		}
+		orig := *f
+		*f = w
+		done := make(chan string, 1)
+		go func() {
+			b, _ := io.ReadAll(r)
+			r.Close()
+			done <- string(b)
+		}()
+		var once sync.Once
+		var out string
+		return func() string {
+			once.Do(func() {
+				w.Close()
+				*f = orig
+				out = <-done
+			})
+			return out
+		}
+	}
+	restoreOut := capture(&os.Stdout)
+	defer restoreOut()
+	restoreErr := capture(&os.Stderr)
+	defer restoreErr()
+	fn()
+	return restoreOut(), restoreErr()
 }
 
 func TestRemoveOneDryRun(t *testing.T) {
@@ -198,8 +229,8 @@ func TestRemoveOneDryRun(t *testing.T) {
 			}
 			cmd := removeCmd{dryRun: true}
 
-			output := captureStdout(func() {
-				if err := cmd.removeOne(ctx, tc.pkgName, downloader, db); err != nil {
+			output, _ := captureStdio(t, func() {
+				if err := cmd.removeOne(ctx, tc.pkgName, remove.RunUninstaller, downloader, db); err != nil {
 					t.Errorf("removeOne(%q, dryRun: true) returned error: %v", tc.pkgName, err)
 				}
 			})
@@ -225,5 +256,141 @@ func TestRemoveOneDryRun(t *testing.T) {
 				t.Errorf("DB state changed unexpectedly in dry_run (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestMode(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		dbOnly, skipUninstaller bool
+		want                    remove.Mode
+		wantErr                 bool
+	}{
+		{name: "no flags", want: remove.RunUninstaller},
+		{name: "skip_uninstaller", skipUninstaller: true, want: remove.SkipUninstaller},
+		{name: "db_only", dbOnly: true, want: remove.DBOnly},
+		{name: "both", dbOnly: true, skipUninstaller: true, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := removeCmd{dbOnly: tc.dbOnly, skipUninstaller: tc.skipUninstaller}
+			got, err := cmd.mode()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("mode() error = %v, want error: %v", err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Errorf("mode() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// -db_only and -skip_uninstaller together are a usage error, reported before
+// the database is opened.
+func TestExecuteRejectsDBOnlyWithSkipUninstaller(t *testing.T) {
+	logger.Init("GooGet", true, false, io.Discard)
+	settings.Initialize(t.TempDir(), false)
+	cmd := &removeCmd{}
+	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	cmd.SetFlags(fs)
+	if err := fs.Parse([]string{"-db_only", "-skip_uninstaller", "foo"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cmd.Execute(t.Context(), fs); got != subcommands.ExitUsageError {
+		t.Errorf("Execute() = %v, want ExitUsageError (%v)", got, subcommands.ExitUsageError)
+	}
+	if _, err := os.Stat(settings.DBFile()); !os.IsNotExist(err) {
+		t.Errorf("Execute() created the database %s (stat error: %v)", settings.DBFile(), err)
+	}
+}
+
+func TestUnavailableHint(t *testing.T) {
+	unavailable := fmt.Errorf("%w: bar.noarch.1 is not cached", remove.ErrPackageUnavailable)
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantHint bool
+	}{
+		{"unavailable", unavailable, true},
+		{"wrapped again", fmt.Errorf("removing bar: %w", unavailable), true},
+		{"other error", errors.New("package not found in state file"), false},
+		{"error naming the sentinel text", errors.New(remove.ErrPackageUnavailable.Error()), false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unavailableHint("foo", tc.err)
+			if !tc.wantHint {
+				if got != "" {
+					t.Errorf("unavailableHint(%v) = %q, want \"\"", tc.err, got)
+				}
+				return
+			}
+			for _, want := range []string{"googet remove -skip_uninstaller foo", "depend"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("unavailableHint(%v) = %q, want it to contain %q", tc.err, got, want)
+				}
+			}
+		})
+	}
+}
+
+// When a package's uninstall command needs the package and it can't be
+// downloaded, Execute fails and tells the user on stderr how to remove it
+// without running the uninstall command.
+func TestExecutePrintsUnavailableHint(t *testing.T) {
+	logger.Init("GooGet", false, false, io.Discard)
+	settings.Initialize(t.TempDir(), false)
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	db, err := googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	base := "foo.noarch.1.goo"
+	if err := db.WriteStateToDB(client.GooGetState{{
+		PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1", Uninstall: goolib.ExecFile{Path: "uninstall.sh"}},
+		LocalPath:   filepath.Join(t.TempDir(), base), // Not cached.
+		DownloadURL: srv.URL + "/" + base,
+		Checksum:    "0000",
+	}}); err != nil {
+		t.Fatalf("db.WriteStateToDB: %v", err)
+	}
+	db.Close()
+
+	cmd := &removeCmd{}
+	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	cmd.SetFlags(fs)
+	if err := fs.Parse([]string{"foo"}); err != nil {
+		t.Fatal(err)
+	}
+	var status subcommands.ExitStatus
+	_, stderr := captureStdio(t, func() { status = cmd.Execute(t.Context(), fs) })
+	if status != subcommands.ExitFailure {
+		t.Errorf("Execute() = %v, want ExitFailure (%v)", status, subcommands.ExitFailure)
+	}
+	if requests.Load() == 0 {
+		t.Error("Execute() did not try to download the package")
+	}
+	if want := unavailableHint("foo", remove.ErrPackageUnavailable); !strings.Contains(stderr, want) {
+		t.Errorf("Execute() wrote %q to stderr, want it to contain the hint %q", stderr, want)
+	}
+
+	db, err = googetdb.NewDB(settings.DBFile())
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	defer db.Close()
+	ps, err := db.FetchPkg(goolib.PackageInfo{Name: "foo", Arch: "noarch"})
+	if err != nil {
+		t.Fatalf("db.FetchPkg: %v", err)
+	}
+	if ps.PackageSpec == nil {
+		t.Error("Execute() removed foo from the database, want it kept")
 	}
 }
