@@ -156,6 +156,9 @@ func installDeps(ctx context.Context, ps *goolib.PkgSpec, cache string, rm clien
 		if err != nil {
 			return err
 		}
+		if spec.Name == ps.Name && spec.Arch == ps.Arch {
+			return fmt.Errorf("dependency %s of %s.%s resolves to the package itself", p, ps.Name, ps.Arch)
+		}
 
 		logger.Infof("Dependency found: %s.%s %s (provides %s) is available", spec.Name, spec.Arch, spec.Version, pi.Name)
 		if err := FromRepo(ctx, goolib.PackageInfo{Name: spec.Name, Arch: spec.Arch, Ver: spec.Version}, repo, cache, rm, archs, dbOnly, force, downloader, db); err != nil {
@@ -624,10 +627,16 @@ func listDeps(pi goolib.PackageInfo, rm client.RepoMap, repo string, dl []goolib
 			logger.Infof("Error fetching installed package state: %v, proceeding without lock", err)
 		}
 		spec, repo, arch, err := client.FindRepoLatest(di, rm, archs, installedArch, isLocked)
-		di.Arch = arch
 		if err != nil {
-			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, di.Arch, di.Ver, err)
+			return nil, fmt.Errorf("cannot resolve dependency %s.%s.%s: %v", di.Name, arch, di.Ver, err)
 		}
+		if spec.Name == pi.Name && arch == pi.Arch {
+			return nil, fmt.Errorf("dependency %s of %s.%s resolves to the package itself", d, pi.Name, pi.Arch)
+		}
+		// The dependency may be satisfied by a package that provides it, so
+		// continue with that package's own name and arch.
+		di.Name = spec.Name
+		di.Arch = arch
 		c, err := goolib.Compare(spec.Version, v)
 		if err != nil {
 			return nil, err
