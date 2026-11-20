@@ -512,8 +512,10 @@ func cleanOldFiles(oldState client.PackageState, insFiles map[string]string) {
 		return
 	}
 	var files []string
-	for file := range oldState.InstalledFiles {
-		if chksum, ok := insFiles[file]; !ok {
+	for file, chksum := range oldState.InstalledFiles {
+		if _, ok := insFiles[file]; !ok {
+			// Directories are recorded with an empty checksum. Remove them
+			// after the files, in reverse order, so they are empty by then.
 			if chksum == "" {
 				files = append(files, file)
 				continue
