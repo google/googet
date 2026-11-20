@@ -69,3 +69,64 @@ func TestFiles(t *testing.T) {
 		}
 	}
 }
+
+// openHandles returns how many of this process's file descriptors refer to
+// path, and false when /proc/self/fd isn't available to count them.
+func openHandles(path string) (int, bool) {
+	fds, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return 0, false
+	}
+	n := 0
+	for _, fd := range fds {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", fd.Name()))
+		if err == nil && target == path {
+			n++
+		}
+	}
+	return n, true
+}
+
+func TestFilesReleasesDirectoryAndFileHandles(t *testing.T) {
+	// openHandles compares against /proc/self/fd link targets, which are fully
+	// resolved, so resolve symlinks in the temporary directory's path too.
+	tempDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tempDir, "dir")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("contents"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chksm := goolib.Checksum(f)
+	f.Close()
+
+	ps := client.PackageState{
+		InstalledFiles: map[string]string{dir: "", file: chksm},
+		PackageSpec:    &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0@1"},
+	}
+	ok, err := Files(ps)
+	if err != nil || !ok {
+		t.Fatalf("Files(%v) = %t, %v; want true, nil", ps.InstalledFiles, ok, err)
+	}
+	for _, p := range []string{dir, file} {
+		if n, ok := openHandles(p); ok && n != 0 {
+			t.Errorf("%d open handles to %q after Files, want 0", n, p)
+		}
+	}
+	// Windows refuses to remove a file or directory while a handle to it is
+	// open.
+	for _, p := range []string{file, dir} {
+		if err := os.Remove(p); err != nil {
+			t.Errorf("os.Remove(%q) after Files: %v", p, err)
+		}
+	}
+}
