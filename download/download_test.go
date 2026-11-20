@@ -19,9 +19,11 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -33,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -619,8 +622,8 @@ func TestPackageRetries(t *testing.T) {
 			wantRanges: []string{"bytes=0-"},
 		},
 		{
-			desc:       "any error is retried until maxAttempts",
-			steps:      slices.Repeat([]step{{status: http.StatusNotFound}}, maxAttempts),
+			desc:       "server error is retried until maxAttempts",
+			steps:      slices.Repeat([]step{{status: http.StatusServiceUnavailable}}, maxAttempts),
 			wantRanges: slices.Repeat([]string{"bytes=0-"}, maxAttempts),
 			wantErr:    true,
 		},
@@ -651,6 +654,138 @@ func TestPackageRetries(t *testing.T) {
 				t.Errorf("GET ranges = %q, want %q", ranges, tc.wantRanges)
 			}
 		})
+	}
+}
+
+// timeoutError is a net.Error that reports a timeout.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// TestIsPermanent checks that only 4xx statuses other than 408, 425 and 429,
+// and a missing GCS object, are permanent.
+func TestIsPermanent(t *testing.T) {
+	status := func(code int) error {
+		return &statusError{url: "http://example.com/pkg.goo", code: code, status: fmt.Sprintf("%d %s", code, http.StatusText(code))}
+	}
+	for _, tc := range []struct {
+		desc string
+		err  error
+		want bool
+	}{
+		{"400", status(http.StatusBadRequest), true},
+		{"401", status(http.StatusUnauthorized), true},
+		{"403", status(http.StatusForbidden), true},
+		{"404", status(http.StatusNotFound), true},
+		{"410", status(http.StatusGone), true},
+		{"wrapped 404", fmt.Errorf("attempt: %w", status(http.StatusNotFound)), true},
+		{"304", status(http.StatusNotModified), false},
+		{"408", status(http.StatusRequestTimeout), false},
+		{"425", status(http.StatusTooEarly), false},
+		{"429", status(http.StatusTooManyRequests), false},
+		{"500", status(http.StatusInternalServerError), false},
+		{"503", status(http.StatusServiceUnavailable), false},
+		{"GCS object not found", storage.ErrObjectNotExist, true},
+		{"net timeout", &url.Error{Op: "Get", URL: "http://example.com", Err: timeoutError{}}, false},
+		{"stall", fmt.Errorf("downloading x: %w", client.ErrStalled), false},
+		{"context deadline", context.DeadlineExceeded, false},
+		{"checksum mismatch", errors.New("checksum doesn't match: got a, want b"), false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := isPermanent(tc.err); got != tc.want {
+				t.Errorf("isPermanent(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPackageRetriesByStatus checks that Package stops after one attempt on a
+// permanent GET status and retries the rest up to maxAttempts.
+func TestPackageRetriesByStatus(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	for _, tc := range []struct {
+		code     int
+		wantGETs int
+	}{
+		{http.StatusNotFound, 1},
+		{http.StatusTooManyRequests, maxAttempts},
+		{http.StatusServiceUnavailable, maxAttempts},
+	} {
+		t.Run(strconv.Itoa(tc.code), func(t *testing.T) {
+			srv := newMethodServer(t, headOK(len(payload), true), statusHandler(tc.code))
+			err := Package(context.Background(), srv.URL+"/pkg.goo", filepath.Join(t.TempDir(), "pkg.goo"), chksum, downloader)
+			var sErr *statusError
+			if !errors.As(err, &sErr) || sErr.code != tc.code {
+				t.Errorf("Package() = %v, want a *statusError with code %d", err, tc.code)
+			}
+			if got := srv.count(http.MethodGet); got != tc.wantGETs {
+				t.Errorf("GET requests = %d, want %d", got, tc.wantGETs)
+			}
+		})
+	}
+
+	// Only the GET status is classified, so a 404 HEAD followed by a good
+	// GET succeeds on the first attempt.
+	t.Run("HEAD 404 then GET 200", func(t *testing.T) {
+		srv := newMethodServer(t, statusHandler(http.StatusNotFound), func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			w.Write(payload)
+		})
+		dst := filepath.Join(t.TempDir(), "pkg.goo")
+		if err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader); err != nil {
+			t.Fatalf("Package() = %v, want nil", err)
+		}
+		if got := srv.count(http.MethodGet); got != 1 {
+			t.Errorf("GET requests = %d, want 1", got)
+		}
+	})
+}
+
+// TestPackageRetriesChecksumMismatch checks that a checksum mismatch is retried
+// and that the retry starts from an empty file.
+func TestPackageRetriesChecksumMismatch(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := bytes.Repeat([]byte("0123456789"), 100)
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	downloader, err := client.NewDownloader("")
+	if err != nil {
+		t.Fatalf("client.NewDownloader: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), "pkg.goo")
+	var gets atomic.Int32
+	var sizeAtRetry atomic.Int64
+	srv := newMethodServer(t, headOK(len(payload), true), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		if gets.Add(1) == 1 {
+			w.Write(bytes.Repeat([]byte("x"), len(payload)))
+			return
+		}
+		// packageHTTP has reopened dst by now; the corrupt bytes must be gone.
+		if fi, err := os.Stat(dst); err == nil {
+			sizeAtRetry.Store(fi.Size())
+		}
+		w.Write(payload)
+	})
+	if err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader); err != nil {
+		t.Fatalf("Package() = %v, want nil", err)
+	}
+	if got := srv.count(http.MethodGet); got != 2 {
+		t.Errorf("GET requests = %d, want 2", got)
+	}
+	if got := sizeAtRetry.Load(); got != 0 {
+		t.Errorf("dst had %d bytes when the retry started, want 0", got)
+	}
+	if got, err := os.ReadFile(dst); err != nil || !bytes.Equal(got, payload) {
+		t.Errorf("downloaded file = %d bytes, %v; want the payload", len(got), err)
 	}
 }
 
@@ -729,6 +864,23 @@ func TestPackageGCSFailureLeavesNoFile(t *testing.T) {
 			assertNoFile(t, dst)
 		})
 	}
+}
+
+// TestPackageGCSDoesNotRetryNotFound checks that a missing GCS object is not
+// retried.
+func TestPackageGCSDoesNotRetryNotFound(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	srv := newMethodServer(t, http.NotFound, http.NotFound)
+	t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+	dst := filepath.Join(t.TempDir(), "pkg.goo")
+	err := Package(context.Background(), "gs://bkt/pkg.goo", dst, "sum", stallDownloader(2*time.Second))
+	if !client.IsGCSNotFound(err) {
+		t.Errorf("Package(gs://bkt/pkg.goo) = %v, want an error that client.IsGCSNotFound accepts", err)
+	}
+	if got := srv.count(http.MethodGet) + srv.count(http.MethodHead); got != 1 {
+		t.Errorf("GCS requests = %d, want 1", got)
+	}
+	assertNoFile(t, dst)
 }
 
 func TestPackageResumesAfterGivingUp(t *testing.T) {

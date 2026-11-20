@@ -50,8 +50,9 @@ var retryDelay = func(retry int) time.Duration {
 
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-// A failed or stalled download is tried up to maxAttempts times in all. An
-// HTTP download resumes from the partial file when the server supports it.
+// A failed or stalled download is tried up to maxAttempts times in all,
+// unless the failure is permanent, such as a 404. An HTTP download resumes
+// from the partial file when the server supports it.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
 	try := func() error {
@@ -65,7 +66,7 @@ func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client
 	}
 	for attempt := 1; ; attempt++ {
 		err := try()
-		if err == nil || ctx.Err() != nil || attempt == maxAttempts {
+		if err == nil || ctx.Err() != nil || attempt == maxAttempts || isPermanent(err) {
 			return err
 		}
 		d := retryDelay(attempt)
@@ -76,6 +77,35 @@ func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client
 		case <-time.After(d):
 		}
 	}
+}
+
+// statusError is returned by packageHTTP when the server answers a GET with an
+// unexpected HTTP status.
+type statusError struct {
+	url    string
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("downloading %s: unexpected status %s", e.url, e.status)
+}
+
+// isPermanent reports whether a failed download attempt would fail the same
+// way if tried again, so Package should not retry it. Only a 4xx status other
+// than 408, 425 or 429, and a missing GCS object, are permanent. Everything
+// else, including timeouts, stalls, 5xx statuses, network errors and checksum
+// mismatches, is retried.
+func isPermanent(err error) bool {
+	var sErr *statusError
+	if errors.As(err, &sErr) {
+		switch sErr.code {
+		case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+			return false
+		}
+		return sErr.code >= 400 && sErr.code < 500
+	}
+	return client.IsGCSNotFound(err)
 }
 
 // packageHTTP downloads a package from an HTTP(S) server. A failed download
@@ -171,7 +201,7 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("downloading %s: unexpected status %s", url, resp.Status)
+		return &statusError{url: url, code: resp.StatusCode, status: resp.Status}
 	}
 	if resp.StatusCode == http.StatusOK && size > 0 {
 		// The server is sending the whole file (either it ignored Range or we
