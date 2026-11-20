@@ -79,7 +79,7 @@ func Files(ps client.PackageState) (bool, error) {
 	logger.Infof("Running file verification for %s", pkg)
 	fmt.Printf("Running file verification for %s...\n", pkg)
 	for file, wantChksm := range ps.InstalledFiles {
-		f, err := os.Open(file)
+		fstat, err := os.Stat(file)
 		if os.IsNotExist(err) {
 			logger.Errorf("%q: verify file %q failed, file does not exist", pkg, file)
 			return false, nil
@@ -87,13 +87,14 @@ func Files(ps client.PackageState) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		fstat, err := os.Stat(file)
-		if err != nil {
-			return false, err
-		}
-		// Only calculate/ check the checksum for file, not folder.
+		// Only calculate/ check the checksum for file, not folder. Directories
+		// are never opened, so no handle to them can leak.
 		if fstat.IsDir() {
 			continue
+		}
+		f, err := os.Open(file)
+		if err != nil {
+			return false, err
 		}
 		chksm := goolib.Checksum(f)
 		f.Close()
