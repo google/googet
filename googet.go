@@ -46,8 +46,10 @@ import (
 const (
 	// envVar is the environment variable which stores the googet root directory.
 	envVar = "GooGetRoot"
-	// logSize is the max allowed size of the log file.
-	logSize = 10 * 1024 * 1024
+	// logSize is the size at which the log file is rotated.
+	logSize = 25 * 1024 * 1024
+	// logKeep is the number of rotated log files to keep.
+	logKeep = 5
 )
 
 var (
@@ -55,24 +57,70 @@ var (
 	version string
 	// Optional function to handle flag parsing. If unset, we use flag.Parse.
 	flagParse func()
+
+	// rotateRename and rotateRemove are used by rotateLog so tests can
+	// simulate files that can't be moved or deleted, such as files locked
+	// on Windows.
+	rotateRename = os.Rename
+	rotateRemove = os.Remove
 )
 
-func rotateLog(logPath string, ls int64) error {
+// logGeneration returns the name of rotated log generation n of logPath. The
+// newest generation, 1, is logPath.old and older ones are logPath.old.2 and up.
+func logGeneration(logPath string, n int) string {
+	if n <= 1 {
+		return logPath + ".old"
+	}
+	return fmt.Sprintf("%s.old.%d", logPath, n)
+}
+
+// rotateLog moves logPath to logPath.old once it reaches maxSize bytes, and
+// keeps up to keep rotated generations (at least one). Each older generation
+// moves up one place and the oldest is deleted. Rotation is best effort: it
+// skips missing generations and continues past files that can't be moved or
+// deleted, such as files locked on Windows. If an older generation can't be
+// moved, a neighboring generation may be overwritten instead; which one
+// depends on whether the platform can rename over a locked file. It never
+// moves the live log onto a logPath.old that is still in place, so if
+// logPath.old can't be moved the live log isn't rotated and the caller keeps
+// appending to it. rotateLog runs before the logger is set up, so it returns
+// any problems as warnings for the caller to log instead of logging them
+// itself.
+func rotateLog(logPath string, maxSize int64, keep int) []error {
 	fi, err := os.Stat(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return []error{fmt.Errorf("unable to check log file size, not rotating: %v", err)}
 	}
-	if fi.Size() < ls {
+	if fi.Size() < maxSize {
 		return nil
 	}
-	oldLog := logPath + ".old"
-	if err := os.Rename(logPath, oldLog); err != nil {
-		return fmt.Errorf("error moving log file: %v", err)
+	if keep < 1 {
+		keep = 1
 	}
-	return nil
+
+	var warnings []error
+	oldest := logGeneration(logPath, keep)
+	if err := rotateRemove(oldest); err != nil && !os.IsNotExist(err) {
+		warnings = append(warnings, fmt.Errorf("unable to delete old log file %q: %v", oldest, err))
+	}
+	for n := keep - 1; n >= 1; n-- {
+		src, dst := logGeneration(logPath, n), logGeneration(logPath, n+1)
+		if err := rotateRename(src, dst); err != nil && !os.IsNotExist(err) {
+			warnings = append(warnings, fmt.Errorf("unable to move old log file %q to %q: %v", src, dst, err))
+		}
+	}
+
+	newest := logGeneration(logPath, 1)
+	if _, err := os.Lstat(newest); !os.IsNotExist(err) {
+		return append(warnings, fmt.Errorf("%q is still in place, not rotating log file %q", newest, logPath))
+	}
+	if err := rotateRename(logPath, newest); err != nil {
+		warnings = append(warnings, fmt.Errorf("unable to move log file %q to %q, appending to it instead: %v", logPath, newest, err))
+	}
+	return warnings
 }
 
 func main() {
@@ -151,10 +199,7 @@ func run(ctx context.Context) int {
 	}
 
 	logFile := settings.LogFile()
-	if err := rotateLog(logFile, logSize); err != nil {
-		logger.Errorf("Failed to rotate log file %q: %v", logFile, err)
-		return 1
-	}
+	rotateWarnings := rotateLog(logFile, logSize, logKeep)
 	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
 	if err != nil {
 		logger.Errorf("failed to open log file %q: %v", logFile, err)
@@ -163,6 +208,9 @@ func run(ctx context.Context) int {
 	defer lf.Close()
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
+	for _, w := range rotateWarnings {
+		logger.Warningf("Log rotation: %v", w)
+	}
 
 	progressSet := false
 	flag.Visit(func(f *flag.Flag) {
