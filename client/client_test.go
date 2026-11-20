@@ -35,11 +35,13 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/logger"
+	"google.golang.org/api/googleapi"
 )
 
 const (
@@ -599,6 +601,30 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unmarshalRepoPackages did not return expected content, got: %+v, want: %+v", got, want)
+	}
+}
+
+func TestIsGCSNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		err  error
+		want bool
+	}{
+		{"object not found", storage.ErrObjectNotExist, true},
+		{"wrapped object not found", fmt.Errorf("%w: %w", ErrStalled, storage.ErrObjectNotExist), true},
+		{"bucket not found", storage.ErrBucketNotExist, false},
+		{"googleapi 404", &googleapi.Error{Code: http.StatusNotFound}, true},
+		{"wrapped googleapi 404", fmt.Errorf("open: %w", &googleapi.Error{Code: http.StatusNotFound}), true},
+		{"googleapi 403", &googleapi.Error{Code: http.StatusForbidden}, false},
+		{"stall", ErrStalled, false},
+		{"other", errors.New("boom"), false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := IsGCSNotFound(tc.err); got != tc.want {
+				t.Errorf("IsGCSNotFound(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

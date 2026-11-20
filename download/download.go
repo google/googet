@@ -50,8 +50,9 @@ var retryDelay = func(retry int) time.Duration {
 
 // Package downloads a package from the given url,
 // the provided SHA256 checksum will be checked during download.
-// A failed or stalled download is tried up to maxAttempts times in all. An
-// HTTP download resumes from the partial file when the server supports it.
+// A failed or stalled download is tried up to maxAttempts times in all,
+// unless the failure is permanent, such as a 404. An HTTP download resumes
+// from the partial file when the server supports it.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
 	try := func() error {
@@ -65,7 +66,7 @@ func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client
 	}
 	for attempt := 1; ; attempt++ {
 		err := try()
-		if err == nil || ctx.Err() != nil || attempt == maxAttempts {
+		if err == nil || ctx.Err() != nil || attempt == maxAttempts || isPermanent(err) {
 			return err
 		}
 		d := retryDelay(attempt)
@@ -78,14 +79,61 @@ func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client
 	}
 }
 
-// packageHTTP downloads a package from an HTTP(S) server.
-func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) error {
+// statusError is returned by packageHTTP when the server answers a GET with an
+// unexpected HTTP status.
+type statusError struct {
+	url    string
+	code   int
+	status string
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("downloading %s: unexpected status %s", e.url, e.status)
+}
+
+// isPermanent reports whether a failed download attempt would fail the same
+// way if tried again, so Package should not retry it. Only a 4xx status other
+// than 408, 425 or 429, and a missing GCS object, are permanent. Everything
+// else, including timeouts, stalls, 5xx statuses, network errors and checksum
+// mismatches, is retried.
+func isPermanent(err error) bool {
+	var sErr *statusError
+	if errors.As(err, &sErr) {
+		switch sErr.code {
+		case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+			return false
+		}
+		return sErr.code >= 400 && sErr.code < 500
+	}
+	return client.IsGCSNotFound(err)
+}
+
+// packageHTTP downloads a package from an HTTP(S) server. A failed download
+// keeps a non-empty partial file so a later attempt can resume it, but never
+// leaves an empty file behind.
+func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *client.Downloader) (err error) {
 	// Try to open any already existing file, otherwise create new file.
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	// The file is created, or truncated by restart, before the request is
+	// sent, so a failed request can leave it empty. Check the current size
+	// rather than whether the file existed before, since a partial file can
+	// also be truncated before the request fails.
+	defer func() {
+		if err == nil {
+			return
+		}
+		if fi, sErr := f.Stat(); sErr != nil || fi.Size() != 0 {
+			return
+		}
+		f.Close() // Windows cannot delete an open file.
+		if rErr := os.Remove(dst); rErr != nil {
+			logger.Warningf("Failed to remove empty file %s: %v", dst, rErr)
+		}
+	}()
 	// Hash the contents of the existing file.
 	hash := sha256.New()
 	size, err := io.Copy(hash, f)
@@ -153,7 +201,7 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("downloading %s: unexpected status %s", url, resp.Status)
+		return &statusError{url: url, code: resp.StatusCode, status: resp.Status}
 	}
 	if resp.StatusCode == http.StatusOK && size > 0 {
 		// The server is sending the whole file (either it ignored Range or we
@@ -236,7 +284,8 @@ func Latest(ctx context.Context, pi goolib.PackageInfo, dir string, rm client.Re
 }
 
 // download copies r to dst, verifying the SHA256 checksum, and renders a
-// progress bar when enabled.
+// progress bar when enabled. On any error dst is removed, so a failed download
+// leaves no empty, partial or corrupt file behind.
 func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	f, err := oswrap.Create(dst)
 	if err != nil {
@@ -245,6 +294,12 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	defer func() {
 		if cErr := f.Close(); cErr != nil && err == nil {
 			err = cErr
+		}
+		if err == nil {
+			return
+		}
+		if rErr := oswrap.Remove(dst); rErr != nil {
+			logger.Warningf("Failed to remove %s after a failed download: %v", dst, rErr)
 		}
 	}()
 

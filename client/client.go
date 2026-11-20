@@ -349,8 +349,7 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 		return decode(r, "application/x-gzip", url, cf)
 	}
 
-	var gErr *googleapi.Error
-	if !errors.Is(err, storage.ErrObjectNotExist) && (!errors.As(err, &gErr) || gErr.Code != http.StatusNotFound) {
+	if !IsGCSNotFound(err) {
 		return nil, err
 	}
 
@@ -362,6 +361,13 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 	}
 
 	return decode(r, "application/json", url, cf)
+}
+
+// IsGCSNotFound reports whether err means that a Google Cloud Storage object
+// does not exist.
+func IsGCSNotFound(err error) bool {
+	var gErr *googleapi.Error
+	return errors.Is(err, storage.ErrObjectNotExist) || (errors.As(err, &gErr) && gErr.Code == http.StatusNotFound)
 }
 
 func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {
