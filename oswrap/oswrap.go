@@ -17,9 +17,23 @@ limitations under the License.
 package oswrap
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 )
+
+// ReadFileShared reads the whole file name through OpenShared and closes it
+// before returning. Use it for every read that can run without the googet
+// lock (for example, by an unelevated user), so the reader never stops an
+// elevated writer from renaming or deleting the file.
+func ReadFileShared(name string) ([]byte, error) {
+	f, err := OpenShared(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
 
 func rootDir(name string) string {
 	i := len(filepath.VolumeName(name))

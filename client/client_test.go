@@ -1067,3 +1067,95 @@ func TestNewRequestOauthUsesHTTPClient(t *testing.T) {
 		t.Errorf("got %d token requests through the proxy, want 1", got)
 	}
 }
+
+// writeRepoCache writes specs as the cache entry for url in cacheDir, with
+// the given age, and returns the cache file path.
+func writeRepoCache(t *testing.T, cacheDir, url string, specs []goolib.RepoSpec, age time.Duration) string {
+	t.Helper()
+	cf := repoCacheFile(cacheDir, url)
+	j, err := json.Marshal(specs)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if err := os.WriteFile(cf, j, 0644); err != nil {
+		t.Fatalf("writing cache file: %v", err)
+	}
+	mtime := time.Now().Add(-age)
+	if err := os.Chtimes(cf, mtime, mtime); err != nil {
+		t.Fatalf("setting cache file time: %v", err)
+	}
+	return cf
+}
+
+func TestUnmarshalRepoPackagesCacheClosedAfterRead(t *testing.T) {
+	cacheDir := t.TempDir()
+	url := "http://localhost/test-repo"
+	want := []goolib.RepoSpec{{Source: "foo"}}
+	cf := writeRepoCache(t, cacheDir, url, want, 0)
+
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), url, cacheDir, cacheLife)
+	if err != nil {
+		t.Fatalf("unmarshalRepoPackages: %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("unmarshalRepoPackages diff (-want +got):\n%s", diff)
+	}
+	// On Windows a handle left open would make the writer's replace fail.
+	if err := os.Rename(cf, cf+".old"); err != nil {
+		t.Errorf("renaming the cache file after reading it: %v", err)
+	}
+	if err := os.Remove(cf + ".old"); err != nil {
+		t.Errorf("removing the cache file after reading it: %v", err)
+	}
+}
+
+func TestUnmarshalRepoPackagesStaleCacheRefetched(t *testing.T) {
+	cacheDir := t.TempDir()
+	want := []goolib.RepoSpec{{Source: "fresh"}}
+	j, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var requests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(j)
+	}))
+	defer ts.Close()
+	cf := writeRepoCache(t, cacheDir, ts.URL, []goolib.RepoSpec{{Source: "stale"}}, 2*cacheLife)
+
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader(%s): %v", proxyServer, err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, cacheDir, cacheLife)
+	if err != nil {
+		t.Fatalf("unmarshalRepoPackages: %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("unmarshalRepoPackages with a stale cache diff (-want +got):\n%s", diff)
+	}
+	if n := requests.Load(); n != 1 {
+		t.Errorf("index requests = %d, want 1", n)
+	}
+	var cached []goolib.RepoSpec
+	b, err := os.ReadFile(cf)
+	if err != nil {
+		t.Fatalf("reading cache file: %v", err)
+	}
+	if err := json.Unmarshal(b, &cached); err != nil {
+		t.Fatalf("decoding cache file %q: %v", b, err)
+	}
+	if diff := cmp.Diff(want, cached); diff != "" {
+		t.Errorf("cache file after refetch diff (-want +got):\n%s", diff)
+	}
+}

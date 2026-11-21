@@ -15,6 +15,7 @@ limitations under the License.
 package client
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -186,23 +187,32 @@ func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]prio
 	return rm
 }
 
+// repoCacheFile returns the path in cacheDir of the cached index for repoURL.
+// An "oauth-" prefix doesn't change the name.
+func repoCacheFile(cacheDir, repoURL string) string {
+	pName := strings.TrimPrefix(repoURL, "oauth-")
+	return filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
+}
+
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
 // Successfully unmarshalled contents will be written to a cache.
 func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
 	pName := strings.TrimPrefix(p, "oauth-")
 
-	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
+	cf := repoCacheFile(cacheDir, p)
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
 		logger.Infof("Using cached repo content for %s.", pName)
-		f, err := oswrap.Open(cf)
+		// Read the whole file and close it before decoding, so the handle
+		// never blocks a writer replacing the cache.
+		b, err := oswrap.ReadFileShared(cf)
 		if err != nil {
 			return nil, err
 		}
 		var m []goolib.RepoSpec
-		dec := json.NewDecoder(f)
+		dec := json.NewDecoder(bytes.NewReader(b))
 		for dec.More() {
 			if err := dec.Decode(&m); err != nil {
 				return nil, err

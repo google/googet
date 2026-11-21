@@ -42,6 +42,16 @@ func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(name, flag, perm)
 }
 
+// OpenShared calls os.Open. On Windows it also shares delete access, so an
+// open reader never stops an elevated writer from renaming or deleting the
+// file; Unix places no such restriction on renames or deletes.
+//
+// Callers must read what they need and close the file straight away, and
+// must never hold the handle across network or other long operations.
+func OpenShared(name string) (*os.File, error) {
+	return os.Open(name)
+}
+
 // Remove calls os.Remove
 func Remove(name string) error {
 	return os.Remove(name)
