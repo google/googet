@@ -1,9 +1,12 @@
 package repo
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,6 +141,105 @@ func TestWriteOrDelete(t *testing.T) {
 				t.Errorf("write got unexpected diff (-want +got):\n%v", diff)
 			}
 		})
+	}
+}
+
+// TestWriteOrDeleteReplace checks that rewriting a repo file leaves only the
+// repo file, holding the new entries, in its directory, and that a replaced
+// file keeps its mode while a new one gets 0664.
+func TestWriteOrDeleteReplace(t *testing.T) {
+	newEntries := []Entry{{Name: "bar", URL: "https://foo.com/googet/bar"}}
+	t.Run("rewrites contents", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "test.repo")
+		const old = "- name: old\n  url: https://old.example/googet\n"
+		if err := os.WriteFile(path, []byte(old), 0644); err != nil {
+			t.Fatal(err)
+		}
+		rf := File{Path: path, Entries: newEntries}
+		if err := rf.writeOrDelete(); err != nil {
+			t.Fatalf("writeOrDelete: %v", err)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), "name: bar") || strings.Contains(string(b), "name: old") {
+			t.Errorf("rewritten repo file = %q, want only the new entry", b)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].Name() != "test.repo" {
+			t.Errorf("repo directory holds %v, want only test.repo", entries)
+		}
+	})
+	t.Run("replaced file keeps mode", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows has no Unix permission bits")
+		}
+		path := filepath.Join(t.TempDir(), "test.repo")
+		if err := os.WriteFile(path, []byte("[]\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		rf := File{Path: path, Entries: newEntries}
+		if err := rf.writeOrDelete(); err != nil {
+			t.Fatalf("writeOrDelete: %v", err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != 0600 {
+			t.Errorf("replaced repo file mode = %v, want 0600", got)
+		}
+	})
+	t.Run("new file gets 0664", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows has no Unix permission bits")
+		}
+		path := filepath.Join(t.TempDir(), "test.repo")
+		rf := File{Path: path, Entries: newEntries}
+		if err := rf.writeOrDelete(); err != nil {
+			t.Fatalf("writeOrDelete: %v", err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != 0664 {
+			t.Errorf("new repo file mode = %v, want 0664", got)
+		}
+	})
+}
+
+// TestWriteOrDeleteKeepsDirectory checks that emptying a "repo file" that is
+// really a directory fails and leaves the directory and its contents alone.
+func TestWriteOrDeleteKeepsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dir.repo")
+	inside := filepath.Join(path, "keep.txt")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inside, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rf := File{Path: path}
+	if err := rf.writeOrDelete(); err == nil {
+		t.Error("writeOrDelete on a non-empty directory with no entries = nil, want an error")
+	}
+	if b, err := os.ReadFile(inside); err != nil || string(b) != "keep" {
+		t.Errorf("after writeOrDelete, %q holds %q (error %v), want it intact", inside, b, err)
+	}
+}
+
+// TestWriteOrDeleteMissing checks that emptying a repo file that doesn't
+// exist isn't an error.
+func TestWriteOrDeleteMissing(t *testing.T) {
+	rf := File{Path: filepath.Join(t.TempDir(), "missing.repo")}
+	if err := rf.writeOrDelete(); err != nil {
+		t.Errorf("writeOrDelete on a missing file with no entries = %v, want nil", err)
 	}
 }
 
@@ -325,5 +427,16 @@ func TestRemoveEntryFromFiles(t *testing.T) {
 				t.Errorf("ConfigFiles(%v) got unexpected diff (-want +got):\n%v", repoDir, diff)
 			}
 		})
+	}
+}
+
+func TestUnmarshalRepoFileMissing(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "missing.repo")
+	rf, err := unmarshalRepoFile(p)
+	if !os.IsNotExist(err) || !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("unmarshalRepoFile(missing) = %v, want an error matching os.IsNotExist and fs.ErrNotExist", err)
+	}
+	if rf.Path != p || len(rf.Entries) != 0 {
+		t.Errorf("unmarshalRepoFile(missing) = %+v, want File{Path: %q}", rf, p)
 	}
 }

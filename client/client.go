@@ -15,6 +15,7 @@ limitations under the License.
 package client
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -186,40 +187,103 @@ func (d *Downloader) AvailableVersions(ctx context.Context, srcs map[string]prio
 	return rm
 }
 
+// repoCacheFile returns the path in cacheDir of the cached index for repoURL.
+// An "oauth-" prefix doesn't change the name.
+func repoCacheFile(cacheDir, repoURL string) string {
+	pName := strings.TrimPrefix(repoURL, "oauth-")
+	return filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
+}
+
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
-// Successfully unmarshalled contents will be written to a cache.
+// Successfully unmarshalled contents are written to a cache; a failure to
+// write the cache is logged and doesn't fail the call.
+// A cache entry that is empty or can't be decoded counts as a cache miss.
 func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
 	pName := strings.TrimPrefix(p, "oauth-")
 
-	cf := filepath.Join(cacheDir, fmt.Sprintf("%x.rs", sha256.Sum256([]byte(pName))))
+	cf := repoCacheFile(cacheDir, p)
 
 	fi, err := oswrap.Stat(cf)
 	if err == nil && time.Since(fi.ModTime()) < cacheLife {
-		logger.Infof("Using cached repo content for %s.", pName)
-		f, err := oswrap.Open(cf)
-		if err != nil {
+		rs, err := readCache(cf)
+		if err == nil {
+			logger.Infof("Using cached repo content for %s.", pName)
+			return rs, nil
+		}
+		if !errors.Is(err, errBadCache) && !os.IsNotExist(err) {
 			return nil, err
 		}
-		var m []goolib.RepoSpec
-		dec := json.NewDecoder(f)
-		for dec.More() {
-			if err := dec.Decode(&m); err != nil {
-				return nil, err
-			}
-		}
-		return m, nil
-	}
-	if err != nil && !os.IsNotExist(err) {
+		logger.Infof("Ignoring cached repo content for %s: %v", pName, err)
+	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
+	var rs []goolib.RepoSpec
 	if isGCSURL {
-		return d.unmarshalRepoPackagesGCS(ctx, bucket, object, pName, cf)
+		if d.UsingProxyServer {
+			logger.Errorf("Proxy server not supported with gs:// URLs, skipping repo 'gs://%s/%s'", bucket, object)
+			var empty []goolib.RepoSpec
+			return empty, nil
+		}
+		rs, err = d.unmarshalRepoPackagesGCS(ctx, bucket, object)
+	} else {
+		rs, err = d.unmarshalRepoPackagesHTTP(ctx, p)
 	}
-	return d.unmarshalRepoPackagesHTTP(ctx, p, cf)
+	if err != nil {
+		return nil, err
+	}
+	// The cache only saves a later fetch, so a failure to write it doesn't
+	// fail the fetch that already succeeded.
+	if err := writeCache(rs, p, cf); err != nil {
+		logger.Errorf("Failed to cache repo content for %s: %v", pName, err)
+	}
+	return rs, nil
+}
+
+// errBadCache reports a cache file that is empty or can't be decoded, for
+// example because a writer crashed or a reader raced an older, non-atomic
+// writer.
+var errBadCache = errors.New("cache file is empty or corrupt")
+
+// readCache reads and decodes the cache file cf. It reads the whole file and
+// closes it before decoding, so the handle never blocks a writer replacing the
+// cache. An empty or undecodable file gives an error wrapping errBadCache.
+func readCache(cf string) ([]goolib.RepoSpec, error) {
+	b, err := oswrap.ReadFileShared(cf)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, errBadCache
+	}
+	rs, err := decode(io.NopCloser(bytes.NewReader(b)), "application/json")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errBadCache, err)
+	}
+	return rs, nil
+}
+
+// writeCache writes rs to the cache file cf, replacing it atomically, so that
+// a concurrent reader never sees a partial file. It also writes repo to a .url
+// file next to cf; a failure there is only logged.
+func writeCache(rs []goolib.RepoSpec, repo, cf string) error {
+	j, err := json.Marshal(rs)
+	if err != nil {
+		return err
+	}
+	if err := oswrap.WriteFileAtomic(cf, j, 0644); err != nil {
+		return err
+	}
+
+	// The .url files aren't used by googet but help identify which file belongs to which repo/URL.
+	mf := fmt.Sprintf("%s.url", strings.TrimSuffix(cf, filepath.Ext(cf)))
+	if err := oswrap.WriteFileAtomic(mf, []byte(repo), 0644); err != nil {
+		logger.Errorf("Failed to write '%s': %v", mf, err)
+	}
+	return nil
 }
 
 // NewRequest returns an http.Request, adding auth headers if the URL is
@@ -296,7 +360,7 @@ func shouldRetry(ctx context.Context, err error) bool {
 	return !errors.As(err, &netErr) || !netErr.Timeout()
 }
 
-func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string, cf string) ([]goolib.RepoSpec, error) {
+func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL string) ([]goolib.RepoSpec, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	indexURL := repoURL + "/index.gz"
@@ -322,16 +386,10 @@ func (d *Downloader) unmarshalRepoPackagesHTTP(ctx context.Context, repoURL stri
 			return nil, fmt.Errorf("index GET request returned status: %q", res.Status)
 		}
 	}
-	return decode(NewStallReader(res.Body, d.StallTimeout, func() { cancel(ErrStalled) }), ct, repoURL, cf)
+	return decode(NewStallReader(res.Body, d.StallTimeout, func() { cancel(ErrStalled) }), ct)
 }
 
-func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object, url, cf string) ([]goolib.RepoSpec, error) {
-	if d.UsingProxyServer {
-		logger.Errorf("Proxy server not supported with gs:// URLs, skipping repo 'gs://%s/%s'", bucket, object)
-		var empty []goolib.RepoSpec
-		return empty, nil
-	}
-
+func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, object string) ([]goolib.RepoSpec, error) {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		return nil, err
@@ -346,7 +404,7 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 	logger.Infof("Fetching 'gs://%s/%s", bucket, indexPath)
 	r, _, err := d.OpenGCS(ctx, bkt.Object(indexPath))
 	if err == nil {
-		return decode(r, "application/x-gzip", url, cf)
+		return decode(r, "application/x-gzip")
 	}
 
 	var gErr *googleapi.Error
@@ -361,10 +419,12 @@ func (d *Downloader) unmarshalRepoPackagesGCS(ctx context.Context, bucket, objec
 		return nil, err
 	}
 
-	return decode(r, "application/json", url, cf)
+	return decode(r, "application/json")
 }
 
-func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) {
+// decode decodes the repo index read from index, whose content type is ct, and
+// closes index. It writes nothing.
+func decode(index io.ReadCloser, ct string) ([]goolib.RepoSpec, error) {
 	defer index.Close()
 
 	var dec *json.Decoder
@@ -393,26 +453,7 @@ func decode(index io.ReadCloser, ct, url, cf string) ([]goolib.RepoSpec, error) 
 			return nil, err
 		}
 	}
-
-	f, err := oswrap.Create(cf)
-	if err != nil {
-		return nil, err
-	}
-	j, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := f.Write(j); err != nil {
-		return nil, err
-	}
-
-	// The .url files aren't used by googet but help identify which file belongs to which repo/URL.
-	mf := fmt.Sprintf("%s.url", strings.TrimSuffix(cf, filepath.Ext(cf)))
-	if err = ioutil.WriteFile(mf, []byte(url), 0644); err != nil {
-		logger.Errorf("Failed to write '%s': %v", mf, err)
-	}
-
-	return m, f.Close()
+	return m, nil
 }
 
 // FindRepoSpec returns the RepoSpec in repo whose PackageSpec matches pi.

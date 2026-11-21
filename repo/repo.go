@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -71,17 +72,30 @@ type File struct {
 	Entries []Entry // all of the repo entries in the file
 }
 
-// write writes the repo file to disk as YAML if it has any entries.
-// If there are no entries, the repo file is removed.
+// writeOrDelete writes the repo file to disk as YAML if it has any entries.
+// If there are no entries, the repo file is removed. The write replaces the
+// file atomically, so a concurrent reader sees either the old or the new
+// contents and never a partial or empty file.
 func (rf *File) writeOrDelete() error {
 	if len(rf.Entries) == 0 {
-		return os.RemoveAll(rf.Path)
+		if err := os.Remove(rf.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	}
 	d, err := yaml.Marshal(rf.Entries)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(rf.Path, d, 0664)
+	// Keep the permission bits of the file being replaced; a new file gets
+	// 0664.
+	perm := os.FileMode(0664)
+	if fi, err := os.Stat(rf.Path); err == nil {
+		perm = fi.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return oswrap.WriteFileAtomic(rf.Path, d, perm)
 }
 
 // addEntry adds a new entry to the repo file if it doesn't already exist,
@@ -115,7 +129,7 @@ func (rf *File) removeEntry(name string) bool {
 }
 
 func unmarshalRepoFile(p string) (File, error) {
-	b, err := os.ReadFile(p)
+	b, err := oswrap.ReadFileShared(p)
 	if err != nil {
 		return File{Path: p}, err
 	}
