@@ -35,6 +35,15 @@ import (
 const (
 	stateQuery = `INSERT or REPLACE INTO InstalledPackages (pkg_name, pkg_ver, pkg_arch, pkg_json) VALUES (
 		?, ?, ?, ?)`
+
+	// busyTimeoutMS is how long, in milliseconds, a connection retries a lock
+	// held by another connection before it fails with SQLITE_BUSY.
+	busyTimeoutMS = 5000
+	// journalMode is the rollback journal mode of every connection.
+	// TRUNCATE empties the journal after a commit instead of deleting it, so
+	// the file never disappears under a reader. It is never WAL, because WAL
+	// readers write the -shm file.
+	journalMode = "TRUNCATE"
 )
 
 // nowFunc returns the current time; can be overridden in tests.
@@ -56,11 +65,21 @@ func NewDB(dbFile string) (*GooDB, error) {
 		}
 		return &gdb, nil
 	}
-	gdb.db, err = sql.Open("sqlite", dbFile)
+	gdb.db, err = sql.Open("sqlite", dsn(dbFile))
 	if err != nil {
 		return nil, err
 	}
 	return &gdb, nil
+}
+
+// dsn returns the data source name for dbFile. The driver runs
+// the query parameters as pragmas on every connection that database/sql opens,
+// busy_timeout first, so a pooled connection can't miss them. A DSN without a
+// "file:" prefix has its query removed and the rest opened as a plain
+// filename, so Windows drive letters and backslashes are passed through
+// unchanged.
+func dsn(dbFile string) string {
+	return fmt.Sprintf("%s?_busy_timeout=%d&_journal_mode=%s", dbFile, busyTimeoutMS, journalMode)
 }
 
 // Close will close the db connection
@@ -70,7 +89,7 @@ func (g *GooDB) Close() error {
 
 // Create db creates the initial googet database
 func createDB(dbFile string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbFile)
+	db, err := sql.Open("sqlite", dsn(dbFile))
 	if err != nil {
 		return nil, err
 	}
