@@ -14,6 +14,8 @@ limitations under the License.
 package googetdb
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -319,5 +321,153 @@ func TestAddPkgPreservesURLFields(t *testing.T) {
 	}
 	if diff := cmp.Diff(ps.PackageSpec, pkgs[0].PackageSpec); diff != "" {
 		t.Errorf("db.FetchPkgs(\"\") PackageSpec diff (-want +got):\n%s", diff)
+	}
+}
+
+// connPragmas returns busy_timeout and journal_mode as seen by each of n
+// connections that db holds open at the same time, so each one is a separate
+// pooled connection.
+func connPragmas(t *testing.T, db *GooDB, n int) (timeouts []int, modes []string) {
+	t.Helper()
+	ctx := context.Background()
+	var conns []*sql.Conn
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+	for range n {
+		c, err := db.db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("db.Conn: %v", err)
+		}
+		conns = append(conns, c)
+		var timeout int
+		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+			t.Fatalf("PRAGMA busy_timeout: %v", err)
+		}
+		var mode string
+		if err := c.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+			t.Fatalf("PRAGMA journal_mode: %v", err)
+		}
+		timeouts = append(timeouts, timeout)
+		modes = append(modes, mode)
+	}
+	return timeouts, modes
+}
+
+func TestConnectionsSetBusyTimeoutAndJournalMode(t *testing.T) {
+	const conns = 3
+	for _, tc := range []struct {
+		desc  string
+		setup func(t *testing.T, dbFile string)
+	}{
+		{
+			desc:  "new-db",
+			setup: func(*testing.T, string) {},
+		},
+		{
+			desc: "existing-db",
+			setup: func(t *testing.T, dbFile string) {
+				db, err := NewDB(dbFile)
+				if err != nil {
+					t.Fatalf("NewDB(%v): %v", dbFile, err)
+				}
+				db.Close()
+			},
+		},
+		{
+			// A database left in WAL mode, for example by another tool, must
+			// be switched back, because WAL readers write the -shm file.
+			desc: "existing-wal-db",
+			setup: func(t *testing.T, dbFile string) {
+				raw, err := sql.Open("sqlite", dbFile)
+				if err != nil {
+					t.Fatalf("sql.Open(%v): %v", dbFile, err)
+				}
+				defer raw.Close()
+				var mode string
+				if err := raw.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode); err != nil || mode != "wal" {
+					t.Fatalf("PRAGMA journal_mode=WAL = %q, %v; want wal, nil", mode, err)
+				}
+				if _, err := raw.Exec("CREATE TABLE t (x INTEGER)"); err != nil {
+					t.Fatalf("CREATE TABLE: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			dbFile := filepath.Join(t.TempDir(), "googet.db")
+			tc.setup(t, dbFile)
+			db, err := NewDB(dbFile)
+			if err != nil {
+				t.Fatalf("NewDB(%v): %v", dbFile, err)
+			}
+			defer db.Close()
+			timeouts, modes := connPragmas(t, db, conns)
+			for i := range conns {
+				if timeouts[i] != busyTimeoutMS {
+					t.Errorf("connection %d: busy_timeout = %d, want %d", i, timeouts[i], busyTimeoutMS)
+				}
+				if modes[i] != "truncate" {
+					t.Errorf("connection %d: journal_mode = %q, want truncate", i, modes[i])
+				}
+			}
+		})
+	}
+}
+
+func TestAddPkgWaitsForReader(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	writer, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%v): %v", dbFile, err)
+	}
+	defer writer.Close()
+	seed := client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "seed", Arch: "noarch", Version: "1.0.0"}}
+	if err := writer.AddPkg(seed); err != nil {
+		t.Fatalf("AddPkg(%v): %v", seed.PackageSpec.Name, err)
+	}
+
+	reader, err := NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("NewDB(%v): %v", dbFile, err)
+	}
+	defer reader.Close()
+	// A read inside a transaction holds a SHARED lock until the transaction
+	// ends, which stops the writer's COMMIT from taking the EXCLUSIVE lock.
+	tx, err := reader.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	var n int
+	if err := tx.QueryRow("SELECT count(*) FROM InstalledPackages").Scan(&n); err != nil {
+		tx.Rollback()
+		t.Fatalf("SELECT count(*): %v", err)
+	}
+	const hold = 300 * time.Millisecond
+	start := time.Now()
+	release := time.AfterFunc(hold, func() { tx.Rollback() })
+	defer func() {
+		if release.Stop() {
+			tx.Rollback()
+		}
+	}()
+
+	ps := client.PackageState{PackageSpec: &goolib.PkgSpec{Name: "foo", Arch: "noarch", Version: "1.0.0"}}
+	if err := writer.AddPkg(ps); err != nil {
+		t.Fatalf("AddPkg(%v) while a reader holds a read transaction: %v", ps.PackageSpec.Name, err)
+	}
+	// The write can only finish after the reader lets go, which proves the
+	// read transaction really blocked it.
+	if elapsed := time.Since(start); elapsed < hold/2 {
+		t.Errorf("AddPkg returned after %v, before the reader released its lock after %v", elapsed, hold)
+	}
+	got, err := writer.FetchPkgs("foo")
+	if err != nil {
+		t.Fatalf("FetchPkgs(foo): %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("FetchPkgs(foo) returned %d packages, want 1", len(got))
 	}
 }
