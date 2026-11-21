@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -115,7 +116,7 @@ func (rf *File) removeEntry(name string) bool {
 }
 
 func unmarshalRepoFile(p string) (File, error) {
-	b, err := os.ReadFile(p)
+	b, err := oswrap.ReadFileShared(p)
 	if err != nil {
 		return File{Path: p}, err
 	}
