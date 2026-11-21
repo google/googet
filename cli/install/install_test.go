@@ -358,3 +358,107 @@ func TestInstallDryRun(t *testing.T) {
 		})
 	}
 }
+
+// newReinstallDB returns a database holding an installed package A and the
+// bytes of its file after setup.
+func newReinstallDB(t *testing.T) (*googetdb.GooDB, string, []byte) {
+	t.Helper()
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := googetdb.NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	state := client.GooGetState{
+		{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1.0.0"}, InstallDate: 1700000000},
+	}
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+	before, err := os.ReadFile(dbFile)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dbFile, err)
+	}
+	return db, dbFile, before
+}
+
+// withStdin runs f with os.Stdin reading input.
+func withStdin(t *testing.T, input string, f func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	if _, err := io.WriteString(w, input); err != nil {
+		t.Fatalf("writing stdin: %v", err)
+	}
+	w.Close()
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+	f()
+}
+
+func TestInstallDeclinedReinstallKeepsDB(t *testing.T) {
+	db, dbFile, before := newReinstallDB(t)
+
+	i := &installer{
+		db:              db,
+		cache:           t.TempDir(),
+		shouldReinstall: true,
+		confirm:         true,
+	}
+	var runErr error
+	var output string
+	withStdin(t, "n\n", func() {
+		output = captureStdout(func() {
+			runErr = i.installFromRepo(context.Background(), "A", []string{"noarch"})
+		})
+	})
+	if runErr != nil {
+		t.Fatalf("installFromRepo(A, reinstall declined) = %v, want nil", runErr)
+	}
+	if want := "Not reinstalling A"; !strings.Contains(output, want) {
+		t.Errorf("stdout = %q, want it to contain %q", output, want)
+	}
+
+	after, err := os.ReadFile(dbFile)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dbFile, err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("declining install -reinstall changed the database file")
+	}
+}
+
+func TestInstallDryRunReinstallKeepsDB(t *testing.T) {
+	db, dbFile, before := newReinstallDB(t)
+
+	i := &installer{
+		db:              db,
+		cache:           t.TempDir(),
+		shouldReinstall: true,
+		dryRun:          true,
+	}
+	var runErr error
+	output := captureStdout(func() {
+		runErr = i.installFromRepo(context.Background(), "A", []string{"noarch"})
+	})
+	if runErr != nil {
+		t.Fatalf("installFromRepo(A, reinstall and dry run) = %v, want nil", runErr)
+	}
+	if want := "Dry run: Would reinstall A"; !strings.Contains(output, want) {
+		t.Errorf("stdout = %q, want it to contain %q", output, want)
+	}
+
+	// Comparing the file catches any write, including one that rewrites a
+	// row with identical content.
+	after, err := os.ReadFile(dbFile)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dbFile, err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("install -dry_run -reinstall changed the database file")
+	}
+}

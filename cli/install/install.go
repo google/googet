@@ -189,9 +189,6 @@ func (i *installer) installFromRepo(ctx context.Context, name string, archs []st
 		if err := i.reinstall(ctx, pi, ps); err != nil {
 			return fmt.Errorf("reinstalling %s: %v", pi.Name, err)
 		}
-		if err := i.db.WriteStateToDB(client.GooGetState{ps}); err != nil {
-			return fmt.Errorf("writing state db: %v", err)
-		}
 		return nil
 	}
 
@@ -261,6 +258,11 @@ func (i *installer) reinstall(ctx context.Context, pi goolib.PackageInfo, ps cli
 	}
 	if err := install.Reinstall(ctx, ps, i.redownload, i.force, i.downloader, i.db); err != nil {
 		return fmt.Errorf("error reinstalling %s, %v", pi.Name, err)
+	}
+	// Only a completed reinstall writes the database; the dry-run and
+	// declined paths above return before this.
+	if err := i.db.WriteStateToDB(client.GooGetState{ps}); err != nil {
+		return fmt.Errorf("writing state db: %v", err)
 	}
 	return nil
 }
