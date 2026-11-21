@@ -2,11 +2,14 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
@@ -73,15 +76,15 @@ type File struct {
 }
 
 // writeOrDelete writes the repo file to disk as YAML if it has any entries.
-// If there are no entries, the repo file is removed. The write replaces the
-// file atomically, so a concurrent reader sees either the old or the new
-// contents and never a partial or empty file.
+// If there are no entries, the repo file is removed with
+// oswrap.RenameAndRemove. The write replaces the file atomically, so a
+// concurrent reader sees either the old or the new contents and never a
+// partial or empty file.
 func (rf *File) writeOrDelete() error {
 	if len(rf.Entries) == 0 {
-		if err := os.Remove(rf.Path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		// Rename the file aside before deleting it, so a reader holding it
+		// open never leaves its path delete pending for the next write.
+		return oswrap.RenameAndRemove(rf.Path)
 	}
 	d, err := yaml.Marshal(rf.Entries)
 	if err != nil {
@@ -211,8 +214,73 @@ func repoList(dir string) (map[string]priority.Value, error) {
 	return result, nil
 }
 
+// configFileRetryDelay is how long ConfigFiles waits before it reads a repo
+// file again after a transient sharing error. Readers retry only once, and
+// briefly, because reading the repo files must not stall a command for long.
+// Writers such as WriteFileAtomic retry for longer, because a failed write
+// loses the change.
+const configFileRetryDelay = 100 * time.Millisecond
+
+// readConfigFile reads the repo file f with read. If read fails with an error
+// for which transient returns true, readConfigFile waits configFileRetryDelay
+// and calls read once more.
+func readConfigFile(f string, read func(string) (File, error), transient func(error) bool) (File, error) {
+	rf, err := read(f)
+	if err != nil && transient(err) {
+		time.Sleep(configFileRetryDelay)
+		rf, err = read(f)
+	}
+	return rf, err
+}
+
+// skipLog says how ConfigFiles logs a repo file that it skips.
+type skipLog int
+
+const (
+	skipSilently skipLog = iota
+	skipInfo
+	skipError
+)
+
+func (l skipLog) String() string {
+	switch l {
+	case skipSilently:
+		return "silent"
+	case skipInfo:
+		return "info"
+	case skipError:
+		return "error"
+	}
+	return fmt.Sprintf("skipLog(%d)", int(l))
+}
+
+// skipLevel returns how ConfigFiles logs a repo file that it skips because
+// reading it failed with err.
+//
+// On Windows, a file that is delete pending under legacy delete semantics
+// fails with ERROR_ACCESS_DENIED, which transient accepts but which also
+// matches fs.ErrPermission. skipLevel reports such an error as skipError, so a
+// persistent permission failure isn't hidden, at the cost of an error for a
+// file that stays delete pending through the retry.
+func skipLevel(err error, transient func(error) bool) skipLog {
+	switch {
+	case os.IsNotExist(err):
+		// A concurrent writer removed the file after it was listed.
+		return skipSilently
+	case errors.Is(err, fs.ErrPermission):
+		return skipError
+	case transient(err):
+		return skipInfo
+	}
+	return skipError
+}
+
 // ConfigFiles returns the parsed contents of all repo configuration files in
-// the given directory.
+// the given directory. A file that a concurrent writer removes after it is
+// listed is skipped. A file that still fails with a transient sharing error
+// after one retry is skipped and logged at Info level. Other read and parse
+// errors, including permission errors, are logged as errors and the file is
+// skipped; see skipLevel.
 func ConfigFiles(dir string) ([]File, error) {
 	fl, err := filepath.Glob(filepath.Join(dir, "*.repo"))
 	if err != nil {
@@ -220,9 +288,15 @@ func ConfigFiles(dir string) ([]File, error) {
 	}
 	var rfs []File
 	for _, f := range fl {
-		rf, err := unmarshalRepoFile(f)
+		rf, err := readConfigFile(f, unmarshalRepoFile, oswrap.IsTransientShareError)
 		if err != nil {
-			logger.Error(err)
+			switch skipLevel(err, oswrap.IsTransientShareError) {
+			case skipSilently:
+			case skipInfo:
+				logger.Infof("Skipping %s while it is being replaced or removed: %v", f, err)
+			default:
+				logger.Error(err)
+			}
 			continue
 		}
 		if rf.Path != "" {

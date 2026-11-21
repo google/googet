@@ -2,6 +2,7 @@ package repo
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -438,5 +440,130 @@ func TestUnmarshalRepoFileMissing(t *testing.T) {
 	}
 	if rf.Path != p || len(rf.Entries) != 0 {
 		t.Errorf("unmarshalRepoFile(missing) = %+v, want File{Path: %q}", rf, p)
+	}
+}
+
+// TestWriteOrDeleteRemovesWithoutLeftovers checks that emptying a repo file
+// removes it without leaving a renamed copy behind, and that the path can be
+// written again at once even while a reader holds the old file open.
+func TestWriteOrDeleteRemovesWithoutLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.repo")
+	if err := os.WriteFile(path, []byte("- name: old\n  url: https://old.example/googet\n"), 0664); err != nil {
+		t.Fatal(err)
+	}
+	r, err := oswrap.OpenShared(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := File{Path: path}
+	if err := rf.writeOrDelete(); err != nil {
+		r.Close()
+		t.Fatalf("writeOrDelete with no entries: %v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Errorf("%q still exists after writeOrDelete with no entries (Lstat error: %v)", path, err)
+	}
+	rf = File{Path: path, Entries: []Entry{{Name: "bar", URL: "https://foo.com/googet/bar"}}}
+	if err := rf.writeOrDelete(); err != nil {
+		t.Errorf("writing %q again while the old file is open: %v", path, err)
+	}
+	r.Close()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "test.repo" {
+		t.Errorf("repo directory holds %q, want only test.repo", names)
+	}
+}
+
+func TestReadConfigFile(t *testing.T) {
+	errTransient := errors.New("transient")
+	errOther := errors.New("other")
+	transient := func(err error) bool { return errors.Is(err, errTransient) }
+	want := File{Path: "x.repo", Entries: []Entry{{Name: "x", URL: "https://example.com/x"}}}
+	for _, tc := range []struct {
+		desc      string
+		errs      []error // read returns these in turn, then want.
+		wantErr   error
+		wantCalls int
+	}{
+		{desc: "success", wantCalls: 1},
+		{desc: "transient then success", errs: []error{errTransient}, wantCalls: 2},
+		{desc: "transient twice", errs: []error{errTransient, errTransient}, wantErr: errTransient, wantCalls: 2},
+		{desc: "other error", errs: []error{errOther}, wantErr: errOther, wantCalls: 1},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			calls := 0
+			read := func(f string) (File, error) {
+				calls++
+				if calls <= len(tc.errs) {
+					return File{Path: f}, tc.errs[calls-1]
+				}
+				return want, nil
+			}
+			rf, err := readConfigFile("x.repo", read, transient)
+			if err != tc.wantErr || calls != tc.wantCalls {
+				t.Errorf("readConfigFile() error = %v after %d calls, want %v after %d calls", err, calls, tc.wantErr, tc.wantCalls)
+			}
+			if err == nil && !cmp.Equal(rf, want) {
+				t.Errorf("readConfigFile() = %+v, want %+v", rf, want)
+			}
+		})
+	}
+}
+
+func TestSkipLevel(t *testing.T) {
+	errTransient := errors.New("transient")
+	transient := func(err error) bool { return errors.Is(err, errTransient) }
+	always := func(error) bool { return true }
+	for _, tc := range []struct {
+		desc      string
+		err       error
+		transient func(error) bool
+		want      skipLog
+	}{
+		{desc: "not exist", err: &fs.PathError{Op: "open", Path: "x.repo", Err: fs.ErrNotExist}, transient: always, want: skipSilently},
+		{desc: "transient", err: fmt.Errorf("reading x.repo: %w", errTransient), transient: transient, want: skipInfo},
+		{desc: "permission", err: &fs.PathError{Op: "open", Path: "x.repo", Err: fs.ErrPermission}, transient: always, want: skipError},
+		{desc: "other", err: errors.New("bad yaml"), transient: transient, want: skipError},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := skipLevel(tc.err, tc.transient); got != tc.want {
+				t.Errorf("skipLevel(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestConfigFilesReturnsRemainingFiles checks that ConfigFiles still returns
+// the other repo files when a listed one can't be found when it is read. It
+// doesn't check how the skipped file is logged.
+func TestConfigFilesReturnsRemainingFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need extra privileges on Windows")
+	}
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep.repo")
+	if err := os.WriteFile(keep, []byte("- name: keep\n  url: https://example.com/keep\n"), 0664); err != nil {
+		t.Fatal(err)
+	}
+	// A dangling symlink is listed by the Glob but fails to read with
+	// ENOENT, like a file that a writer removes after the Glob.
+	if err := os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, "gone.repo")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ConfigFiles(dir)
+	if err != nil {
+		t.Fatalf("ConfigFiles(%q): %v", dir, err)
+	}
+	want := []File{{Path: keep, Entries: []Entry{{Name: "keep", URL: "https://example.com/keep"}}}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ConfigFiles(%q) got unexpected diff (-want +got):\n%v", dir, diff)
 	}
 }

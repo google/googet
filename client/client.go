@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -198,7 +197,8 @@ func repoCacheFile(cacheDir, repoURL string) string {
 // if mtime is less than cacheLife.
 // Successfully unmarshalled contents are written to a cache; a failure to
 // write the cache is logged and doesn't fail the call.
-// A cache entry that is empty or can't be decoded counts as a cache miss.
+// A cache entry that is empty or can't be decoded, or that can't be read
+// because a writer is replacing or removing it, counts as a cache miss.
 func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
 	pName := strings.TrimPrefix(p, "oauth-")
 
@@ -211,11 +211,11 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 			logger.Infof("Using cached repo content for %s.", pName)
 			return rs, nil
 		}
-		if !errors.Is(err, errBadCache) && !os.IsNotExist(err) {
+		if !isCacheMiss(err) {
 			return nil, err
 		}
 		logger.Infof("Ignoring cached repo content for %s: %v", pName, err)
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if err != nil && !isCacheMiss(err) {
 		return nil, err
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
@@ -247,6 +247,14 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 // example because a writer crashed or a reader raced an older, non-atomic
 // writer.
 var errBadCache = errors.New("cache file is empty or corrupt")
+
+// isCacheMiss reports whether err, from reading the cache file, means the
+// cache should be ignored and the repo fetched again: the file is missing,
+// empty or corrupt, or it is being replaced or removed by an elevated writer
+// (a transient Windows sharing error, see oswrap.IsTransientShareError).
+func isCacheMiss(err error) bool {
+	return errors.Is(err, errBadCache) || os.IsNotExist(err) || oswrap.IsTransientShareError(err)
+}
 
 // readCache reads and decodes the cache file cf. It reads the whole file and
 // closes it before decoding, so the handle never blocks a writer replacing the
@@ -621,38 +629,8 @@ func WhatRepo(pi goolib.PackageInfo, rm RepoMap) (string, error) {
 	return "", fmt.Errorf("package %s %s version %s not found in any repo", pi.Arch, pi.Name, pi.Ver)
 }
 
-// RemoveOrRename attempts to remove a file or directory. If it fails
-// and it's a file, attempt to rename it into a temp file on windows so
-// that it can be effectively overridden returning the name of the temp file.
+// RemoveOrRename calls oswrap.RemoveOrPark with os.TempDir() as the park
+// directory; see oswrap.RemoveOrPark.
 func RemoveOrRename(filename string) (string, error) {
-	rmErr := oswrap.Remove(filename)
-	if rmErr == nil || os.IsNotExist(rmErr) {
-		return "", nil
-	}
-	fi, err := oswrap.Stat(filename)
-	if err != nil {
-		return "", err
-	}
-	if fi.IsDir() {
-		return "", rmErr
-	}
-
-	tmpDir := os.TempDir()
-	if filepath.VolumeName(tmpDir) != filepath.VolumeName(filename) {
-		tmpDir = filepath.Dir(filename)
-	}
-
-	tmpFile, err := ioutil.TempFile(tmpDir, filepath.Base(filename)+".old")
-	if err != nil {
-		return "", err
-	}
-	newName := tmpFile.Name()
-	tmpFile.Close()
-	if err := oswrap.Remove(newName); err != nil {
-		return "", err
-	}
-	if err := oswrap.Rename(filename, newName); err != nil {
-		return "", err
-	}
-	return newName, oswrap.RemoveOnReboot(newName)
+	return oswrap.RemoveOrPark(filename, os.TempDir())
 }
