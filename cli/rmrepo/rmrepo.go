@@ -46,9 +46,15 @@ func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate removing the repo without making changes")
 }
 
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run qualifies, because it only prints what it would do.
+func (cmd *rmRepoCmd) AllowUnelevated() bool { return cmd.dryRun }
+
+var _ cli.AllowUnelevated = (*rmRepoCmd)(nil)
+
 func (cmd *rmRepoCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	if cli.RefuseUnlessPrivileged(ctx) {
-		fmt.Fprintln(os.Stderr, "Removing a repository requires administrator privileges.")
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		fmt.Fprintln(os.Stderr, "Removing a repository requires administrator privileges; use -dry_run to preview it.")
 		return subcommands.ExitFailure
 	}
 	if got, want := f.NArg(), 1; got != want {

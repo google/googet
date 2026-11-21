@@ -57,9 +57,15 @@ func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate adding the repo without making changes")
 }
 
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run qualifies, because it only prints what it would do.
+func (cmd *addRepoCmd) AllowUnelevated() bool { return cmd.dryRun }
+
+var _ cli.AllowUnelevated = (*addRepoCmd)(nil)
+
 func (cmd *addRepoCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	if cli.RefuseUnlessPrivileged(ctx) {
-		logger.Error("Adding a repository requires administrator privileges.")
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Adding a repository requires administrator privileges; use -dry_run to preview it.")
 		return subcommands.ExitFailure
 	}
 	if got, want := f.NArg(), 2; got != want {

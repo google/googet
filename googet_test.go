@@ -688,7 +688,10 @@ func TestClassifyCommands(t *testing.T) {
 		{"verify -skip_files pkg", cli.Privileged},
 		{"clean", cli.Privileged},
 		{"clean -all", cli.Privileged},
+		{"addrepo -dry_run name https://example.com/repo", cli.UnelevatedRun},
+		{"addrepo -dry_run -priority 1500 -file x.repo name https://example.com/repo", cli.UnelevatedRun},
 		{"addrepo name https://example.com/repo", cli.Privileged},
+		{"rmrepo -dry_run name", cli.UnelevatedRun},
 		{"rmrepo name", cli.Privileged},
 	} {
 		t.Run(tc.args, func(t *testing.T) {
@@ -703,7 +706,7 @@ func TestClassifyCommands(t *testing.T) {
 // implement cli.AllowUnelevated and cli.LockFree, so adding one is a visible,
 // reviewed change.
 func TestAllowUnelevatedAllowlist(t *testing.T) {
-	wantAllow := []string{"available", "install", "installed", "latest", "listrepos", "remove", "update"}
+	wantAllow := []string{"addrepo", "available", "install", "installed", "latest", "listrepos", "remove", "rmrepo", "update"}
 	wantLockFree := []string{"installed", "listrepos"}
 	var gotAllow, gotLockFree []string
 	subcommands.DefaultCommander.VisitCommands(func(_ *subcommands.CommandGroup, c subcommands.Command) {
@@ -1031,6 +1034,8 @@ func TestRunUnelevatedReadsLeaveRootUnchanged(t *testing.T) {
 		{args: []string{"install", "-dry_run", "C"}, wantOut: "C.noarch"},
 		{args: []string{"installed"}, wantOut: "A.noarch", lockFree: true},
 		{args: []string{"listrepos"}, wantOut: "test", lockFree: true},
+		{args: []string{"addrepo", "-dry_run", "new", "https://example.com/new"}, wantOut: "Dry run: Would add repo"},
+		{args: []string{"rmrepo", "-dry_run", "test"}, wantOut: "Dry run: Would remove repo"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			root := readOnlyRoot(t)
@@ -1067,6 +1072,8 @@ func TestRunUnelevatedWritesStayPrivileged(t *testing.T) {
 		{"check", "-dry_run"},
 		{"verify", "A"},
 		{"clean"},
+		{"addrepo", "new", "https://example.com/new"},
+		{"rmrepo", "test"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			root := readOnlyRoot(t)
