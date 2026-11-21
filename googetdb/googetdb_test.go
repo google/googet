@@ -211,7 +211,9 @@ func TestCreateIfMissing(t *testing.T) {
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			settings.Initialize(t.TempDir(), false)
+			if err := settings.Initialize(t.TempDir(), false); err != nil {
+				t.Fatalf("settings.Initialize: %v", err)
+			}
 			dbFile := settings.DBFile()
 			if len(tc.initialDB) > 0 {
 				db, err := NewDB(dbFile)

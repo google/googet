@@ -38,7 +38,9 @@ func init() {
 }
 
 func TestMinInstalled(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -84,7 +86,9 @@ func TestMinInstalled(t *testing.T) {
 }
 
 func TestNeedsInstallation(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -142,7 +146,9 @@ func TestInstallPkg(t *testing.T) {
 	}
 	defer oswrap.RemoveAll(src)
 
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		t.Fatalf("googetdb.NewDB: %v", err)
@@ -298,7 +304,9 @@ func TestResolveDst(t *testing.T) {
 }
 
 func TestIsSatisfied(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -371,7 +379,9 @@ func TestIsSatisfied(t *testing.T) {
 }
 
 func TestResolveConflicts_Provides(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -414,7 +424,9 @@ func TestFromRepo_SatisfiedByProvider(t *testing.T) {
 	// We mock the DB state and call installDeps directly or via a wrapper if accessible.
 	// installDeps is unexported, but we are in package install.
 
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{
@@ -451,7 +463,9 @@ func TestFromRepo_SatisfiedByProvider(t *testing.T) {
 }
 
 func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	db, err := googetdb.NewDB(settings.DBFile())
 	if err != nil {
 		t.Fatalf("googetdb.NewDB: %v", err)
@@ -504,7 +518,9 @@ func TestFromRepo_SatisfiedByUninstalledProvider(t *testing.T) {
 }
 
 func TestBuildConflictMap(t *testing.T) {
-	settings.Initialize(t.TempDir(), false)
+	if err := settings.Initialize(t.TempDir(), false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 	state := []client.PackageState{
 		{
 			PackageSpec: &goolib.PkgSpec{Name: "pkgA", Version: "1.0.0@1", Arch: "noarch"},

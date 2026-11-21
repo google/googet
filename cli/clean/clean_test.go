@@ -17,7 +17,9 @@ func TestCleanPackages(t *testing.T) {
 		t.Fatalf("error creating temp directory: %v", err)
 	}
 	defer oswrap.RemoveAll(rootDir)
-	settings.Initialize(rootDir, false)
+	if err := settings.Initialize(rootDir, false); err != nil {
+		t.Fatalf("settings.Initialize: %v", err)
+	}
 
 	cache := settings.CacheDir()
 	wantFile := filepath.Join(cache, "want")

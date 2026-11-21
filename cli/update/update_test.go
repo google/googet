@@ -236,7 +236,9 @@ func TestUpdates(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			settings.Initialize(t.TempDir(), false)
+			if err := settings.Initialize(t.TempDir(), false); err != nil {
+				t.Fatalf("settings.Initialize: %v", err)
+			}
 			settings.Archs = []string{"x86_32", "noarch"}
 
 			var pi []goolib.PackageInfo
