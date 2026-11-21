@@ -1,7 +1,9 @@
 package repo
 
 import (
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -325,5 +327,16 @@ func TestRemoveEntryFromFiles(t *testing.T) {
 				t.Errorf("ConfigFiles(%v) got unexpected diff (-want +got):\n%v", repoDir, diff)
 			}
 		})
+	}
+}
+
+func TestUnmarshalRepoFileMissing(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "missing.repo")
+	rf, err := unmarshalRepoFile(p)
+	if !os.IsNotExist(err) || !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("unmarshalRepoFile(missing) = %v, want an error matching os.IsNotExist and fs.ErrNotExist", err)
+	}
+	if rf.Path != p || len(rf.Entries) != 0 {
+		t.Errorf("unmarshalRepoFile(missing) = %+v, want File{Path: %q}", rf, p)
 	}
 }

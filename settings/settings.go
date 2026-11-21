@@ -2,12 +2,12 @@
 package settings
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/google/googet/v2/client"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
 	"gopkg.in/yaml.v3"
@@ -96,7 +96,7 @@ type conf struct {
 
 // unmarshalConfFile returns a conf from a YAML configuration file.
 func unmarshalConfFile(filename string) (*conf, error) {
-	b, err := ioutil.ReadFile(filename)
+	b, err := oswrap.ReadFileShared(filename)
 	if err != nil {
 		return nil, err
 	}

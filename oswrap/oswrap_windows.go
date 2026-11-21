@@ -43,8 +43,10 @@ const MOVEFILE_DELAY_UNTIL_REBOOT = 4
 
 // normPath transforms a windows path into an extended-length path as described in
 // https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx#maxpath
+// A UNC path \\server\share\... becomes \\?\UNC\server\share\..., and paths
+// that already start with \\?\ or \\.\ are returned unchanged.
 func normPath(path string) (string, error) {
-	if strings.HasPrefix(path, "\\\\?\\") {
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\\.\`) {
 		return path, nil
 	}
 
@@ -53,7 +55,10 @@ func normPath(path string) (string, error) {
 		return "", err
 	}
 	path = filepath.Clean(path)
-	return "\\\\?\\" + path, nil
+	if strings.HasPrefix(path, `\\`) {
+		return `\\?\UNC\` + path[2:], nil
+	}
+	return `\\?\` + path, nil
 }
 
 // RemoveOnReboot schedules a file for removal on next reboot.
@@ -75,6 +80,17 @@ func RemoveOnReboot(name string) error {
 		return errors.New("return code of '0' (failure) from MoveFileEx")
 	}
 	return nil
+}
+
+// IsTransientShareError reports whether err is a sharing error that a reader
+// may see while an elevated writer replaces or removes the file:
+// ERROR_ACCESS_DENIED (for example, the file is delete pending under legacy
+// delete semantics), ERROR_SHARING_VIOLATION or ERROR_DELETE_PENDING. Such an
+// error ends once the writer finishes, so callers may retry or skip the file.
+func IsTransientShareError(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
+		errors.Is(err, windows.ERROR_SHARING_VIOLATION) ||
+		errors.Is(err, windows.ERROR_DELETE_PENDING)
 }
 
 // Open calls os.Open with name normalized
@@ -102,6 +118,38 @@ func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 		return nil, err
 	}
 	return os.OpenFile(name, flag, perm)
+}
+
+// OpenShared opens the existing file name for reading with name normalized.
+// Unlike os.Open, which shares only read and write access, it also shares
+// delete access (FILE_SHARE_DELETE). An unelevated reader can then never stop
+// an elevated writer from renaming or deleting the file while it is open.
+//
+// Callers must read what they need and close the file straight away. They
+// must never hold the handle across network or other long operations: with
+// legacy delete semantics, a deleted file stays "delete pending" until every
+// handle is closed, and creating a file at that path fails meanwhile.
+//
+// OpenShared doesn't open directories. A missing file or directory gives an
+// error that satisfies errors.Is(err, fs.ErrNotExist) and os.IsNotExist.
+func OpenShared(name string) (*os.File, error) {
+	p, err := normPath(name)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: name, Err: err}
+	}
+	p16, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: name, Err: err}
+	}
+	h, err := windows.CreateFile(p16, windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		// err is a syscall.Errno, so ERROR_FILE_NOT_FOUND and
+		// ERROR_PATH_NOT_FOUND match fs.ErrNotExist.
+		return nil, &os.PathError{Op: "open", Path: name, Err: err}
+	}
+	return os.NewFile(uintptr(h), name), nil
 }
 
 func isProtectedPath(path string) (bool, error) {
