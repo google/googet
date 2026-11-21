@@ -32,18 +32,21 @@ import (
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/system"
 )
 
+// Environment variables that runGooget sets for the child process.
 const (
 	// runArgsEnv, when set, makes the test binary run googet's run() with
 	// the JSON-encoded arguments it holds instead of running tests. run()
-	// registers flags on the global FlagSet, so each call needs a fresh
-	// process.
+	// registers flags on flag.CommandLine and commands on
+	// subcommands.DefaultCommander, so each run needs a fresh process.
 	runArgsEnv = "GOOGET_TEST_RUN_ARGS"
 	// spyDirEnv names the directory where the isAdmin and obtainLock spies
 	// record that they were called.
 	spyDirEnv = "GOOGET_TEST_SPY_DIR"
-	// allowEnv, when set, makes the spies succeed instead of failing.
+	// allowEnv, when set, makes the admin check and the lock succeed.
+	// Otherwise the child behaves as an unelevated process.
 	allowEnv = "GOOGET_TEST_ALLOW_PRIVILEGE"
 )
 
@@ -56,8 +59,11 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// runWithSpies runs googet with isAdmin and obtainLock replaced by spies
-// that record the call and fail, or succeed if allowEnv is set.
+// runWithSpies runs googet in a child process started by runGooget, with
+// isAdmin and obtainLock replaced by spies that record the call. isAdmin
+// fails unless allowEnv is set. obtainLock fails unless allowEnv is set, and
+// also fails if the googet root doesn't exist yet, because the root must be
+// created, with its own mode, before the lock file.
 func runWithSpies(encodedArgs string) int {
 	var args []string
 	if err := json.Unmarshal([]byte(encodedArgs), &args); err != nil {
@@ -77,12 +83,16 @@ func runWithSpies(encodedArgs string) int {
 		}
 		return errors.New("spy: not an administrator")
 	}
-	obtainLock = func(string, time.Duration) (func(), error) {
+	obtainLock = func(lockFile string, maxAge time.Duration) (func(), error) {
 		record("obtainLock")
-		if allow {
-			return func() {}, nil
+		if !allow {
+			return nil, errors.New("spy: lock refused")
 		}
-		return nil, errors.New("spy: lock refused")
+		root := filepath.Dir(lockFile)
+		if !isDir(root) {
+			return nil, fmt.Errorf("googet root %q doesn't exist when taking the lock", root)
+		}
+		return system.ObtainLock(lockFile, maxAge)
 	}
 	os.Args = append([]string{"googet"}, args...)
 	return run(context.Background())
@@ -94,9 +104,15 @@ type runResult struct {
 	spies          map[string]bool // Spies that were called.
 }
 
-// runGooget runs googet with args in a subprocess, with isAdmin and
+// output returns everything the child wrote, stdout first.
+func (r runResult) output() string {
+	return r.stdout + r.stderr
+}
+
+// runGooget runs googet with args in a child process, with isAdmin and
 // obtainLock replaced by spies that succeed if allow is set and fail
-// otherwise.
+// otherwise. The GooGetRoot environment variable is unset, so only -root
+// sets the root.
 func runGooget(t *testing.T, allow bool, args ...string) runResult {
 	t.Helper()
 	enc, err := json.Marshal(args)
@@ -105,7 +121,13 @@ func runGooget(t *testing.T, allow bool, args ...string) runResult {
 	}
 	spyDir := t.TempDir()
 	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), runArgsEnv+"="+string(enc), spyDirEnv+"="+spyDir, envVar+"=")
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), strings.ToUpper(envVar)+"=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	// The race detector otherwise sleeps for a second before each exit.
+	cmd.Env = append(cmd.Env, runArgsEnv+"="+string(enc), spyDirEnv+"="+spyDir, "GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	if allow {
 		cmd.Env = append(cmd.Env, allowEnv+"=1")
 	}
@@ -434,5 +456,110 @@ func TestRunRemovePrivileged(t *testing.T) {
 	}
 	if installed(t, root, "B") {
 		t.Error("package B is still installed, want it removed")
+	}
+}
+
+func TestRunUnelevatedCreatesNoRoot(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		args []string
+	}{
+		{desc: "listrepos", args: []string{"listrepos"}},
+		{desc: "installed", args: []string{"installed"}},
+		{desc: "remove dry run", args: []string{"remove", "-dry_run", "foo"}},
+		{desc: "install", args: []string{"install", "foo"}},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "googet")
+			args := append([]string{"-root", root, "-system_log=false", "-noconfirm"}, tc.args...)
+			res := runGooget(t, false, args...)
+			if res.code != 1 {
+				t.Errorf("unelevated googet %q exit code = %d, want 1; output:\n%s", tc.args, res.code, res.output())
+			}
+			if _, err := os.Lstat(root); !os.IsNotExist(err) {
+				t.Errorf("unelevated googet %q left the root %q behind (Lstat error: %v); output:\n%s", tc.args, root, err, res.output())
+			}
+		})
+	}
+}
+
+func TestRunUnelevatedWithEmptyRoot(t *testing.T) {
+	for _, tc := range []struct {
+		desc     string
+		args     []string
+		wantCode int
+	}{
+		// installed needs googet.db, which an unelevated run must not create.
+		{desc: "installed", args: []string{"installed"}, wantCode: 1},
+		{desc: "listrepos", args: []string{"listrepos"}, wantCode: 0},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			args := append([]string{"-root", root, "-system_log=false"}, tc.args...)
+			res := runGooget(t, false, args...)
+			if res.code != tc.wantCode {
+				t.Errorf("unelevated googet %q with an empty root exit code = %d, want %d; output:\n%s", tc.args, res.code, tc.wantCode, res.output())
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("reading root: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("unelevated googet %q created %v in the root, want nothing", tc.args, entries)
+			}
+		})
+	}
+}
+
+func TestRunElevatedCreatesRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "googet")
+	res := runGooget(t, true, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
+	if res.code != 0 {
+		t.Fatalf("elevated googet listrepos exit code = %d, want 0; output:\n%s", res.code, res.output())
+	}
+	for _, p := range []struct {
+		path string
+		dir  bool
+	}{
+		{root, true},
+		{filepath.Join(root, "cache"), true},
+		{filepath.Join(root, "repos"), true},
+		{filepath.Join(root, "googet.db"), false},
+	} {
+		fi, err := os.Stat(p.path)
+		if err != nil {
+			t.Errorf("elevated googet listrepos didn't create %q: %v", p.path, err)
+			continue
+		}
+		if fi.IsDir() != p.dir {
+			t.Errorf("%q IsDir() = %v, want %v", p.path, fi.IsDir(), p.dir)
+		}
+	}
+}
+
+func TestRunWithoutRoot(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		args    []string
+		wantOut string
+	}{
+		{desc: "version", args: []string{"-version"}, wantOut: "GooGet version:"},
+		{desc: "help", args: []string{"help"}, wantOut: "Subcommands"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "googet")
+			for _, args := range [][]string{tc.args, append([]string{"-root", root}, tc.args...)} {
+				res := runGooget(t, false, args...)
+				if res.code != 0 {
+					t.Errorf("googet %q exit code = %d, want 0; output:\n%s", args, res.code, res.output())
+				}
+				if !strings.Contains(res.output(), tc.wantOut) {
+					t.Errorf("googet %q output = %q, want it to contain %q", args, res.output(), tc.wantOut)
+				}
+			}
+			if _, err := os.Lstat(root); !os.IsNotExist(err) {
+				t.Errorf("googet %q created the root %q (Lstat error: %v)", tc.args, root, err)
+			}
+		})
 	}
 }
