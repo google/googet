@@ -54,11 +54,19 @@ var retryDelay = func(retry int) time.Duration {
 // HTTP download resumes from the partial file when the server supports it.
 func Package(ctx context.Context, pkgURL, dst, chksum string, downloader *client.Downloader) error {
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pkgURL)
+	if isGCSURL {
+		// Refuse a destination that isn't a regular file before the first
+		// attempt; retrying can't change it. Other errors are left to the
+		// attempts.
+		if err := checkReplaceable(dst); errors.Is(err, errNotRegularFile) {
+			return err
+		}
+	}
 	try := func() error {
 		if !isGCSURL {
 			return packageHTTP(ctx, pkgURL, dst, chksum, downloader)
 		}
-		if err := oswrap.RemoveAll(dst); err != nil {
+		if err := removeFile(dst); err != nil {
 			return err
 		}
 		return packageGCS(ctx, bucket, object, dst, chksum, downloader)
@@ -181,8 +189,8 @@ func packageHTTP(ctx context.Context, url, dst, chksum string, downloader *clien
 	bar.Finish()
 	// Verify the checksum of the fully downloaded file.
 	if sum := hex.EncodeToString(hash.Sum(nil)); sum != chksum {
-		f.Close()         // Windows cannot delete an open file.
-		os.RemoveAll(dst) // delete the bad file
+		f.Close()       // Windows cannot delete an open file.
+		removeFile(dst) // delete the bad file
 		return fmt.Errorf("checksum doesn't match: got %s, want %s", sum, chksum)
 	}
 	logger.Infof("Successfully downloaded %s bytes", humanize.IBytes(uint64(n)))
@@ -264,6 +272,41 @@ func download(r io.Reader, size int64, dst, chksum string) (err error) {
 	}
 
 	logger.Infof("Successfully downloaded %s", humanize.IBytes(uint64(b)))
+	return nil
+}
+
+// errNotRegularFile is returned when a download destination exists but is not
+// a regular file, so it is left in place rather than replaced.
+var errNotRegularFile = errors.New("not a regular file")
+
+// checkReplaceable reports whether a download may replace dst. It returns nil
+// when dst is missing or is a regular file. When dst is a directory, symlink or
+// anything else other than a regular file, it returns an error wrapping
+// errNotRegularFile. Any other error from Lstat is returned as is.
+func checkReplaceable(dst string) error {
+	fi, err := oswrap.Lstat(dst)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("not replacing download destination %s: %w", dst, errNotRegularFile)
+	}
+	return nil
+}
+
+// removeFile removes dst so a download can replace it. A missing dst is not an
+// error. A dst that checkReplaceable refuses is left in place and its error is
+// returned, so a mistaken destination is never deleted.
+func removeFile(dst string) error {
+	if err := checkReplaceable(dst); err != nil {
+		return err
+	}
+	if err := oswrap.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
 
