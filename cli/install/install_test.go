@@ -146,7 +146,9 @@ func TestInstall(t *testing.T) {
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			// Set up the installer.
-			settings.Initialize(t.TempDir(), false)
+			if err := settings.Initialize(t.TempDir(), false); err != nil {
+				t.Fatalf("settings.Initialize: %v", err)
+			}
 			db, err := googetdb.NewDB(settings.DBFile())
 			if err != nil {
 				t.Fatalf("googetdb.NewDB: %v", err)
@@ -292,7 +294,9 @@ func TestInstallDryRun(t *testing.T) {
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			settings.Initialize(t.TempDir(), false)
+			if err := settings.Initialize(t.TempDir(), false); err != nil {
+				t.Fatalf("settings.Initialize: %v", err)
+			}
 			db, err := googetdb.NewDB(settings.DBFile())
 			if err != nil {
 				t.Fatalf("googetdb.NewDB: %v", err)

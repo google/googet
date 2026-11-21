@@ -2,6 +2,7 @@
 package settings
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -38,11 +39,13 @@ var (
 	Progress = true
 )
 
-// Initialize reads the initial settings.
-func Initialize(rootDir string, confirm bool) {
+// Initialize reads the initial settings. A missing googet.conf leaves the
+// defaults in place; it returns an error if googet.conf exists but can't be
+// read.
+func Initialize(rootDir string, confirm bool) error {
 	RootDir = rootDir
 	Confirm = confirm
-	readConf(ConfFile())
+	return readConf(ConfFile())
 }
 
 // LockFile returns the path to the googet lock file.
@@ -94,25 +97,19 @@ type conf struct {
 	Progress *bool
 }
 
-// unmarshalConfFile returns a conf from a YAML configuration file.
-func unmarshalConfFile(filename string) (*conf, error) {
+// readConf initializes settings based on the configuration file at filename.
+// It returns an error if the file exists but can't be read.
+func readConf(filename string) error {
+	gc := &conf{}
 	b, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	var cf conf
-	return &cf, yaml.Unmarshal(b, &cf)
-}
-
-// readConf initializes settings based on the configuration file at cf.
-func readConf(filename string) {
-	gc, err := unmarshalConfFile(filename)
-	if err != nil {
-		if os.IsNotExist(err) {
-			gc = &conf{}
-		} else {
-			// TODO: if ReadFile fails for some reason other than the file not existing,
-			// gc is nil and the code below will panic after falling through here.
+	switch {
+	case os.IsNotExist(err):
+		// A missing file keeps the defaults.
+	case err != nil:
+		return fmt.Errorf("unable to read conf file: %w", err)
+	default:
+		// A parse error keeps the fields that decoded.
+		if err := yaml.Unmarshal(b, gc); err != nil {
 			logger.Errorf("Error unmarshalling conf file: %v", err)
 		}
 	}
@@ -122,7 +119,7 @@ func readConf(filename string) {
 	} else {
 		Archs, err = system.InstallableArchs()
 		if err != nil {
-			logger.Fatal(err)
+			return fmt.Errorf("unable to determine installable architectures: %w", err)
 		}
 	}
 
@@ -167,4 +164,5 @@ func readConf(filename string) {
 	if gc.Progress != nil {
 		Progress = *gc.Progress
 	}
+	return nil
 }

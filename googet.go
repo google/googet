@@ -121,7 +121,10 @@ func run(ctx context.Context) int {
 		logger.Errorf("Unable to create root directory: %v", err)
 		return 1
 	}
-	settings.Initialize(*rootDir, !*noConfirm)
+	if err := settings.Initialize(*rootDir, !*noConfirm); err != nil {
+		logger.Errorf("Unable to initialize settings: %v", err)
+		return 1
+	}
 
 	// "googet listrepos" may execute without a lock after the root directory and
 	// settings are initialized.
