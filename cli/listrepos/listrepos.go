@@ -44,7 +44,23 @@ var _ cli.NoPositionals = (*listReposCmd)(nil)
 
 func (cmd *listReposCmd) SetFlags(f *flag.FlagSet) {}
 
-func (cmd *listReposCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+// AllowUnelevated reports that listrepos may always skip the admin check and
+// the lock, because it only reads the repo files.
+func (*listReposCmd) AllowUnelevated() bool { return true }
+
+// LockFree marks listrepos as a command that runs without the admin check,
+// the lock and the log file even when elevated, as it always has.
+func (*listReposCmd) LockFree() {}
+
+var _ cli.LockFree = (*listReposCmd)(nil)
+
+func (cmd *listReposCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	// TestRefuseUnlessAllowedFirst requires this guard. It can't refuse
+	// while AllowUnelevated returns true.
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Listing repositories requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	rfs, err := repo.ConfigFiles(settings.RepoDir())
 	if err != nil {
 		logger.Errorf("Failed to read repo configs: %v", err)

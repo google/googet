@@ -20,7 +20,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/google/googet/v2/cli"
@@ -51,29 +50,19 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be removed but do not remove")
 }
 
-// DryRunRequested reports whether args, the arguments that follow "remove" on
-// the command line, ask for a dry run. It parses args with the same flags as
-// the remove subcommand and returns false if they don't parse, so a caller
-// that uses it to skip the admin check fails closed.
-func DryRunRequested(args []string) bool {
-	var cmd removeCmd
-	f := flag.NewFlagSet(cmd.Name(), flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	cmd.SetFlags(f)
-	if err := f.Parse(args); err != nil {
-		return false
-	}
-	return cmd.dryRun
-}
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run may, because it only reads the database.
+func (cmd *removeCmd) AllowUnelevated() bool { return cmd.dryRun }
+
+var _ cli.AllowUnelevated = (*removeCmd)(nil)
 
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	if flags.NArg() == 0 {
-		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Removing packages requires administrator privileges; use -dry_run to preview the removal.")
 		return subcommands.ExitFailure
 	}
-	// Only a dry run may proceed without the admin check and the lock.
-	if !cmd.dryRun && !cli.IsPrivileged(ctx) {
-		logger.Error("Removing packages requires administrator privileges; use -dry_run to preview the removal.")
+	if flags.NArg() == 0 {
+		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
 	}
 

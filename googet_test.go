@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,11 +29,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/system"
+	"github.com/google/subcommands"
 )
 
 // Environment variables that runGooget sets for the child process.
@@ -372,30 +375,107 @@ func TestWantProgress(t *testing.T) {
 	}
 }
 
-// TestNeedsPrivilege checks the command name and database conditions. The
-// remove flag combinations are covered by remove.TestDryRunRequested.
-func TestNeedsPrivilege(t *testing.T) {
+// TestClassifyCommands pins each registered command's unelevated policy:
+// which of its flags make cli.Classify return UnelevatedRun. How Classify
+// parses flags is tested in package cli.
+func TestClassifyCommands(t *testing.T) {
 	for _, tc := range []struct {
-		cmd      string
-		args     string
-		dbExists bool
-		want     bool
+		args string
+		want cli.Class
 	}{
-		{"remove", "-dry_run pkg", true, false},
-		{"remove", "pkg", true, true},
-		{"remove", "-dry_run pkg", false, true},
-		{"install", "-dry_run pkg", true, true},
+		{"installed", cli.UnelevatedRun},
+		{"installed -info A", cli.UnelevatedRun},
+		{"listrepos", cli.UnelevatedRun},
+		{"remove -dry_run pkg", cli.UnelevatedRun},
+		{"remove pkg", cli.Privileged},
+		{"install -dry_run pkg", cli.Privileged},
 	} {
-		t.Run(fmt.Sprintf("%s %s dbExists=%v", tc.cmd, tc.args, tc.dbExists), func(t *testing.T) {
-			if got := needsPrivilege(tc.cmd, strings.Fields(tc.args), tc.dbExists); got != tc.want {
-				t.Errorf("needsPrivilege(%q, %q, %v) = %v, want %v", tc.cmd, tc.args, tc.dbExists, got, tc.want)
+		t.Run(tc.args, func(t *testing.T) {
+			if got, _, _ := cli.Classify(subcommands.DefaultCommander, strings.Fields(tc.args)); got != tc.want {
+				t.Errorf("Classify(%q) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
 	}
 }
 
+// TestAllowUnelevatedAllowlist pins the sets of registered commands that
+// implement cli.AllowUnelevated and cli.LockFree, so adding one is a visible,
+// reviewed change.
+func TestAllowUnelevatedAllowlist(t *testing.T) {
+	wantAllow := []string{"installed", "listrepos", "remove"}
+	wantLockFree := []string{"installed", "listrepos"}
+	var gotAllow, gotLockFree []string
+	subcommands.DefaultCommander.VisitCommands(func(_ *subcommands.CommandGroup, c subcommands.Command) {
+		if _, ok := c.(cli.AllowUnelevated); ok {
+			gotAllow = append(gotAllow, c.Name())
+		}
+		if _, ok := c.(cli.LockFree); ok {
+			gotLockFree = append(gotLockFree, c.Name())
+		}
+	})
+	slices.Sort(gotAllow)
+	slices.Sort(gotLockFree)
+	if !slices.Equal(gotAllow, wantAllow) {
+		t.Errorf("commands implementing cli.AllowUnelevated = %q, want %q", gotAllow, wantAllow)
+	}
+	if !slices.Equal(gotLockFree, wantLockFree) {
+		t.Errorf("commands implementing cli.LockFree = %q, want %q", gotLockFree, wantLockFree)
+	}
+}
+
+// TestRunUsageOnly checks that runs that can only print usage or a parse
+// error exit with a usage error before the root check, the admin check and
+// the lock, with or without a googet root.
+func TestRunUsageOnly(t *testing.T) {
+	for _, tc := range [][]string{
+		{"install", "-h"},
+		{"install", "-help"},
+		{"install", "-bogus"},
+		{"remove", "-dry_run=maybe", "A"},
+		{"nosuchcmd"},
+		{"REMOVE", "-dry_run", "A"},
+	} {
+		t.Run(strings.Join(tc, " "), func(t *testing.T) {
+			check := func(t *testing.T, res runResult) {
+				t.Helper()
+				if res.code != int(subcommands.ExitUsageError) {
+					t.Errorf("googet %q exit code = %d, want %d; output:\n%s", tc, res.code, subcommands.ExitUsageError, res.output())
+				}
+				if len(res.spies) != 0 {
+					t.Errorf("googet %q called spies %v, want none", tc, res.spies)
+				}
+				if res.stderr == "" {
+					t.Errorf("googet %q printed nothing on stderr, want usage or a parse error", tc)
+				}
+			}
+			t.Run("no root", func(t *testing.T) {
+				check(t, runGooget(t, false, tc...))
+			})
+			t.Run("missing root", func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), "googet")
+				check(t, runGooget(t, false, append([]string{"-root", root}, tc...)...))
+				if _, err := os.Lstat(root); !os.IsNotExist(err) {
+					t.Errorf("googet %q created the root %q (Lstat error: %v)", tc, root, err)
+				}
+			})
+			t.Run("existing root", func(t *testing.T) {
+				root := fixtureRoot(t)
+				before := snapshotRoot(t, root)
+				check(t, runGooget(t, false, append([]string{"-root", root}, tc...)...))
+				after := snapshotRoot(t, root)
+				if !slices.Equal(after.names, before.names) {
+					t.Errorf("root files changed from %q to %q", before.names, after.names)
+				}
+				if !bytes.Equal(after.db, before.db) || !after.dbMtime.Equal(before.dbMtime) {
+					t.Error("googet.db changed, want its bytes and mtime unchanged")
+				}
+			})
+		})
+	}
+}
+
 // TestRunRemoveDryRunUnprivileged checks that remove -dry_run runs without
-// the admin check or the lock and leaves the googet root untouched.
+// the lock when the admin check fails, and leaves the googet root untouched.
 func TestRunRemoveDryRunUnprivileged(t *testing.T) {
 	root := fixtureRoot(t)
 	before := snapshotRoot(t, root)
@@ -408,8 +488,8 @@ func TestRunRemoveDryRunUnprivileged(t *testing.T) {
 	if !strings.Contains(res.stdout, "B.noarch") || !strings.Contains(res.stdout, "Dry run") {
 		t.Errorf("googet remove -dry_run A printed %q, want the dry-run list naming B", res.stdout)
 	}
-	if len(res.spies) != 0 {
-		t.Errorf("spies called: %v, want none", res.spies)
+	if !res.spies["isAdmin"] || res.spies["obtainLock"] {
+		t.Errorf("spies called: %v, want only isAdmin", res.spies)
 	}
 	after := snapshotRoot(t, root)
 	if !slices.Equal(after.names, before.names) {
@@ -459,6 +539,50 @@ func TestRunRemovePrivileged(t *testing.T) {
 	}
 }
 
+// TestRunElevatedAllowUnelevated checks elevated runs of commands that may
+// run unelevated. A cli.LockFree command still runs without the admin check,
+// the lock and googet.log. Any other command takes the privileged path, so
+// the admin check passes, it takes the lock and it writes googet.log.
+func TestRunElevatedAllowUnelevated(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		wantOut    string
+		privileged bool
+	}{
+		{args: []string{"remove", "-dry_run", "A"}, wantOut: "Dry run", privileged: true},
+		{args: []string{"installed"}, wantOut: "A.noarch"},
+		{args: []string{"listrepos"}, wantOut: "test"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			root := fixtureRoot(t)
+			if err := os.Mkdir(filepath.Join(root, "repos"), 0774); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "repos", "test.repo"), []byte("- name: test\n  url: https://example.com/repo\n"), 0664); err != nil {
+				t.Fatal(err)
+			}
+			res := runGooget(t, true, append([]string{"-root", root, "-noconfirm", "-system_log=false"}, tc.args...)...)
+			if res.code != 0 {
+				t.Errorf("elevated googet %q exit code = %d, want 0; output:\n%s", tc.args, res.code, res.output())
+			}
+			if !strings.Contains(res.stdout, tc.wantOut) {
+				t.Errorf("elevated googet %q printed %q, want it to contain %q", tc.args, res.stdout, tc.wantOut)
+			}
+			wantSpies := map[string]bool{}
+			if tc.privileged {
+				wantSpies = map[string]bool{"isAdmin": true, "obtainLock": true}
+			}
+			if !maps.Equal(res.spies, wantSpies) {
+				t.Errorf("elevated googet %q called spies %v, want %v", tc.args, res.spies, wantSpies)
+			}
+			_, err := os.Stat(filepath.Join(root, "googet.log"))
+			if gotLog := err == nil; gotLog != tc.privileged {
+				t.Errorf("elevated googet %q wrote googet.log: %v (Stat error: %v), want %v", tc.args, gotLog, err, tc.privileged)
+			}
+		})
+	}
+}
+
 func TestRunUnelevatedCreatesNoRoot(t *testing.T) {
 	for _, tc := range []struct {
 		desc string
@@ -489,9 +613,11 @@ func TestRunUnelevatedWithEmptyRoot(t *testing.T) {
 		args     []string
 		wantCode int
 	}{
-		// installed needs googet.db, which an unelevated run must not create.
+		// Unelevated runs need googet.db, which an unelevated run must not
+		// create, so both commands take the privileged path and fail the admin
+		// check.
 		{desc: "installed", args: []string{"installed"}, wantCode: 1},
-		{desc: "listrepos", args: []string{"listrepos"}, wantCode: 0},
+		{desc: "listrepos", args: []string{"listrepos"}, wantCode: 1},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			root := t.TempDir()

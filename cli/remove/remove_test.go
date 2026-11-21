@@ -231,32 +231,26 @@ func TestRemoveOneDryRun(t *testing.T) {
 	}
 }
 
-func TestDryRunRequested(t *testing.T) {
+// TestClassify checks how cli.Classify treats remove's -db_only flag and a
+// run without package names. The policy for the common cases is pinned with
+// the other commands in package main, and the flag parsing in package cli.
+func TestClassify(t *testing.T) {
+	cmdr := subcommands.NewCommander(flag.NewFlagSet("googet", flag.ContinueOnError), "googet")
+	cmdr.Register(&removeCmd{}, "")
 	for _, tc := range []struct {
 		args string
-		want bool
+		want cli.Class
 	}{
-		{"-dry_run pkg", true},
-		{"--dry_run pkg", true},
-		{"-dry_run=true pkg", true},
-		{"-db_only -dry_run pkg", true},
-		{"-dry_run=false -dry_run pkg", true},
-		{"-dry_run", true}, // Execute then refuses for lack of a package.
-		{"pkg", false},
-		{"", false},
-		{"-dry_run=false pkg", false},
-		{"-dry_run -dry_run=false pkg", false},
-		{"pkg -dry_run", false}, // Flag parsing stops at the first positional argument.
-		{"-- -dry_run", false},
-		{"-dryrun pkg", false},
-		{"-bogus -dry_run pkg", false},
-		{"-dry_run -bogus pkg", false},
-		{"-dry_run=maybe pkg", false},
-		{"-h", false},
+		{"-db_only -dry_run pkg", cli.UnelevatedRun},
+		{"-dry_run -db_only pkg", cli.UnelevatedRun},
+		{"-db_only pkg", cli.Privileged},
+		{"-dry_run", cli.UnelevatedRun}, // Execute then refuses for lack of a package.
+		{"", cli.Privileged},
 	} {
 		t.Run(tc.args, func(t *testing.T) {
-			if got := DryRunRequested(strings.Fields(tc.args)); got != tc.want {
-				t.Errorf("DryRunRequested(%q) = %v, want %v", tc.args, got, tc.want)
+			args := append([]string{"remove"}, strings.Fields(tc.args)...)
+			if got, _, _ := cli.Classify(cmdr, args); got != tc.want {
+				t.Errorf("Classify(%q) = %v, want %v", args, got, tc.want)
 			}
 		})
 	}

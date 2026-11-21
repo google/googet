@@ -23,7 +23,6 @@ import (
 	"os"
 
 	"github.com/google/googet/v2/cli"
-	"github.com/google/googet/v2/cli/remove"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/progress"
 	"github.com/google/googet/v2/settings"
@@ -40,6 +39,7 @@ import (
 	_ "github.com/google/googet/v2/cli/installed"
 	_ "github.com/google/googet/v2/cli/latest"
 	_ "github.com/google/googet/v2/cli/listrepos"
+	_ "github.com/google/googet/v2/cli/remove"
 	_ "github.com/google/googet/v2/cli/rmrepo"
 	_ "github.com/google/googet/v2/cli/update"
 	_ "github.com/google/googet/v2/cli/verify"
@@ -121,15 +121,17 @@ func run(ctx context.Context) int {
 		return int(cmdr.Execute(ctx))
 	}
 
-	// Reject misplaced flags and unexpected arguments before anything is
-	// touched. Unknown commands fall through to cmdr.Execute, which reports
-	// them.
-	if cmd := findCommand(cmdr, cmdName); cmd != nil {
-		if err := cli.CheckArgs(cmd, flag.Args()[1:]); err != nil {
-			fmt.Fprintf(cmdr.Error, "%s: %v\n", cmdName, err)
+	// Decide how to run before anything is touched. Usage-only runs never
+	// reach a command's Execute, so they need no root, admin check, lock or
+	// log; Execute prints the usage or the parse error.
+	class, cmd, argsErr := cli.Classify(cmdr, flag.Args())
+	if class == cli.UsageOnly {
+		if argsErr != nil {
+			fmt.Fprintf(cmdr.Error, "%s: %v\n", cmdName, argsErr)
 			cmdr.ExplainCommand(cmdr.Error, cmd)
 			return int(subcommands.ExitUsageError)
 		}
+		return int(cmdr.Execute(ctx))
 	}
 
 	if *rootDir == "" {
@@ -138,37 +140,45 @@ func run(ctx context.Context) int {
 	}
 	settings.Initialize(*rootDir, !*noConfirm)
 
-	// Commands that skip the admin check must not create anything under the
-	// root, so they only skip it if the root already exists. Otherwise they
-	// take the privileged path below, which creates the root.
+	initProgress := func() {
+		progressSet := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "progress" {
+				progressSet = true
+			}
+		})
+		progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
+	}
+
+	// Unelevated runs must not create anything under the root, so they run
+	// only if the root and the database already exist. Otherwise they take
+	// the privileged path below, which creates them after the admin check.
+	// A LockFree command runs unelevated even in an elevated process. Any
+	// other command runs unelevated only if the admin check fails, so an
+	// elevated run keeps the lock, the log and the cache refresh.
 	rootExists := isDir(*rootDir)
-
-	// "googet listrepos" may execute without a lock if the root directory
-	// exists.
-	if rootExists && cmdName == "listrepos" {
-		return (int(cmdr.Execute(context.Background())))
-	}
-
 	dbFile := settings.DBFile()
-	dbExists := googetdb.Exists(dbFile)
-
-	// "googet installed" is allowed to execute without a lock if the googet
-	// database has already been created.
-	if rootExists && dbExists && cmdName == "installed" {
-		return int(cmdr.Execute(ctx))
-	}
-
-	// "googet remove -dry_run" only reads the database, so it is allowed to
-	// execute without admin rights or a lock on the same terms. It doesn't
-	// write googet.log or the system log; with -verbose, info logs still go to
-	// stdout.
-	if rootExists && !needsPrivilege(cmdName, flag.Args()[1:], dbExists) {
+	canUnelevated := class == cli.UnelevatedRun && rootExists && googetdb.Exists(dbFile)
+	_, lockFree := cmd.(cli.LockFree)
+	runUnelevated := func() int {
+		// No lock, no googet.log and no system log, which on Windows would
+		// register an event source under HKLM. Errors go to stderr; with
+		// -verbose, info logs go to stdout. The context isn't marked
+		// privileged, so the command refuses anything its AllowUnelevated
+		// doesn't allow.
 		logger.Init("GooGet", *verbose, false, io.Discard)
 		defer logger.Close()
+		initProgress()
 		return int(cmdr.Execute(ctx))
 	}
-
-	if err := isAdmin(); err != nil {
+	if canUnelevated && lockFree {
+		return runUnelevated()
+	}
+	adminErr := isAdmin()
+	if canUnelevated && adminErr != nil {
+		return runUnelevated()
+	}
+	if err := adminErr; err != nil {
 		if !rootExists {
 			err = fmt.Errorf("%v; googet root %q doesn't exist, run googet elevated first", err, *rootDir)
 		}
@@ -206,13 +216,7 @@ func run(ctx context.Context) int {
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
 
-	progressSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "progress" {
-			progressSet = true
-		}
-	})
-	progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
+	initProgress()
 
 	if err := googetdb.CreateIfMissing(dbFile); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)
@@ -227,31 +231,6 @@ func run(ctx context.Context) int {
 		return 1
 	}
 	return int(cmdr.Execute(ctx))
-}
-
-// needsPrivilege reports whether the subcommand cmd, run with the arguments
-// args that follow it, needs the admin check, the lock and the log file.
-// dbExists reports whether the googet database already exists. It fails
-// closed: only a remove whose flags parse and request a dry run, against an
-// existing database, may run without privileges. Install and update dry runs
-// still write repo indexes, so they stay privileged.
-func needsPrivilege(cmd string, args []string, dbExists bool) bool {
-	if cmd != "remove" || !dbExists {
-		return true
-	}
-	return !remove.DryRunRequested(args)
-}
-
-// findCommand returns the command registered with cmdr under name, or nil if
-// there is none. Like Commander.Execute, it returns the first match.
-func findCommand(cmdr *subcommands.Commander, name string) subcommands.Command {
-	var found subcommands.Command
-	cmdr.VisitCommands(func(_ *subcommands.CommandGroup, cmd subcommands.Command) {
-		if found == nil && cmd.Name() == name {
-			found = cmd
-		}
-	})
-	return found
 }
 
 // isDir reports whether path exists and is a directory. Any error, including
