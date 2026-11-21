@@ -49,6 +49,11 @@ func (*updateCmd) Usage() string {
 	return fmt.Sprintf("%s update [-sources repo1,repo2...] [-dry_run] [-force]\n", filepath.Base(os.Args[0]))
 }
 
+// NoPositionals marks update as a command that takes no positional arguments.
+func (*updateCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*updateCmd)(nil)
+
 func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dbOnly, "db_only", false, "only make changes to DB, don't perform install system actions")
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
