@@ -17,10 +17,14 @@ limitations under the License.
 package oswrap
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 )
 
 // ReadFileShared reads the whole file name through OpenShared and closes it
@@ -107,6 +111,148 @@ func retryWhile(transient func(error) bool, op func() error) error {
 		time.Sleep(delay)
 		delay = min(2*delay, replaceMaxDelay)
 	}
+}
+
+// maxAsideBase is the most bytes of the original base name kept in the
+// temporary name used by renameAside, so the temporary name stays well within
+// file name length limits.
+const maxAsideBase = 64
+
+// renameAside renames name, which must not be a directory, to a unique
+// dot-prefixed name in the same directory and returns that name, or "" if
+// name no longer exists.
+func renameAside(name string) (string, error) {
+	var r [8]byte
+	if _, err := rand.Read(r[:]); err != nil {
+		return "", err
+	}
+	base := filepath.Base(name)
+	if len(base) > maxAsideBase {
+		base = base[:maxAsideBase]
+		// Don't split a multi-byte character.
+		for !utf8.ValidString(base) {
+			base = base[:len(base)-1]
+		}
+	}
+	tmp := filepath.Join(filepath.Dir(name), "."+base+".del-"+hex.EncodeToString(r[:]))
+	if err := Rename(name, tmp); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return tmp, nil
+}
+
+// renameAndTryRemove removes name without leaving a delete-pending name
+// behind. A file or symlink is renamed aside to a unique dot-prefixed name in
+// the same directory and then deleted; the rename frees name at once, even
+// while a reader holds the file open through OpenShared. Under legacy
+// (non-POSIX) Windows delete semantics, deleting an open file in place would
+// leave name "delete pending" until every handle is closed, and creating or
+// opening a file at name would fail meanwhile. A directory is removed in
+// place with Remove, so it must be empty. A missing name isn't an error.
+//
+// If the renamed file can't be deleted, renameAndTryRemove returns its name
+// and the delete error. Otherwise it returns "" and any error from before the
+// delete, in which case name is left as it was.
+func renameAndTryRemove(name string) (left string, err error) {
+	fi, err := Lstat(name)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if fi.IsDir() {
+		if err := Remove(name); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		return "", nil
+	}
+	tmp, err := renameAside(name)
+	if err != nil || tmp == "" {
+		return "", err
+	}
+	if err := removeAside(tmp); err != nil && !os.IsNotExist(err) {
+		return tmp, err
+	}
+	return "", nil
+}
+
+// removeAside deletes the file that renameAndTryRemove renamed aside. Tests
+// replace it to make that delete fail.
+var removeAside = Remove
+
+// RenameAndRemove removes the file, symlink or empty directory name, so that
+// name can be created again straight away even while a reader holds the old
+// file open through OpenShared; see renameAndTryRemove. If the renamed file
+// can't be deleted (for example, because it is a running executable), it is
+// scheduled for removal on reboot. On Windows, RenameAndRemove then returns
+// nil, or an error if the scheduling fails. Other systems can't remove a file
+// on reboot, so RenameAndRemove returns an error that names the file left
+// behind. A missing name isn't an error.
+func RenameAndRemove(name string) error {
+	left, err := renameAndTryRemove(name)
+	if left == "" {
+		return err
+	}
+	return removeLeftLater(left, name, err)
+}
+
+// RemoveOrPark removes name like RenameAndRemove, but if the renamed file
+// can't be deleted, it also moves the file into parkDir when parkDir is on
+// the same volume as name, so that name's directory can still be removed. If
+// that move fails, the file stays under its dot-prefixed name next to name.
+// It then schedules the file for removal on reboot and returns the file's new
+// name, so that the caller can try to delete it again later. As with
+// RenameAndRemove, that scheduling is only available on Windows; on other
+// systems RemoveOrPark returns the new name together with an error.
+func RemoveOrPark(name, parkDir string) (string, error) {
+	left, err := renameAndTryRemove(name)
+	if left == "" {
+		return "", err
+	}
+	if filepath.VolumeName(parkDir) == filepath.VolumeName(name) {
+		if parked, perr := park(left, filepath.Base(name), parkDir); perr == nil {
+			left = parked
+		}
+	}
+	return left, removeLeftLater(left, name, err)
+}
+
+// removeLeftLater schedules left, which is what remains of name after its
+// delete failed with err, for removal on reboot. It returns nil if that
+// scheduling succeeds, or an error that names left and includes both err and
+// the scheduling error.
+//
+// It schedules through removeLater rather than the exported RemoveOnReboot
+// because the Unix RemoveOnReboot returns nil without doing anything, while
+// the Unix removeLater returns an error, so the caller learns that a file was
+// left behind.
+func removeLeftLater(left, name string, err error) error {
+	if rerr := removeLater(left); rerr != nil {
+		return fmt.Errorf("removing %s (renamed from %s): %v; %v", left, name, err, rerr)
+	}
+	return nil
+}
+
+// park moves the file name into dir under a new unique name that starts with
+// base and returns that name.
+func park(name, base, dir string) (string, error) {
+	f, err := os.CreateTemp(dir, base+".old")
+	if err != nil {
+		return "", err
+	}
+	parked := f.Name()
+	f.Close()
+	if err := Remove(parked); err != nil {
+		return "", err
+	}
+	if err := Rename(name, parked); err != nil {
+		return "", err
+	}
+	return parked, nil
 }
 
 func rootDir(name string) string {

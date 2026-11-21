@@ -101,10 +101,26 @@ func cleanInstalled(state client.GooGetState, included map[string]bool) {
 		if !included[pkg.PackageSpec.Name] {
 			continue
 		}
-		if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
+		if err := removeCacheEntry(pkg.LocalPath); err != nil {
 			logger.Error(err)
 		}
 	}
+}
+
+// removeCacheEntry removes path from the cache directory. A file, such as a
+// repo index cache that an unelevated reader may hold open, is removed with
+// oswrap.RenameAndRemove so that its path is never left delete pending for the
+// next write. An empty path, such as the LocalPath of a package with no cached
+// file, names nothing and is skipped. Anything else, such as an unpack
+// directory or a missing path, goes to oswrap.RemoveAll.
+func removeCacheEntry(path string) error {
+	if path == "" {
+		return nil
+	}
+	if fi, err := oswrap.Lstat(path); err == nil && !fi.IsDir() {
+		return oswrap.RenameAndRemove(path)
+	}
+	return oswrap.RemoveAll(path)
 }
 
 // cleanDirectory deletes all files in the cache directory except those whose path
@@ -118,7 +134,7 @@ func cleanDirectory(excluded map[string]bool) error {
 		if excluded[file] {
 			continue
 		}
-		if err := oswrap.RemoveAll(file); err != nil {
+		if err := removeCacheEntry(file); err != nil {
 			logger.Error(err)
 		}
 	}

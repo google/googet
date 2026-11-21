@@ -1307,3 +1307,23 @@ func TestUnmarshalRepoPackagesStaleCacheRefetched(t *testing.T) {
 		t.Errorf("cache file after refetch diff (-want +got):\n%s", diff)
 	}
 }
+
+func TestIsCacheMiss(t *testing.T) {
+	for _, tc := range []struct {
+		desc string
+		err  error
+		want bool
+	}{
+		{"bad cache", errBadCache, true},
+		{"wrapped bad cache", fmt.Errorf("%w: unexpected EOF", errBadCache), true},
+		{"not exist", &os.PathError{Op: "open", Path: "x", Err: os.ErrNotExist}, true},
+		{"permission", &os.PathError{Op: "open", Path: "x", Err: os.ErrPermission}, false},
+		{"other", errors.New("disk on fire"), false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := isCacheMiss(tc.err); got != tc.want {
+				t.Errorf("isCacheMiss(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

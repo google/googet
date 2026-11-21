@@ -17,6 +17,7 @@ limitations under the License.
 package oswrap
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -25,6 +26,12 @@ import (
 // RemoveOnReboot not implemented on non Windows.
 func RemoveOnReboot(name string) error {
 	return nil
+}
+
+// removeLater reports that name couldn't be removed now. Removal on reboot
+// isn't available on this system, so it always returns an error.
+func removeLater(name string) error {
+	return fmt.Errorf("removal of %s on reboot is not supported on this system", name)
 }
 
 // IsTransientShareError reports whether err is a Windows sharing error that

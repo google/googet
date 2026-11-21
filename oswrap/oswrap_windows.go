@@ -82,6 +82,11 @@ func RemoveOnReboot(name string) error {
 	return nil
 }
 
+// removeLater schedules name for removal on the next reboot.
+func removeLater(name string) error {
+	return RemoveOnReboot(name)
+}
+
 // IsTransientShareError reports whether err is a sharing error that a reader
 // may see while an elevated writer replaces or removes the file:
 // ERROR_ACCESS_DENIED (for example, the file is delete pending under legacy
