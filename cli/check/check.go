@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
@@ -49,6 +50,11 @@ func (*checkCmd) Synopsis() string { return "check and take over existing packag
 func (*checkCmd) Usage() string {
 	return fmt.Sprintf(`%s check [-sources repo1,repo2...] [-dry_run=true]`, filepath.Base(os.Args[0]))
 }
+
+// NoPositionals marks check as a command that takes no positional arguments.
+func (*checkCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*checkCmd)(nil)
 
 func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "Don't make any changes to the DB.")

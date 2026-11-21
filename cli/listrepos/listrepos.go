@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -35,6 +36,11 @@ func (*listReposCmd) Synopsis() string { return "list repositories" }
 func (*listReposCmd) Usage() string {
 	return fmt.Sprintf("%s listrepos\n", filepath.Base(os.Args[0]))
 }
+
+// NoPositionals marks listrepos as a command that takes no positional arguments.
+func (*listReposCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*listReposCmd)(nil)
 
 func (cmd *listReposCmd) SetFlags(f *flag.FlagSet) {}
 
