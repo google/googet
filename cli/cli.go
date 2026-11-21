@@ -12,7 +12,12 @@ type privilegedKey struct{}
 
 // WithPrivileged returns a copy of ctx that marks the run as privileged. The
 // googet binary sets it only after the admin check has passed and the lock is
-// held, so subcommands can refuse work that needs those guarantees.
+// held, so subcommands can refuse work that needs those guarantees, and
+// OpenDB and NewDownloader return resources that can write.
+//
+// The mark is not a security boundary inside the process: any code, including
+// a test, can set it. It records what run() checked, so commands and the
+// factories in this package fail closed when it is missing.
 func WithPrivileged(ctx context.Context) context.Context {
 	return context.WithValue(ctx, privilegedKey{}, true)
 }

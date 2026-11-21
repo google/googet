@@ -18,28 +18,45 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// guardFile is a parsed non-test Go file of this package or a subpackage.
+// guardFile is a parsed non-test Go file of this package or a subpackage,
+// and the local names of its imports.
 type guardFile struct {
-	name string // Path relative to this package, such as "install/install.go".
-	file *ast.File
+	name    string // Path relative to this package, such as "install/install.go".
+	file    *ast.File
+	imports map[string]string // Local name to import path.
 }
 
 // dir returns the directory of gf relative to this package, "." for this
 // package itself.
-func (gf guardFile) dir() string { return filepath.Dir(gf.name) }
+func (gf guardFile) dir() string { return path.Dir(gf.name) }
 
-// newGuardFile parses the Go file name, from src if it isn't nil.
+// newGuardFile parses the Go file name, from src if it isn't nil, and records
+// the local names of its imports.
 func newGuardFile(fset *token.FileSet, name string, src any) (guardFile, error) {
 	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
 	if err != nil {
 		return guardFile{}, err
 	}
-	return guardFile{name: filepath.ToSlash(name), file: f}, nil
+	gf := guardFile{name: filepath.ToSlash(name), file: f, imports: make(map[string]string)}
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return guardFile{}, err
+		}
+		local := path.Base(p)
+		if imp.Name != nil {
+			local = imp.Name.Name
+		}
+		gf.imports[local] = p
+	}
+	return gf, nil
 }
 
 // parseGuardFiles parses the non-test Go files of this package and of every

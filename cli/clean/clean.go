@@ -23,7 +23,6 @@ import (
 
 	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -53,7 +52,11 @@ func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.packages, "packages", "", "comma separated list of packages to clear out of the cache")
 }
 
-func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *cleanCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Cleaning the cache requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if cmd.all {
 		fmt.Println("Removing all files and directories in cachedir.")
 		if err := cleanDirectory(nil); err != nil {
@@ -63,7 +66,7 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 		return subcommands.ExitSuccess
 	}
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure

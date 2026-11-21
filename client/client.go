@@ -133,6 +133,14 @@ type Downloader struct {
 	// StallTimeout; zero or less falls back to StallTimeout in OpenGCS and
 	// NewStallReader.
 	StallTimeout time.Duration
+	// ReadOnlyCache makes the Downloader use the repo index cache without
+	// writing it, for runs that may not change the googet root. A fresh cache
+	// entry is used as usual. A stale, missing, empty or undecodable entry,
+	// or one that can't be read because a writer is replacing it, is fetched
+	// into memory and the cache is left as it was: no cache or .url file is
+	// written, and no folder is created. The zero value, false, writes the
+	// cache, as library users expect.
+	ReadOnlyCache bool
 }
 
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
@@ -195,8 +203,9 @@ func repoCacheFile(cacheDir, repoURL string) string {
 
 // unmarshalRepoPackages gets and unmarshals a repository URL or uses the cached contents
 // if mtime is less than cacheLife.
-// Successfully unmarshalled contents are written to a cache; a failure to
-// write the cache is logged and doesn't fail the call.
+// Successfully unmarshalled contents are written to a cache, unless
+// d.ReadOnlyCache is set; a failure to write the cache is logged and doesn't
+// fail the call.
 // A cache entry that is empty or can't be decoded, or that can't be read
 // because a writer is replacing or removing it, counts as a cache miss.
 func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir string, cacheLife time.Duration) ([]goolib.RepoSpec, error) {
@@ -205,7 +214,8 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 	cf := repoCacheFile(cacheDir, p)
 
 	fi, err := oswrap.Stat(cf)
-	if err == nil && time.Since(fi.ModTime()) < cacheLife {
+	stale := err == nil && time.Since(fi.ModTime()) >= cacheLife
+	if err == nil && !stale {
 		rs, err := readCache(cf)
 		if err == nil {
 			logger.Infof("Using cached repo content for %s.", pName)
@@ -219,6 +229,9 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 		return nil, err
 	}
 	logger.Infof("Fetching repo content for %s, cache either doesn't exist or is older than %v", pName, cacheLife)
+	if d.ReadOnlyCache && stale {
+		logger.Infof("Not refreshing the stale cached repo content for %s, because the cache is read-only, as it is in every unelevated run; an elevated run refreshes it.", pName)
+	}
 
 	isGCSURL, bucket, object := goolib.SplitGCSUrl(pName)
 	var rs []goolib.RepoSpec
@@ -234,6 +247,9 @@ func (d *Downloader) unmarshalRepoPackages(ctx context.Context, p, cacheDir stri
 	}
 	if err != nil {
 		return nil, err
+	}
+	if d.ReadOnlyCache {
+		return rs, nil
 	}
 	// The cache only saves a later fetch, so a failure to write it doesn't
 	// fail the fetch that already succeeded.

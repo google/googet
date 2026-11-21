@@ -20,11 +20,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
+	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 	"github.com/google/logger"
@@ -80,6 +86,112 @@ func NewDB(dbFile string) (*GooDB, error) {
 // unchanged.
 func dsn(dbFile string) string {
 	return fmt.Sprintf("%s?_busy_timeout=%d&_journal_mode=%s", dbFile, busyTimeoutMS, journalMode)
+}
+
+// OpenReadOnly opens the existing googet database dbFile for reading only, for
+// runs that don't hold the googet lock and may not be elevated. It never
+// creates, writes or deletes the database or its journal:
+//
+//   - If dbFile doesn't exist, it returns an error wrapping os.ErrNotExist
+//     without asking SQLite to open anything.
+//   - If the file isn't a SQLite database in rollback-journal mode, as
+//     googet's own connections leave it, it returns an error without asking
+//     SQLite to open it. SQLite creates a WAL database's -wal and -shm files
+//     even on a read-only connection.
+//   - The connection is opened through a percent-encoded "file:" URI with
+//     mode=ro. modernc.org/sqlite opens every connection with
+//     SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE, and drops the query from a
+//     data source name that has no "file:" prefix, so only the URI form makes
+//     SQLite open the file read-only and refuse to create a missing one.
+//   - query_only(1) makes SQLite refuse every write on the connection too.
+//   - It never sets immutable=1, which would make SQLite skip locking and so
+//     read a database that an elevated writer is changing.
+//
+// The connection sets the same busy timeout as read-write connections, so a
+// reader waits for an elevated writer's commit instead of failing at once.
+// OpenReadOnly reads the database header before it returns, so a file that
+// can't be opened or read, or isn't a database, fails here rather than at the
+// first query.
+func OpenReadOnly(dbFile string) (*GooDB, error) {
+	abs, err := filepath.Abs(dbFile)
+	if err != nil {
+		return nil, fmt.Errorf("opening database %q read-only: %w", dbFile, err)
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("opening database %q read-only: %w", abs, err)
+	}
+	if fi.IsDir() {
+		return nil, fmt.Errorf("opening database %q read-only: is a directory", abs)
+	}
+	// When SQLite checks an empty database file for a hot journal, it may
+	// delete a leftover journal, even on a read-only connection. A googet
+	// database is never empty once created, so refuse it instead.
+	if fi.Size() == 0 {
+		return nil, fmt.Errorf("opening database %q read-only: file is empty", abs)
+	}
+	if err := checkRollbackHeader(abs); err != nil {
+		return nil, fmt.Errorf("opening database %q read-only: %w", abs, err)
+	}
+	db, err := sql.Open("sqlite", readOnlyDSN(abs))
+	if err != nil {
+		return nil, fmt.Errorf("opening database %q read-only: %w", abs, err)
+	}
+	var schemaVersion int64
+	if err := db.QueryRowContext(context.Background(), "PRAGMA schema_version").Scan(&schemaVersion); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("opening database %q read-only: %w", abs, err)
+	}
+	return &GooDB{db: db}, nil
+}
+
+// sqliteMagic is the string that starts the header of every SQLite database
+// file.
+const sqliteMagic = "SQLite format 3\x00"
+
+// checkRollbackHeader reads the 100-byte header of the database file dbFile
+// through oswrap.OpenShared, and returns an error unless the file is a SQLite
+// database in rollback-journal mode. Header bytes 18 and 19, the file format
+// write and read versions, are 1 for a rollback journal and 2 for WAL. SQLite
+// opens a WAL database's -wal and -shm files read-write, and creates them,
+// even on a read-only connection, so OpenReadOnly must never hand it one.
+// googet's own connections use a rollback journal.
+func checkRollbackHeader(dbFile string) error {
+	f, err := oswrap.OpenShared(dbFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var hdr [100]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+		return fmt.Errorf("reading the database header: %w", err)
+	}
+	if string(hdr[:len(sqliteMagic)]) != sqliteMagic {
+		return errors.New("not a SQLite database")
+	}
+	if hdr[18] != 1 || hdr[19] != 1 {
+		return fmt.Errorf("database isn't in rollback-journal mode (file format versions %d and %d)", hdr[18], hdr[19])
+	}
+	return nil
+}
+
+// readOnlyDSN returns the read-only data source name for the absolute path
+// absPath: a "file:" URI with an empty authority and a percent-encoded path, so
+// that characters such as '?', '#' and '%' in the path can't end it early.
+// SQLite decodes the path, and accepts a Windows drive path in the form
+// /C:/dir/googet.db. The driver reads _busy_timeout and _pragma from the same
+// query, and SQLite ignores them.
+func readOnlyDSN(absPath string) string {
+	p := filepath.ToSlash(absPath)
+	if !strings.HasPrefix(p, "/") {
+		// A Windows drive path, such as C:/ProgramData/GooGet/googet.db.
+		p = "/" + p
+	}
+	q := url.Values{}
+	q.Set("mode", "ro")
+	q.Set("_pragma", "query_only(1)")
+	q.Set("_busy_timeout", strconv.Itoa(busyTimeoutMS))
+	return "file://" + (&url.URL{Path: p}).EscapedPath() + "?" + q.Encode()
 }
 
 // Close will close the db connection

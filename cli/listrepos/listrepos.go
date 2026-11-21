@@ -55,7 +55,7 @@ func (*listReposCmd) LockFree() {}
 var _ cli.LockFree = (*listReposCmd)(nil)
 
 func (cmd *listReposCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	// TestRefuseUnlessAllowedFirst requires this guard. It can't refuse
+	// TestExecuteRefusesFirst requires this guard. It can't refuse
 	// while AllowUnelevated returns true.
 	if cli.RefuseUnlessAllowed(ctx, cmd) {
 		logger.Error("Listing repositories requires administrator privileges.")

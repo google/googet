@@ -27,9 +27,7 @@ import (
 
 	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
-	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -68,7 +66,7 @@ func (*installedCmd) LockFree() {}
 var _ cli.LockFree = (*installedCmd)(nil)
 
 func (cmd *installedCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	// TestRefuseUnlessAllowedFirst requires this guard. It can't refuse
+	// TestExecuteRefusesFirst requires this guard. It can't refuse
 	// while AllowUnelevated returns true.
 	if cli.RefuseUnlessAllowed(ctx, cmd) {
 		logger.Error("Listing installed packages requires administrator privileges.")
@@ -77,7 +75,7 @@ func (cmd *installedCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 	var state client.GooGetState
 	var exitCode subcommands.ExitStatus
 	var displayText string
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure

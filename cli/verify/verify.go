@@ -22,8 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/settings"
@@ -34,6 +33,11 @@ import (
 
 func init() { subcommands.Register(&verifyCmd{}, "package management") }
 
+// verifyCmd doesn't implement cli.AllowUnelevated, so verify always needs
+// administrator privileges: it runs the package's verify command, can
+// download the package into the cache and can reinstall it. Even reading the
+// installed files could make a package installer that opens them without
+// sharing fail.
 type verifyCmd struct {
 	reinstall bool
 	skipFiles bool
@@ -51,19 +55,23 @@ func (cmd *verifyCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Verifying packages requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if len(flags.Args()) == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
 	}
 	exitCode := subcommands.ExitSuccess
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure
 	}
 	defer db.Close()
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

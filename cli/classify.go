@@ -43,6 +43,13 @@ type AllowUnelevated interface {
 // Other AllowUnelevated commands run that way only when the admin check
 // fails, so an elevated run of them keeps the lock, the log and the cache
 // refresh.
+//
+// A LockFree command never gets the privileged context marker, so OpenDB
+// opens the database read-only for it even in an elevated process. A
+// read-only connection can't roll back a hot journal left by a writer that
+// crashed, so a LockFree command gets an error reading the database until a
+// privileged command opens it read-write and rolls the journal back. That is
+// accepted to keep LockFree commands free of the lock.
 type LockFree interface {
 	AllowUnelevated
 	// LockFree marks the command. It is never called.
@@ -144,4 +151,12 @@ func Classify(cmdr *subcommands.Commander, args []string) (Class, subcommands.Co
 // have classified it correctly.
 func RefuseUnlessAllowed(ctx context.Context, cmd AllowUnelevated) bool {
 	return !IsPrivileged(ctx) && !cmd.AllowUnelevated()
+}
+
+// RefuseUnlessPrivileged reports whether a command's Execute must refuse to
+// run because ctx isn't marked privileged. Every command that doesn't
+// implement AllowUnelevated calls it as the first statement of Execute, so
+// the command never relies on run() to have classified it correctly.
+func RefuseUnlessPrivileged(ctx context.Context) bool {
+	return !IsPrivileged(ctx)
 }

@@ -66,13 +66,13 @@ func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitFailure
 	}
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Error(err)
 		return subcommands.ExitFailure
 	}
 	defer db.Close()
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Error(err)
 		return subcommands.ExitFailure

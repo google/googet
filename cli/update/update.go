@@ -24,7 +24,6 @@ import (
 
 	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/priority"
@@ -46,7 +45,14 @@ type updateCmd struct {
 func (*updateCmd) Name() string     { return "update" }
 func (*updateCmd) Synopsis() string { return "update all packages to the latest version available" }
 func (*updateCmd) Usage() string {
-	return fmt.Sprintf("%s update [-sources repo1,repo2...] [-dry_run] [-force]\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s update [-sources repo1,repo2...] [-dry_run] [-force]
+	Update all installed packages to the latest version available.
+	update takes no package names, only flags.
+	update -dry_run also runs without administrator privileges. An
+	unelevated run never updates the repo index cache, so a stale index is
+	fetched again on every unelevated run until an elevated run refreshes
+	the cache.
+`, filepath.Base(os.Args[0]))
 }
 
 // NoPositionals marks update as a command that takes no positional arguments.
@@ -61,8 +67,21 @@ func (cmd *updateCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files (only required if StrictConflicts is enabled in config)")
 }
 
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run may: it returns before installing anything, and
+// unelevated it reads the database through cli.OpenDB, which opens it
+// read-only, and the repo index cache through cli.NewDownloader, which
+// doesn't write it.
+func (cmd *updateCmd) AllowUnelevated() bool { return cmd.dryRun }
+
+var _ cli.AllowUnelevated = (*updateCmd)(nil)
+
 func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
-	db, err := googetdb.NewDB(settings.DBFile())
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Updating packages requires administrator privileges; use -dry_run to list the available updates.")
+		return subcommands.ExitFailure
+	}
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure
@@ -90,7 +109,7 @@ func (cmd *updateCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interfa
 		return subcommands.ExitFailure
 	}
 
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

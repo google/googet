@@ -41,6 +41,7 @@ import (
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/priority"
+	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
 )
 
@@ -1258,6 +1259,139 @@ func TestUnmarshalRepoPackagesCacheClosedAfterRead(t *testing.T) {
 	}
 	if err := os.Remove(cf + ".old"); err != nil {
 		t.Errorf("removing the cache file after reading it: %v", err)
+	}
+}
+
+// TestUnmarshalRepoPackagesReadOnlyCache checks that a Downloader with
+// ReadOnlyCache uses a fresh cache entry without any network request, fetches
+// a stale, missing, empty or truncated entry into memory, and never changes
+// the cache directory: no file is written, replaced or created, and a missing
+// directory isn't created. A writable Downloader is the control: it writes
+// the fetched index into the cache, or, when the directory is missing, logs
+// the failed write, returns the fetched index and creates nothing.
+func TestUnmarshalRepoPackagesReadOnlyCache(t *testing.T) {
+	cached := []goolib.RepoSpec{{Source: "cached"}}
+	served := []goolib.RepoSpec{{Source: "served"}}
+	servedJSON, err := json.Marshal(served)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachedJSON, err := json.Marshal(cached)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, transport := range []string{"http", "gcs"} {
+		for _, tc := range []struct {
+			desc      string
+			content   []byte // nil means no cache file.
+			age       time.Duration
+			noDir     bool
+			wantSpecs []goolib.RepoSpec
+			wantHits  int32
+		}{
+			{desc: "fresh", content: cachedJSON, wantSpecs: cached, wantHits: 0},
+			{desc: "stale", content: cachedJSON, age: 2 * cacheLife, wantSpecs: served, wantHits: 1},
+			{desc: "missing", wantSpecs: served, wantHits: 1},
+			{desc: "empty", content: []byte{}, wantSpecs: served, wantHits: 1},
+			{desc: "truncated", content: cachedJSON[:len(cachedJSON)/2], wantSpecs: served, wantHits: 1},
+			{desc: "missing directory", noDir: true, wantSpecs: served, wantHits: 1},
+		} {
+			for _, readOnly := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/%s/ReadOnlyCache=%v", transport, tc.desc, readOnly), func(t *testing.T) {
+					var hits atomic.Int32
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						// HTTP repos and the GCS emulator both ask for an
+						// object named index.gz first, then index.
+						if filepath.Base(r.URL.Path) != "index" {
+							http.NotFound(w, r)
+							return
+						}
+						hits.Add(1)
+						w.Header().Set("Content-Type", "application/json")
+						w.Write(servedJSON)
+					}))
+					defer srv.Close()
+					repo := srv.URL
+					if transport == "gcs" {
+						t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+						repo = "gs://bkt"
+					}
+					cacheDir := filepath.Join(t.TempDir(), "cache")
+					if !tc.noDir {
+						if err := os.Mkdir(cacheDir, 0755); err != nil {
+							t.Fatal(err)
+						}
+					}
+					cf := repoCacheFile(cacheDir, repo)
+					if tc.content != nil {
+						if err := os.WriteFile(cf, tc.content, 0644); err != nil {
+							t.Fatal(err)
+						}
+						mtime := time.Now().Add(-tc.age)
+						if err := os.Chtimes(cf, mtime, mtime); err != nil {
+							t.Fatal(err)
+						}
+					}
+					before := testutil.TreeSnapshot(t, cacheDir)
+
+					d, err := NewDownloader(proxyServer)
+					if err != nil {
+						t.Fatalf("NewDownloader: %v", err)
+					}
+					d.ReadOnlyCache = readOnly
+					got, err := d.unmarshalRepoPackages(context.Background(), repo, cacheDir, cacheLife)
+					if err != nil {
+						t.Fatalf("unmarshalRepoPackages: %v", err)
+					}
+					if diff := cmp.Diff(tc.wantSpecs, got); diff != "" {
+						t.Errorf("unmarshalRepoPackages diff (-want +got):\n%s", diff)
+					}
+					if n := hits.Load(); n != tc.wantHits {
+						t.Errorf("index requests = %d, want %d", n, tc.wantHits)
+					}
+					after := testutil.TreeSnapshot(t, cacheDir)
+					if readOnly || tc.wantHits == 0 || tc.noDir {
+						if diff := cmp.Diff(before, after); diff != "" {
+							t.Errorf("cache directory changed (-before +after):\n%s", diff)
+						}
+						return
+					}
+					b, err := os.ReadFile(cf)
+					if err != nil || !bytes.Equal(b, servedJSON) {
+						t.Errorf("writable control: cache file holds %q (error %v), want %q", b, err, servedJSON)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestNewDownloaderWritesCache checks that a Downloader from NewDownloader,
+// whose ReadOnlyCache is the zero value, still writes the cache, as library
+// users expect.
+func TestNewDownloaderWritesCache(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"Source":"served"}]`))
+	}))
+	defer ts.Close()
+	cacheDir := t.TempDir()
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	if d.ReadOnlyCache {
+		t.Error("NewDownloader().ReadOnlyCache = true, want false")
+	}
+	if _, err := d.unmarshalRepoPackages(context.Background(), ts.URL, cacheDir, cacheLife); err != nil {
+		t.Fatalf("unmarshalRepoPackages: %v", err)
+	}
+	if _, err := os.Stat(repoCacheFile(cacheDir, ts.URL)); err != nil {
+		t.Errorf("NewDownloader's Downloader didn't write the cache: %v", err)
 	}
 }
 

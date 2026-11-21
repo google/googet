@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/priority"
 	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
@@ -56,7 +57,11 @@ func (cmd *addRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate adding the repo without making changes")
 }
 
-func (cmd *addRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *addRepoCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Adding a repository requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if got, want := f.NArg(), 2; got != want {
 		fmt.Fprintf(os.Stderr, "Wrong number of arguments: got %v, want %v\n", got, want)
 		f.Usage()

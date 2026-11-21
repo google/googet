@@ -260,18 +260,28 @@ func TestRefuseUnlessAllowed(t *testing.T) {
 	}
 }
 
-// TestRefuseUnlessAllowedFirst checks that in every command under cli that
-// implements AllowUnelevated, the first statement of Execute is
+// TestExecuteRefusesFirst checks that the first statement of every command's
+// Execute under cli is a refusal:
 //
 //	if cli.RefuseUnlessAllowed(<ctx>, <receiver>) { ...; return ... }
 //
-// so the command refuses work its AllowUnelevated doesn't allow before it
-// touches anything.
-func TestRefuseUnlessAllowedFirst(t *testing.T) {
+// for a command that implements AllowUnelevated, and
+//
+//	if cli.RefuseUnlessPrivileged(<ctx>) { ...; return ... }
+//
+// for every other command, so a command refuses work that needs privileges
+// before it touches anything, even if run() misclassified it.
+func TestExecuteRefusesFirst(t *testing.T) {
 	files, fset := parseGuardFiles(t)
 	allow := map[string]bool{}          // "dir.Type" of each implementer.
 	execs := map[string]*ast.FuncDecl{} // "dir.Type" to its Execute method.
+	dirs := map[string]bool{}           // Subpackages, each a command.
+	withExecute := map[string]bool{}    // Subpackages with an Execute method.
 	for _, gf := range files {
+		if gf.dir() == "." {
+			continue
+		}
+		dirs[gf.dir()] = true
 		for _, d := range gf.file.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Recv == nil || len(fd.Recv.List) != 1 {
@@ -283,27 +293,46 @@ func TestRefuseUnlessAllowedFirst(t *testing.T) {
 				allow[name] = true
 			case "Execute":
 				execs[name] = fd
+				withExecute[gf.dir()] = true
 			}
 		}
 	}
-	var checked []string
 	for name := range allow {
-		checked = append(checked, name)
-		fd := execs[name]
-		if fd == nil {
+		if execs[name] == nil {
 			t.Errorf("%s implements AllowUnelevated but has no Execute method", name)
-			continue
 		}
-		if msg := refusalFirst(fd); msg != "" {
+	}
+	var checked []string
+	for name, fd := range execs {
+		checked = append(checked, name)
+		refusal := "RefuseUnlessPrivileged"
+		if allow[name] {
+			refusal = "RefuseUnlessAllowed"
+		}
+		if msg := refusalFirst(fd, refusal); msg != "" {
 			t.Errorf("%s.Execute at %s: %s", name, fset.Position(fd.Pos()), msg)
 		}
 	}
 	sort.Strings(checked)
 	t.Logf("checked %q", checked)
-	// installed, listrepos and remove implement AllowUnelevated, so finding
-	// fewer means the scan is broken.
-	if len(checked) < 3 {
-		t.Errorf("found %d AllowUnelevated implementers (%q), want at least 3", len(checked), checked)
+	// Every subpackage is a command, so one without an Execute method means
+	// the scan is broken.
+	if len(dirs) == 0 {
+		t.Error("found no subpackages")
+	}
+	for dir := range dirs {
+		if !withExecute[dir] {
+			t.Errorf("found no Execute method in %s", dir)
+		}
+	}
+}
+
+func TestRefuseUnlessPrivileged(t *testing.T) {
+	if !RefuseUnlessPrivileged(context.Background()) {
+		t.Error("RefuseUnlessPrivileged(unmarked context) = false, want true")
+	}
+	if RefuseUnlessPrivileged(WithPrivileged(context.Background())) {
+		t.Error("RefuseUnlessPrivileged(privileged context) = true, want false")
 	}
 }
 
@@ -319,9 +348,10 @@ func recvTypeName(e ast.Expr) string {
 }
 
 // refusalFirst returns why fd's first statement isn't
-// "if cli.RefuseUnlessAllowed(<ctx param>, <receiver>) { ... return }", or ""
-// if it is.
-func refusalFirst(fd *ast.FuncDecl) string {
+// "if cli.<refusal>(<ctx param>, ...) { ... return }", or "" if it is. For
+// RefuseUnlessAllowed the call's second and last argument must be the
+// receiver; RefuseUnlessPrivileged takes only the context.
+func refusalFirst(fd *ast.FuncDecl, refusal string) string {
 	if fd.Body == nil || len(fd.Body.List) == 0 {
 		return "empty body"
 	}
@@ -334,28 +364,34 @@ func refusalFirst(fd *ast.FuncDecl) string {
 		return "if condition isn't a call"
 	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "RefuseUnlessAllowed" {
-		return "if condition doesn't call cli.RefuseUnlessAllowed"
+	if !ok || sel.Sel.Name != refusal {
+		return "if condition doesn't call cli." + refusal
 	}
 	if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "cli" {
-		return "if condition doesn't call cli.RefuseUnlessAllowed"
+		return "if condition doesn't call cli." + refusal
 	}
-	if len(call.Args) != 2 {
-		return "cli.RefuseUnlessAllowed doesn't get two arguments"
+	wantArgs := 1
+	if refusal == "RefuseUnlessAllowed" {
+		wantArgs = 2
+	}
+	if len(call.Args) != wantArgs {
+		return fmt.Sprintf("cli.%s gets %d arguments, want %d", refusal, len(call.Args), wantArgs)
 	}
 	params := fd.Type.Params.List
 	if len(params) == 0 || len(params[0].Names) == 0 {
 		return "Execute has no named context parameter"
 	}
 	if id, ok := call.Args[0].(*ast.Ident); !ok || id.Name != params[0].Names[0].Name {
-		return "cli.RefuseUnlessAllowed doesn't get Execute's context"
+		return "cli." + refusal + " doesn't get Execute's context"
 	}
-	recv := fd.Recv.List[0]
-	if len(recv.Names) == 0 {
-		return "Execute has no named receiver"
-	}
-	if id, ok := call.Args[1].(*ast.Ident); !ok || id.Name != recv.Names[0].Name {
-		return "cli.RefuseUnlessAllowed doesn't get the receiver"
+	if wantArgs == 2 {
+		recv := fd.Recv.List[0]
+		if len(recv.Names) == 0 {
+			return "Execute has no named receiver"
+		}
+		if id, ok := call.Args[1].(*ast.Ident); !ok || id.Name != recv.Names[0].Name {
+			return "cli." + refusal + " doesn't get the receiver"
+		}
 	}
 	body := ifs.Body.List
 	if len(body) == 0 {
@@ -368,7 +404,7 @@ func refusalFirst(fd *ast.FuncDecl) string {
 }
 
 // TestRefusalFirst checks refusalFirst on small sources, so that
-// TestRefuseUnlessAllowedFirst can't pass by accepting an Execute whose first
+// TestExecuteRefusesFirst can't pass by accepting an Execute whose first
 // statement isn't the refusal.
 func TestRefusalFirst(t *testing.T) {
 	const header = `package x
@@ -384,6 +420,7 @@ type cmd struct{}
 `
 	for _, tc := range []struct {
 		desc    string
+		refusal string // Defaults to RefuseUnlessAllowed.
 		execute string
 		wantMsg string
 	}{
@@ -392,6 +429,16 @@ type cmd struct{}
 			execute: `func (c *cmd) Execute(ctx context.Context) int {
 	if cli.RefuseUnlessAllowed(ctx, c) {
 		println("refused")
+		return 1
+	}
+	return 0
+}`,
+		},
+		{
+			desc:    "valid RefuseUnlessPrivileged",
+			refusal: "RefuseUnlessPrivileged",
+			execute: `func (c *cmd) Execute(ctx context.Context) int {
+	if cli.RefuseUnlessPrivileged(ctx) {
 		return 1
 	}
 	return 0
@@ -411,7 +458,7 @@ type cmd struct{}
 		{
 			desc: "wrong function",
 			execute: `func (c *cmd) Execute(ctx context.Context) int {
-	if cli.IsPrivileged(ctx) {
+	if cli.RefuseUnlessPrivileged(ctx) {
 		return 1
 	}
 	return 0
@@ -439,6 +486,17 @@ type cmd struct{}
 			wantMsg: "cli.RefuseUnlessAllowed doesn't get the receiver",
 		},
 		{
+			desc:    "extra argument to RefuseUnlessPrivileged",
+			refusal: "RefuseUnlessPrivileged",
+			execute: `func (c *cmd) Execute(ctx context.Context) int {
+	if cli.RefuseUnlessPrivileged(ctx, c) {
+		return 1
+	}
+	return 0
+}`,
+			wantMsg: "cli.RefuseUnlessPrivileged gets 2 arguments, want 1",
+		},
+		{
 			desc: "missing return",
 			execute: `func (c *cmd) Execute(ctx context.Context) int {
 	if cli.RefuseUnlessAllowed(ctx, c) {
@@ -450,6 +508,10 @@ type cmd struct{}
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
+			refusal := tc.refusal
+			if refusal == "" {
+				refusal = "RefuseUnlessAllowed"
+			}
 			gf, err := newGuardFile(token.NewFileSet(), "x/x.go", header+tc.execute+"\n")
 			if err != nil {
 				t.Fatal(err)
@@ -463,8 +525,8 @@ type cmd struct{}
 			if fd == nil {
 				t.Fatal("source has no Execute method")
 			}
-			if got := refusalFirst(fd); got != tc.wantMsg {
-				t.Errorf("refusalFirst(%s) = %q, want %q", tc.desc, got, tc.wantMsg)
+			if got := refusalFirst(fd, refusal); got != tc.wantMsg {
+				t.Errorf("refusalFirst(%s, %s) = %q, want %q", tc.desc, refusal, got, tc.wantMsg)
 			}
 		})
 	}
