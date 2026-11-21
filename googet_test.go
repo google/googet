@@ -14,12 +14,92 @@ limitations under the License.
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"io/ioutil"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/googet/v2/oswrap"
 )
+
+// checkArgsHelperEnv, when set, makes TestRunRejectsMisplacedFlagsHelper run
+// googet's run() with the JSON-encoded arguments it holds.
+const checkArgsHelperEnv = "GOOGET_TEST_CHECKARGS_RUN"
+
+// TestRunRejectsMisplacedFlagsHelper isn't a test: it runs run() in a child
+// process started by TestRunRejectsMisplacedFlags.
+func TestRunRejectsMisplacedFlagsHelper(t *testing.T) {
+	enc := os.Getenv(checkArgsHelperEnv)
+	if enc == "" {
+		return
+	}
+	var args []string
+	if err := json.Unmarshal([]byte(enc), &args); err != nil {
+		panic(err)
+	}
+	os.Args = append([]string{"googet"}, args...)
+	os.Exit(run(context.Background()))
+}
+
+// TestRunRejectsMisplacedFlags checks that a flag after a package name, or a
+// positional argument for a command that takes none, is a usage error that
+// run() reports before it creates the root or runs the command.
+func TestRunRejectsMisplacedFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		wantOut string
+	}{
+		{args: []string{"install", "pkg", "-dry_run"}, wantOut: `"-dry_run" after "pkg"`},
+		{args: []string{"install", "-dry_run", "pkg", "-reinstall"}, wantOut: `"-reinstall" after "pkg"`},
+		{args: []string{"remove", "pkg", "-dry_run"}, wantOut: `"-dry_run" after "pkg"`},
+		{args: []string{"update", "foo", "-dry_run"}, wantOut: `update takes no arguments, got "foo"`},
+		{args: []string{"clean", "foo", "-all"}, wantOut: `clean takes no arguments, got "foo"`},
+		{args: []string{"check", "foo"}, wantOut: `check takes no arguments, got "foo"`},
+		{args: []string{"listrepos", "x"}, wantOut: `listrepos takes no arguments, got "x"`},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "googet")
+			args := append([]string{"-root", root, "-noconfirm", "-system_log=false"}, tc.args...)
+			enc, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=^TestRunRejectsMisplacedFlagsHelper$")
+			// Drop the root variable so the child can never fall back to a real
+			// root; Windows matches variable names case-insensitively.
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(strings.ToUpper(kv), strings.ToUpper(envVar)+"=") {
+					cmd.Env = append(cmd.Env, kv)
+				}
+			}
+			// atexit_sleep_ms=0 stops a -race child from sleeping 1s on exit.
+			cmd.Env = append(cmd.Env, checkArgsHelperEnv+"="+string(enc), "GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
+			out, err := cmd.CombinedOutput()
+			code := 0
+			var exitErr *exec.ExitError
+			switch {
+			case errors.As(err, &exitErr):
+				code = exitErr.ExitCode()
+			case err != nil:
+				t.Fatalf("running googet %q: %v", tc.args, err)
+			}
+			if code != 2 {
+				t.Errorf("googet %q exit code = %d, want 2; output:\n%s", tc.args, code, out)
+			}
+			if !strings.Contains(string(out), tc.wantOut) {
+				t.Errorf("googet %q output = %q, want it to contain %q", tc.args, out, tc.wantOut)
+			}
+			if _, err := os.Lstat(root); !os.IsNotExist(err) {
+				t.Errorf("googet %q created the root %q (Lstat error: %v), want it untouched", tc.args, root, err)
+			}
+		})
+	}
+}
 
 func TestRotateLog(t *testing.T) {
 	tempDir, err := ioutil.TempDir("", "")

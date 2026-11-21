@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/oswrap"
@@ -41,6 +42,11 @@ func (*cleanCmd) Synopsis() string { return "clean the cache directory" }
 func (*cleanCmd) Usage() string {
 	return fmt.Sprintf("%s clean\n", filepath.Base(os.Args[0]))
 }
+
+// NoPositionals marks clean as a command that takes no positional arguments.
+func (*cleanCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*cleanCmd)(nil)
 
 func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.all, "all", false, "clear out the entire cache directory")
