@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -113,6 +114,157 @@ func TestReadFileSharedDirectory(t *testing.T) {
 	if b, err := ReadFileShared(dir); err == nil {
 		t.Errorf("ReadFileShared(directory) = %q, nil; want an error", b)
 	}
+}
+
+// tempLeftovers returns the names in dir that look like WriteFileAtomic
+// temporary files.
+func tempLeftovers(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %q: %v", dir, err)
+	}
+	var left []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			left = append(left, e.Name())
+		}
+	}
+	return left
+}
+
+func TestWriteFileAtomicReplaces(t *testing.T) {
+	dir := t.TempDir()
+	name := filepath.Join(dir, "file")
+	if err := os.WriteFile(name, []byte("old contents"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// On Unix, a handle opened before the write keeps reading the old file.
+	// (On Windows, os.Open doesn't share delete access, so it would block
+	// the rename.)
+	var old *os.File
+	if runtime.GOOS != "windows" {
+		if old, err = os.Open(name); err != nil {
+			t.Fatal(err)
+		}
+		defer old.Close()
+	}
+
+	if err := WriteFileAtomic(name, []byte("new"), 0644); err != nil {
+		t.Fatalf("WriteFileAtomic(%q): %v", name, err)
+	}
+	if got, err := os.ReadFile(name); err != nil || string(got) != "new" {
+		t.Errorf("after WriteFileAtomic, %q holds %q (error %v), want %q", name, got, err, "new")
+	}
+	after, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if os.SameFile(before, after) {
+			t.Error("WriteFileAtomic rewrote the file in place, want a new file renamed over it")
+		}
+		if got, err := io.ReadAll(old); err != nil || string(got) != "old contents" {
+			t.Errorf("handle opened before WriteFileAtomic read %q (error %v), want the old contents", got, err)
+		}
+	}
+	if left := tempLeftovers(t, dir); len(left) != 0 {
+		t.Errorf("WriteFileAtomic left temporary files %q", left)
+	}
+}
+
+func TestWriteFileAtomicPerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits")
+	}
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		desc     string
+		existing os.FileMode // 0 means no existing file.
+		perm     os.FileMode
+	}{
+		{desc: "new file", perm: 0600},
+		{desc: "new file 0644", perm: 0644},
+		{desc: "replaced file gets perm", existing: 0600, perm: 0640},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			name := filepath.Join(dir, strings.ReplaceAll(tc.desc, " ", "_"))
+			if tc.existing != 0 {
+				if err := os.WriteFile(name, []byte("x"), tc.existing); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := WriteFileAtomic(name, []byte("data"), tc.perm); err != nil {
+				t.Fatalf("WriteFileAtomic: %v", err)
+			}
+			fi, err := os.Stat(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := fi.Mode().Perm(); got != tc.perm {
+				t.Errorf("mode = %v, want %v, whatever the umask", got, tc.perm)
+			}
+		})
+	}
+}
+
+func TestWriteFileAtomicErrors(t *testing.T) {
+	t.Run("missing directory", func(t *testing.T) {
+		dir := t.TempDir()
+		name := filepath.Join(dir, "missing", "file")
+		if err := WriteFileAtomic(name, []byte("data"), 0644); err == nil {
+			t.Errorf("WriteFileAtomic(%q) = nil, want an error", name)
+		}
+		if _, err := os.Lstat(filepath.Join(dir, "missing")); !os.IsNotExist(err) {
+			t.Errorf("WriteFileAtomic created the missing directory (Lstat error: %v)", err)
+		}
+	})
+	t.Run("target is a directory", func(t *testing.T) {
+		dir := t.TempDir()
+		name := filepath.Join(dir, "target")
+		if err := os.Mkdir(name, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(name, "inside"), []byte("keep"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteFileAtomic(name, []byte("data"), 0644); err == nil {
+			t.Errorf("WriteFileAtomic over a directory = nil, want an error")
+		}
+		if got, err := os.ReadFile(filepath.Join(name, "inside")); err != nil || string(got) != "keep" {
+			t.Errorf("directory contents after the failed write = %q (error %v), want them intact", got, err)
+		}
+		if left := tempLeftovers(t, dir); len(left) != 0 {
+			t.Errorf("failed WriteFileAtomic left temporary files %q", left)
+		}
+	})
+	t.Run("unwritable directory", func(t *testing.T) {
+		if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+			t.Skip("needs Unix permissions and a non-root user")
+		}
+		dir := t.TempDir()
+		name := filepath.Join(dir, "file")
+		if err := os.WriteFile(name, []byte("old"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(dir, 0555); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(dir, 0755)
+		if err := WriteFileAtomic(name, []byte("new"), 0644); err == nil {
+			t.Errorf("WriteFileAtomic in a read-only directory = nil, want an error")
+		}
+		if got, err := os.ReadFile(name); err != nil || string(got) != "old" {
+			t.Errorf("after the failed write %q holds %q (error %v), want %q", name, got, err, "old")
+		}
+		if left := tempLeftovers(t, dir); len(left) != 0 {
+			t.Errorf("failed WriteFileAtomic left temporary files %q", left)
+		}
+	})
 }
 
 // sharedReadDirs lists the packages, relative to this one, whose reads can run
@@ -353,5 +505,48 @@ func writes() {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("findRawReads() =\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestRetryWhile(t *testing.T) {
+	errTransient := errors.New("transient")
+	errOther := errors.New("other")
+	transient := func(err error) bool { return errors.Is(err, errTransient) }
+	for _, tc := range []struct {
+		desc      string
+		errs      []error // op returns these in turn, then nil.
+		want      error
+		wantCalls int
+	}{
+		{desc: "success", wantCalls: 1},
+		{desc: "transient then success", errs: []error{errTransient, errTransient}, wantCalls: 3},
+		{desc: "other error", errs: []error{errOther}, want: errOther, wantCalls: 1},
+		{desc: "transient then other", errs: []error{errTransient, errOther}, want: errOther, wantCalls: 2},
+		{desc: "always transient", errs: slices.Repeat([]error{errTransient}, replaceAttempts+1), want: errTransient, wantCalls: replaceAttempts},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			calls := 0
+			err := retryWhile(transient, func() error {
+				calls++
+				if calls <= len(tc.errs) {
+					return tc.errs[calls-1]
+				}
+				return nil
+			})
+			if err != tc.want || calls != tc.wantCalls {
+				t.Errorf("retryWhile() = %v after %d calls, want %v after %d calls", err, calls, tc.want, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestIsTransientShareErrorUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("see TestIsTransientShareErrorWindows")
+	}
+	for _, err := range []error{nil, os.ErrPermission, fs.ErrNotExist, &fs.PathError{Op: "open", Path: "x", Err: errors.New("busy")}} {
+		if IsTransientShareError(err) {
+			t.Errorf("IsTransientShareError(%v) = true, want false on %s", err, runtime.GOOS)
+		}
 	}
 }

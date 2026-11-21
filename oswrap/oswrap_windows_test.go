@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -131,5 +132,58 @@ func TestOpenSharedLongPath(t *testing.T) {
 	b, err := ReadFileShared(name)
 	if err != nil || string(b) != "long" {
 		t.Errorf("ReadFileShared(%d-character path) = %q, %v; want %q, nil", len(name), b, err, "long")
+	}
+}
+
+// TestWriteFileAtomicWhileOpenShared checks that WriteFileAtomic replaces a
+// file that a reader holds open through OpenShared and closes shortly after.
+// Under legacy rename semantics the first renames fail with a sharing error,
+// and WriteFileAtomic must retry until the reader's handle is closed.
+//
+// This is an integration smoke test. It can only fail without the retry where
+// Windows uses legacy rename semantics; under POSIX rename semantics the first
+// rename succeeds while the reader's handle is open. TestRetryWhile covers the
+// retry loop deterministically.
+func TestWriteFileAtomicWhileOpenShared(t *testing.T) {
+	name := writeTemp(t, "old")
+	f, err := OpenShared(name)
+	if err != nil {
+		t.Fatalf("OpenShared: %v", err)
+	}
+	closed := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		closed <- f.Close()
+	}()
+	err = WriteFileAtomic(name, []byte("new"), 0644)
+	if cerr := <-closed; cerr != nil {
+		t.Errorf("closing the reader's handle: %v", cerr)
+	}
+	if err != nil {
+		t.Fatalf("WriteFileAtomic while a reader holds the file open: %v", err)
+	}
+	if b, err := os.ReadFile(name); err != nil || string(b) != "new" {
+		t.Errorf("after WriteFileAtomic, %q holds %q (error %v), want %q", name, b, err, "new")
+	}
+}
+
+func TestIsTransientShareErrorWindows(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{windows.ERROR_ACCESS_DENIED, true},
+		{windows.ERROR_SHARING_VIOLATION, true},
+		{windows.ERROR_DELETE_PENDING, true},
+		{&os.PathError{Op: "open", Path: "x", Err: windows.ERROR_SHARING_VIOLATION}, true},
+		{&os.PathError{Op: "open", Path: "x", Err: windows.ERROR_ACCESS_DENIED}, true},
+		{&os.PathError{Op: "open", Path: "x", Err: windows.ERROR_FILE_NOT_FOUND}, false},
+		{windows.ERROR_PATH_NOT_FOUND, false},
+		{errors.New("other"), false},
+		{nil, false},
+	} {
+		if got := IsTransientShareError(tc.err); got != tc.want {
+			t.Errorf("IsTransientShareError(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

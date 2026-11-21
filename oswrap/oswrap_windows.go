@@ -82,6 +82,17 @@ func RemoveOnReboot(name string) error {
 	return nil
 }
 
+// IsTransientShareError reports whether err is a sharing error that a reader
+// may see while an elevated writer replaces or removes the file:
+// ERROR_ACCESS_DENIED (for example, the file is delete pending under legacy
+// delete semantics), ERROR_SHARING_VIOLATION or ERROR_DELETE_PENDING. Such an
+// error ends once the writer finishes, so callers may retry or skip the file.
+func IsTransientShareError(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
+		errors.Is(err, windows.ERROR_SHARING_VIOLATION) ||
+		errors.Is(err, windows.ERROR_DELETE_PENDING)
+}
+
 // Open calls os.Open with name normalized
 func Open(name string) (*os.File, error) {
 	name, err := normPath(name)

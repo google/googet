@@ -30,6 +30,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -602,6 +604,152 @@ func TestUnmarshalRepoPackagesCache(t *testing.T) {
 	}
 }
 
+// indexServer serves specs as a JSON repo index at /index and counts the
+// index requests.
+func indexServer(t *testing.T, specs []goolib.RepoSpec) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	j, err := json.Marshal(specs)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var requests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(j)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, &requests
+}
+
+// dirNames returns the names of the entries in dir, in sorted order.
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %q: %v", dir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// TestUnmarshalRepoPackagesBadFreshCacheRefetched checks that a fresh cache
+// entry that is empty or can't be decoded, as left by a crashed or torn
+// write, is a cache miss: the index is fetched again and the entry replaced,
+// rather than the repo being reported empty or failing.
+func TestUnmarshalRepoPackagesBadFreshCacheRefetched(t *testing.T) {
+	for _, tc := range []struct {
+		desc, content string
+	}{
+		{desc: "empty", content: ""},
+		{desc: "whitespace", content: " \n\t\r\n"},
+		{desc: "truncated", content: `[{"Source":"fo`},
+		{desc: "not json", content: "garbage"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			want := []goolib.RepoSpec{{Source: "fetched"}}
+			ts, requests := indexServer(t, want)
+			cacheDir := t.TempDir()
+			cf := repoCacheFile(cacheDir, ts.URL)
+			if err := os.WriteFile(cf, []byte(tc.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			d, err := NewDownloader(proxyServer)
+			if err != nil {
+				t.Fatalf("NewDownloader: %v", err)
+			}
+			got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, cacheDir, cacheLife)
+			if err != nil {
+				t.Fatalf("unmarshalRepoPackages with a %s fresh cache entry: %v", tc.desc, err)
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("unmarshalRepoPackages with a %s fresh cache entry diff (-want +got):\n%s", tc.desc, diff)
+			}
+			if n := requests.Load(); n != 1 {
+				t.Errorf("index requests = %d, want 1", n)
+			}
+			b, err := os.ReadFile(cf)
+			if err != nil {
+				t.Fatalf("reading cache file: %v", err)
+			}
+			var cached []goolib.RepoSpec
+			if err := json.Unmarshal(b, &cached); err != nil {
+				t.Fatalf("cache file after refetch holds %q: %v", b, err)
+			}
+			if diff := cmp.Diff(want, cached); diff != "" {
+				t.Errorf("cache file after refetch diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestUnmarshalRepoPackagesCacheRefreshFiles checks that refreshing a stale
+// cache entry leaves exactly the .rs file and its .url sidecar, which holds
+// the repo URL, in the cache directory.
+func TestUnmarshalRepoPackagesCacheRefreshFiles(t *testing.T) {
+	ts, _ := indexServer(t, []goolib.RepoSpec{{Source: "fresh"}})
+	cacheDir := t.TempDir()
+	cf := writeRepoCache(t, cacheDir, ts.URL, []goolib.RepoSpec{{Source: "stale"}}, 2*cacheLife)
+
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	if _, err := d.unmarshalRepoPackages(context.Background(), ts.URL, cacheDir, cacheLife); err != nil {
+		t.Fatalf("unmarshalRepoPackages: %v", err)
+	}
+	urlFile := strings.TrimSuffix(cf, ".rs") + ".url"
+	if b, err := os.ReadFile(urlFile); err != nil || string(b) != ts.URL {
+		t.Errorf(".url file holds %q (error %v), want %q", b, err, ts.URL)
+	}
+	want := []string{filepath.Base(cf), filepath.Base(urlFile)}
+	sort.Strings(want)
+	if diff := cmp.Diff(want, dirNames(t, cacheDir)); diff != "" {
+		t.Errorf("cache directory entries after refresh diff (-want +got):\n%s", diff)
+	}
+}
+
+// TestUnmarshalRepoPackagesCacheWriteFailureIgnored checks that a fetched
+// index is returned even when the cache file can't be written.
+func TestUnmarshalRepoPackagesCacheWriteFailureIgnored(t *testing.T) {
+	want := []goolib.RepoSpec{{Source: "fetched"}}
+	ts, requests := indexServer(t, want)
+	cacheDir := t.TempDir()
+	cf := repoCacheFile(cacheDir, ts.URL)
+	// A stale directory where the cache file belongs makes the cache write
+	// fail after the fetch succeeds.
+	if err := os.Mkdir(cf, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Now().Add(-2 * cacheLife)
+	if err := os.Chtimes(cf, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := NewDownloader(proxyServer)
+	if err != nil {
+		t.Fatalf("NewDownloader: %v", err)
+	}
+	got, err := d.unmarshalRepoPackages(context.Background(), ts.URL, cacheDir, cacheLife)
+	if err != nil {
+		t.Fatalf("unmarshalRepoPackages with an unwritable cache: %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("unmarshalRepoPackages with an unwritable cache diff (-want +got):\n%s", diff)
+	}
+	if n := requests.Load(); n != 1 {
+		t.Errorf("index requests = %d, want 1", n)
+	}
+}
+
 func TestFindRepoSpec(t *testing.T) {
 	want := goolib.RepoSpec{PackageSpec: &goolib.PkgSpec{Name: "test"}}
 	repo := Repo{Packages: []goolib.RepoSpec{
@@ -921,7 +1069,7 @@ func TestUnmarshalRepoPackagesHTTPClosesBodies(t *testing.T) {
 			defer srv.Close()
 			ct := &countingTransport{base: &http.Transport{}}
 			d := &Downloader{HTTPClient: &http.Client{Transport: ct}, StallTimeout: 5 * time.Second}
-			_, err := d.unmarshalRepoPackagesHTTP(context.Background(), srv.URL, filepath.Join(t.TempDir(), "cache.rs"))
+			_, err := d.unmarshalRepoPackagesHTTP(context.Background(), srv.URL)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("unmarshalRepoPackagesHTTP() = %v, want error %t", err, tc.wantErr)
 			}

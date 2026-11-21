@@ -27,6 +27,13 @@ func RemoveOnReboot(name string) error {
 	return nil
 }
 
+// IsTransientShareError reports whether err is a Windows sharing error that
+// a reader may see while an elevated writer replaces or removes a file. It
+// always returns false on this system.
+func IsTransientShareError(err error) bool {
+	return false
+}
+
 // Open calls os.Open
 func Open(name string) (*os.File, error) {
 	return os.Open(name)
