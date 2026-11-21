@@ -645,3 +645,115 @@ func TestExtractPkgPathTraversal(t *testing.T) {
 		t.Fatal("error expected because of path traversal")
 	}
 }
+
+// newGCSEmulator serves payload for every request through a fake GCS endpoint
+// and returns the number of requests it has received.
+func newGCSEmulator(t *testing.T, payload []byte) *atomic.Int32 {
+	t.Helper()
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		w.Write(payload)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("STORAGE_EMULATOR_HOST", srv.URL)
+	return &requests
+}
+
+func TestPackageGCSReplacesFile(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := []byte("package payload")
+	newGCSEmulator(t, payload)
+	dst := filepath.Join(t.TempDir(), "pkg.goo")
+	if err := os.WriteFile(dst, []byte("old partial download"), 0644); err != nil {
+		t.Fatalf("writing %q: %v", dst, err)
+	}
+
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	if err := Package(context.Background(), "gs://bkt/pkg.goo", dst, chksum, stallDownloader(time.Second)); err != nil {
+		t.Fatalf("Package(gs://bkt/pkg.goo) = %v, want nil", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading downloaded file: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("downloaded file = %q, want %q", got, payload)
+	}
+}
+
+func TestPackageGCSRefusesNonRegular(t *testing.T) {
+	setRetryDelay(t, func(int) time.Duration { return 0 })
+	payload := []byte("package payload")
+	chksum := goolib.Checksum(bytes.NewReader(payload))
+	requests := newGCSEmulator(t, payload)
+	refuse := func(t *testing.T, dst string) {
+		t.Helper()
+		requests.Store(0)
+		err := Package(context.Background(), "gs://bkt/pkg.goo", dst, chksum, stallDownloader(time.Second))
+		if !errors.Is(err, errNotRegularFile) {
+			t.Errorf("Package(gs://bkt/pkg.goo) = %v, want an error matching errNotRegularFile", err)
+		}
+		if n := requests.Load(); n != 0 {
+			t.Errorf("Package made %d GCS requests, want 0", n)
+		}
+	}
+
+	t.Run("directory", func(t *testing.T) {
+		dst := filepath.Join(t.TempDir(), "pkg.goo")
+		inner := filepath.Join(dst, "keep.txt")
+		if err := os.Mkdir(dst, 0755); err != nil {
+			t.Fatalf("creating %q: %v", dst, err)
+		}
+		if err := os.WriteFile(inner, []byte("keep"), 0644); err != nil {
+			t.Fatalf("writing %q: %v", inner, err)
+		}
+		refuse(t, dst)
+		if b, err := os.ReadFile(inner); err != nil || string(b) != "keep" {
+			t.Errorf("file inside the destination directory = %q, %v; want %q, nil", b, err, "keep")
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		dst := filepath.Join(dir, "pkg.goo")
+		target := filepath.Join(dir, "target")
+		if err := os.WriteFile(target, []byte("target"), 0644); err != nil {
+			t.Fatalf("writing %q: %v", target, err)
+		}
+		if err := os.Symlink(target, dst); err != nil {
+			t.Skipf("can't create a symlink: %v", err)
+		}
+		refuse(t, dst)
+		if got, err := os.Readlink(dst); err != nil || got != target {
+			t.Errorf("Readlink(%q) = %q, %v; want %q, nil", dst, got, err, target)
+		}
+		if b, err := os.ReadFile(target); err != nil || string(b) != "target" {
+			t.Errorf("symlink target = %q, %v; want %q, nil", b, err, "target")
+		}
+	})
+}
+
+func TestRemoveFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("x"), 0644); err != nil {
+		t.Fatalf("writing %q: %v", file, err)
+	}
+	if err := removeFile(file); err != nil {
+		t.Errorf("removeFile(regular file) = %v, want nil", err)
+	}
+	if _, err := os.Lstat(file); !os.IsNotExist(err) {
+		t.Errorf("removeFile(regular file) left it in place (Lstat error: %v)", err)
+	}
+	if err := removeFile(filepath.Join(dir, "missing")); err != nil {
+		t.Errorf("removeFile(missing) = %v, want nil", err)
+	}
+	if err := removeFile(dir); !errors.Is(err, errNotRegularFile) {
+		t.Errorf("removeFile(directory) = %v, want an error matching errNotRegularFile", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("removeFile(directory) removed it: %v", err)
+	}
+}
