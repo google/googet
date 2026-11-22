@@ -26,9 +26,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -51,29 +53,53 @@ func TestStallReaderStalls(t *testing.T) {
 	}
 }
 
+// TestStallReaderAllowsSlowProgress runs in a synctest bubble so the gaps
+// between bytes are exact in fake time and a slow runner can't stretch them
+// past the timeout.
 func TestStallReaderAllowsSlowProgress(t *testing.T) {
-	const timeout = 250 * time.Millisecond
-	pr, pw := io.Pipe()
-	go func() {
-		// Trickle one byte every timeout/10 for 2x the timeout.
-		for range 20 {
-			time.Sleep(timeout / 10)
-			pw.Write([]byte{'x'})
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			timeout = 250 * time.Millisecond
+			gap     = timeout * 9 / 10
+			chunks  = 5
+		)
+		// The transfer must outlast the timeout, so a timer that data doesn't
+		// restart fires.
+		if chunks*gap <= timeout {
+			t.Fatalf("%d chunks %v apart take %v, want more than the %v timeout", chunks, gap, chunks*gap, timeout)
 		}
-		pw.Close()
-	}()
-	var stalled atomic.Bool
-	r := NewStallReader(pr, timeout, func() {
-		stalled.Store(true)
-		pw.CloseWithError(context.Canceled)
+		pr, pw := io.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			defer pw.Close()
+			// Send one byte per gap; each gap is shorter than the timeout.
+			for range chunks {
+				time.Sleep(gap)
+				if _, err := pw.Write([]byte{'x'}); err != nil {
+					return
+				}
+			}
+		}()
+		// The bubble must not end while the writer sleeps.
+		defer func() { <-done }()
+		var stalled atomic.Bool
+		r := NewStallReader(pr, timeout, func() {
+			stalled.Store(true)
+			pw.CloseWithError(context.Canceled)
+		})
+		defer r.Close()
+		start := time.Now()
+		if n, err := io.Copy(io.Discard, r); err != nil || n != chunks {
+			t.Errorf("io.Copy() = %d, %v, want %d, nil", n, err, chunks)
+		}
+		if got, want := time.Since(start), chunks*gap; got != want {
+			t.Errorf("io.Copy() took %v, want %v", got, want)
+		}
+		if stalled.Load() {
+			t.Error("onStall called for a transfer that kept receiving data")
+		}
 	})
-	defer r.Close()
-	if n, err := io.Copy(io.Discard, r); err != nil || n != 20 {
-		t.Errorf("io.Copy() = %d, %v, want 20, nil", n, err)
-	}
-	if stalled.Load() {
-		t.Error("onStall called for a transfer that kept receiving data")
-	}
 }
 
 func TestStallReaderStopsTimer(t *testing.T) {
@@ -193,8 +219,6 @@ func TestOpenGCS(t *testing.T) {
 		{"zero timeout does not stall at once", 0, time.Hour, slowOK, nil},
 		{"negative timeout does not stall at once", -time.Second, time.Hour, slowOK, nil},
 		{"open stalls", 100 * time.Millisecond, 0, hang, []error{ErrStalled}},
-		// The underlying error is preserved alongside the stall cause.
-		{"open retry stalls", 50 * time.Millisecond, 0, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }, []error{ErrStalled, context.Canceled}},
 		{"body stalls", 100 * time.Millisecond, 0, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Length", "5")
 			w.Write([]byte("he"))
@@ -236,6 +260,62 @@ func TestOpenGCS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// roundTripperFunc adapts a function to http.RoundTripper.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestOpenGCSRetryStalls checks that a stall while the GCS client backs off
+// between retries of a failing open cancels the retries, and that the error
+// keeps the last server error alongside the stall cause. It runs in a synctest
+// bubble, where requests take no time and the fake clock advances only once
+// every goroutine is blocked, so the stall always fires during a backoff. With
+// a real clock and server, the stall can instead cancel a request in flight,
+// which fails with net/http's error wrapping only ErrStalled.
+func TestOpenGCSRetryStalls(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int32
+		unavailable := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return &http.Response{
+				Status:     "503 Service Unavailable",
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     http.Header{},
+				Body:       http.NoBody,
+				Request:    r,
+			}, nil
+		})
+		// A stalled retry that is not canceled runs until this deadline and
+		// fails without ErrStalled.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		t.Setenv("STORAGE_EMULATOR_HOST", "http://gcs.invalid")
+		gcs, err := storage.NewClient(ctx, option.WithHTTPClient(&http.Client{Transport: unavailable}))
+		if err != nil {
+			t.Fatalf("storage.NewClient() failed: %v", err)
+		}
+		defer gcs.Close()
+		d := &Downloader{StallTimeout: 50 * time.Millisecond}
+		start := time.Now()
+		_, _, err = d.OpenGCS(ctx, gcs.Bucket("bucket").Object("object"))
+		if elapsed := time.Since(start); elapsed != d.StallTimeout {
+			t.Errorf("OpenGCS() returned after %v, want %v", elapsed, d.StallTimeout)
+		}
+		if requests.Load() == 0 {
+			t.Error("OpenGCS() sent no requests")
+		}
+		for _, want := range []error{ErrStalled, context.Canceled} {
+			if !errors.Is(err, want) {
+				t.Errorf("OpenGCS() = %v, want it to wrap %v", err, want)
+			}
+		}
+		var apiErr *googleapi.Error
+		if !errors.As(err, &apiErr) || apiErr.Code != http.StatusServiceUnavailable {
+			t.Errorf("OpenGCS() = %v, want it to wrap a googleapi.Error with code %d", err, http.StatusServiceUnavailable)
+		}
+	})
 }
 
 func TestUnmarshalRepoPackagesHTTPStall(t *testing.T) {
