@@ -73,7 +73,15 @@ func (cmd *verifyCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		pi := goolib.PkgNameSplit(arg)
 		ps, err := db.FetchPkg(pi)
 		if err != nil {
+			logger.Errorf("Unable to look up package %q: %v", arg, err)
+			exitCode = subcommands.ExitFailure
+			continue
+		}
+		// FetchPkg returns a nil error and a zero PackageState when no installed
+		// package has this name.
+		if ps.PackageSpec == nil {
 			logger.Errorf("Package %q not installed, cannot verify.", arg)
+			exitCode = subcommands.ExitFailure
 			continue
 		}
 		pkg := fmt.Sprintf("%s.%s.%s", ps.PackageSpec.Name, ps.PackageSpec.Arch, ps.PackageSpec.Version)
