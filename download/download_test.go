@@ -325,8 +325,11 @@ type step struct {
 	hang    bool          // Stall before sending headers.
 	status  int           // If nonzero, send only this status.
 	stall   int           // If nonzero, stall after sending this many bytes.
-	trickle time.Duration // If nonzero, send 50-byte chunks this far apart.
+	trickle time.Duration // If nonzero, send trickleChunk-byte chunks this far apart.
 }
+
+// trickleChunk is the size of the chunks a trickle step sends.
+const trickleChunk = 4
 
 // stepServer serves payload with range support, answering the i-th GET as
 // steps[i] describes and every later GET in full. It records the Range
@@ -361,7 +364,7 @@ func stepServer(payload []byte, steps []step, ranges *[]string) *httptest.Server
 		w.WriteHeader(http.StatusPartialContent)
 		switch {
 		case s.trickle != 0:
-			for chunk := range slices.Chunk(body, 50) {
+			for chunk := range slices.Chunk(body, trickleChunk) {
 				w.Write(chunk)
 				w.(http.Flusher).Flush()
 				time.Sleep(s.trickle)
@@ -405,6 +408,7 @@ func TestPackageRetries(t *testing.T) {
 
 	for _, tc := range []struct {
 		desc       string
+		timeout    time.Duration // If nonzero, overrides the stall timeout.
 		steps      []step
 		wantRanges []string
 		wantErr    bool
@@ -420,9 +424,14 @@ func TestPackageRetries(t *testing.T) {
 			wantRanges: []string{"bytes=0-", "bytes=0-"},
 		},
 		{
-			// The body takes 2x the timeout but never pauses for long.
+			// The whole body takes longer than the timeout, so a stall timer
+			// that progress did not reset would fire, but each gap is a small
+			// fraction of it, leaving slack for scheduling delays on a loaded
+			// runner under -race. The subtest setup asserts that the body outlasts
+			// the timeout.
 			desc:       "slow but progressing body is not interrupted",
-			steps:      []step{{trickle: timeout / 10}},
+			timeout:    2 * time.Second,
+			steps:      []step{{trickle: 10 * time.Millisecond}},
 			wantRanges: []string{"bytes=0-"},
 		},
 		{
@@ -433,10 +442,24 @@ func TestPackageRetries(t *testing.T) {
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
+			dl, stallTimeout := downloader, timeout
+			if tc.timeout != 0 {
+				dl, stallTimeout = stallDownloader(tc.timeout), tc.timeout
+			}
+			for _, s := range tc.steps {
+				if s.trickle == 0 {
+					continue
+				}
+				// A trickled body must outlast the stall timeout, or a timer
+				// that progress did not reset would never fire.
+				if total := time.Duration(len(payload)/trickleChunk) * s.trickle; total <= stallTimeout {
+					t.Fatalf("trickled body takes %v, want more than the %v stall timeout", total, stallTimeout)
+				}
+			}
 			var ranges []string
 			srv := stepServer(payload, tc.steps, &ranges)
 			dst := filepath.Join(t.TempDir(), "pkg.goo")
-			err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, downloader)
+			err := Package(context.Background(), srv.URL+"/pkg.goo", dst, chksum, dl)
 			srv.Close()
 			switch {
 			case tc.wantErr:
