@@ -21,11 +21,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/oswrap"
+	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/system"
 )
 
@@ -113,6 +117,15 @@ const (
 	// childAdminEnv, when set to "1", makes the child's admin check pass.
 	// Otherwise the child behaves as an unelevated process.
 	childAdminEnv = "GOOGET_TEST_CHILD_ADMIN"
+	// childTraceEnv is a file path where the child appends one line per hook
+	// call ("isAdmin", "prepareRoot", "obtainLock").
+	childTraceEnv = "GOOGET_TEST_CHILD_TRACE"
+	// childPrepareModeEnv overrides prepareRoot in the child process:
+	// "fail" returns an error, "repaired" creates the root and returns a
+	// repair report with a warning, "repair_conf" replaces an unreadable
+	// googet.conf entry with a valid file, and "created" creates the root and
+	// returns Created only.
+	childPrepareModeEnv = "GOOGET_TEST_CHILD_PREPARE_MODE"
 )
 
 func TestMain(m *testing.M) {
@@ -122,17 +135,71 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func appendTrace(line string) {
+	p := os.Getenv(childTraceEnv)
+	if p == "" {
+		return
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
+}
+
 // runChild runs run() in a child process started by runGooget. isAdmin fails
 // unless the parent allowed admin rights. obtainLock fails if the googet root
 // doesn't exist yet, because the root must be created, with its own mode,
 // before the lock file.
 func runChild() int {
 	if os.Getenv(childAdminEnv) == "1" {
-		isAdmin = func() error { return nil }
+		isAdmin = func() error {
+			appendTrace("isAdmin")
+			return nil
+		}
 	} else {
-		isAdmin = func() error { return errors.New("test process is not elevated") }
+		isAdmin = func() error {
+			appendTrace("isAdmin")
+			return errors.New("test process is not elevated")
+		}
+	}
+	prepareRoot = func(root string, subdirs []string) (system.RootReport, error) {
+		appendTrace("prepareRoot:" + strings.Join(subdirs, ","))
+		switch os.Getenv(childPrepareModeEnv) {
+		case "fail":
+			return system.RootReport{}, errors.New("injected prepareRoot failure")
+		case "repaired":
+			if err := os.MkdirAll(root, 0774); err != nil {
+				return system.RootReport{}, err
+			}
+			return system.RootReport{
+				DACLReplaced: true,
+				Warnings:     []string{"parent directory warning"},
+			}, nil
+		case "repair_conf":
+			if err := os.MkdirAll(root, 0774); err != nil {
+				return system.RootReport{}, err
+			}
+			confPath := filepath.Join(root, "googet.conf")
+			if err := os.Remove(confPath); err != nil && !os.IsNotExist(err) {
+				return system.RootReport{}, err
+			}
+			if err := os.WriteFile(confPath, []byte("progress: false\n"), 0644); err != nil {
+				return system.RootReport{}, err
+			}
+			return system.RootReport{DACLReplaced: true}, nil
+		case "created":
+			if err := os.MkdirAll(root, 0774); err != nil {
+				return system.RootReport{}, err
+			}
+			return system.RootReport{Created: true}, nil
+		default:
+			return system.PrepareRoot(root, subdirs)
+		}
 	}
 	obtainLock = func(lockFile string, maxAge time.Duration) (func(), error) {
+		appendTrace("obtainLock")
 		root := filepath.Dir(lockFile)
 		if !isDir(root) {
 			return nil, fmt.Errorf("googet root %q doesn't exist when taking the lock", root)
@@ -147,6 +214,11 @@ func runChild() int {
 // only -root sets the root.
 func runGooget(t *testing.T, admin bool, args ...string) (int, string) {
 	t.Helper()
+	return runGoogetEnv(t, admin, nil, args...)
+}
+
+func runGoogetEnv(t *testing.T, admin bool, extraEnv []string, args ...string) (int, string) {
+	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(kv), strings.ToUpper(envVar)+"=") {
@@ -158,6 +230,7 @@ func runGooget(t *testing.T, admin bool, args ...string) (int, string) {
 	if admin {
 		cmd.Env = append(cmd.Env, childAdminEnv+"=1")
 	}
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	switch {
@@ -169,6 +242,22 @@ func runGooget(t *testing.T, admin bool, args ...string) (int, string) {
 		t.Fatalf("running googet %q: %v", args, err)
 		return 0, ""
 	}
+}
+
+func readTrace(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("reading trace file %q: %v", path, err)
+	}
+	trimmed := strings.TrimSpace(string(b))
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
 }
 
 func TestRunUnelevatedCreatesNoRoot(t *testing.T) {
@@ -224,6 +313,11 @@ func TestRunUnelevatedWithEmptyRoot(t *testing.T) {
 }
 
 func TestRunElevatedCreatesRoot(t *testing.T) {
+	// On Windows the root is created with an owner and ACL that need an
+	// elevated process. GitHub Actions runners are elevated.
+	if runtime.GOOS == "windows" && system.IsAdmin() != nil && os.Getenv("GITHUB_ACTIONS") == "" {
+		t.Skip("needs an elevated process on Windows")
+	}
 	root := filepath.Join(t.TempDir(), "googet")
 	code, out := runGooget(t, true, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
 	if code != 0 {
@@ -274,4 +368,187 @@ func TestRunWithoutRoot(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunPrepareRootOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "googet")
+	trace := filepath.Join(t.TempDir(), "trace.txt")
+	code, out := runGoogetEnv(t, true, []string{
+		childTraceEnv + "=" + trace,
+		childPrepareModeEnv + "=created",
+	}, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
+	if code != 0 {
+		t.Fatalf("elevated googet listrepos exit code = %d, want 0; output:\n%s", code, out)
+	}
+	want := []string{"isAdmin", "prepareRoot:repos,cache", "obtainLock"}
+	if diff := cmp.Diff(want, readTrace(t, trace)); diff != "" {
+		t.Errorf("call order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunPrepareRootFailureStopsBeforeLock(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "googet")
+	trace := filepath.Join(t.TempDir(), "trace.txt")
+	code, out := runGoogetEnv(t, true, []string{
+		childTraceEnv + "=" + trace,
+		childPrepareModeEnv + "=fail",
+	}, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "injected prepareRoot failure") {
+		t.Errorf("output = %q, want it to contain the prepareRoot error", out)
+	}
+	want := []string{"isAdmin", "prepareRoot:repos,cache"}
+	if diff := cmp.Diff(want, readTrace(t, trace)); diff != "" {
+		t.Errorf("call order mismatch (-want +got):\n%s", diff)
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Errorf("root %q exists after prepareRoot failure (Lstat error: %v)", root, err)
+	}
+}
+
+func TestRunUnelevatedSkipsPrepareRoot(t *testing.T) {
+	t.Run("listrepos with existing root", func(t *testing.T) {
+		root := t.TempDir()
+		trace := filepath.Join(t.TempDir(), "trace.txt")
+		code, out := runGoogetEnv(t, false, []string{
+			childTraceEnv + "=" + trace,
+		}, "-root", root, "-system_log=false", "listrepos")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", code, out)
+		}
+		if got := readTrace(t, trace); len(got) != 0 {
+			t.Errorf("trace = %v, want no privileged hooks called", got)
+		}
+	})
+
+	t.Run("installed with existing root and db", func(t *testing.T) {
+		root := t.TempDir()
+		db, err := googetdb.NewDB(filepath.Join(root, "googet.db"))
+		if err != nil {
+			t.Fatalf("creating test db: %v", err)
+		}
+		db.Close()
+		trace := filepath.Join(t.TempDir(), "trace.txt")
+		code, out := runGoogetEnv(t, false, []string{
+			childTraceEnv + "=" + trace,
+		}, "-root", root, "-system_log=false", "installed", "-format=json")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", code, out)
+		}
+		if got := readTrace(t, trace); len(got) != 0 {
+			t.Errorf("trace = %v, want no privileged hooks called", got)
+		}
+	})
+
+	t.Run("install with missing root", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "googet")
+		trace := filepath.Join(t.TempDir(), "trace.txt")
+		code, out := runGoogetEnv(t, false, []string{
+			childTraceEnv + "=" + trace,
+		}, "-root", root, "-system_log=false", "install", "foo")
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1; output:\n%s", code, out)
+		}
+		if diff := cmp.Diff([]string{"isAdmin"}, readTrace(t, trace)); diff != "" {
+			t.Errorf("trace mismatch (-want +got):\n%s", diff)
+		}
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Errorf("missing root %q was created (Lstat error: %v)", root, err)
+		}
+	})
+}
+
+func TestRunLogsPrepareRootReportToLogFile(t *testing.T) {
+	t.Run("repaired root and warning logged to googet.log", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "googet")
+		code, out := runGoogetEnv(t, true, []string{
+			childPrepareModeEnv + "=repaired",
+		}, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", code, out)
+		}
+		logBytes, err := os.ReadFile(filepath.Join(root, "googet.log"))
+		if err != nil {
+			t.Fatalf("reading googet.log: %v", err)
+		}
+		logText := string(logBytes)
+		if !strings.Contains(logText, "Reset the permissions of the googet root") || !strings.Contains(logText, "replaced the access list") {
+			t.Errorf("googet.log missing repair summary; got:\n%s", logText)
+		}
+		if !strings.Contains(logText, "parent directory warning") {
+			t.Errorf("googet.log missing parent warning; got:\n%s", logText)
+		}
+	})
+
+	t.Run("created root logs no repair warning", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "googet")
+		code, out := runGoogetEnv(t, true, []string{
+			childPrepareModeEnv + "=created",
+		}, "-root", root, "-system_log=false", "-noconfirm", "listrepos")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", code, out)
+		}
+		logBytes, err := os.ReadFile(filepath.Join(root, "googet.log"))
+		if err != nil {
+			t.Fatalf("reading googet.log: %v", err)
+		}
+		if strings.Contains(string(logBytes), "Reset the permissions of the googet root") {
+			t.Errorf("googet.log unexpectedly logged a repair warning for a newly created root:\n%s", logBytes)
+		}
+	})
+}
+
+func TestRootPathsMatchSettings(t *testing.T) {
+	orig := settings.RootDir
+	t.Cleanup(func() { settings.RootDir = orig })
+	settings.RootDir = filepath.Join(t.TempDir(), "googet")
+	want := []string{filepath.Base(settings.RepoDir()), filepath.Base(settings.CacheDir())}
+	if diff := cmp.Diff(want, rootSubdirs()); diff != "" {
+		t.Errorf("rootSubdirs() mismatch (-want +got):\n%s", diff)
+	}
+	if got, want := settings.DBFile(), filepath.Join(settings.RootDir, rootDBName); got != want {
+		t.Errorf("settings.DBFile() = %q, want %q", got, want)
+	}
+}
+
+func TestRunPrepareRootBeforeSettingsInit(t *testing.T) {
+	t.Run("prepareRoot failure skips googet.conf", func(t *testing.T) {
+		root := t.TempDir()
+		// A directory at googet.conf makes ReadFile fail with a non-NotExist
+		// error, which panics in settings.readConf if Initialize runs before
+		// prepareRoot.
+		if err := os.Mkdir(filepath.Join(root, "googet.conf"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		code, out := runGoogetEnv(t, true, []string{
+			childPrepareModeEnv + "=fail",
+		}, "-root", root, "-system_log=false", "-noconfirm", "installed")
+		if code != 1 {
+			t.Errorf("exit code = %d, want 1; output:\n%s", code, out)
+		}
+		if !strings.Contains(out, "injected prepareRoot failure") {
+			t.Errorf("output = %q, want prepareRoot error", out)
+		}
+		if strings.Contains(out, "panic") || strings.Contains(out, "Error unmarshalling conf file") {
+			t.Errorf("output unexpectedly read googet.conf before prepareRoot:\n%s", out)
+		}
+	})
+
+	t.Run("prepareRoot repairs root before settings.Initialize reads googet.conf", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "googet.conf"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		code, out := runGoogetEnv(t, true, []string{
+			childPrepareModeEnv + "=repair_conf",
+		}, "-root", root, "-system_log=false", "-noconfirm", "installed", "-format=json")
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; output:\n%s", code, out)
+		}
+		if strings.Contains(out, "panic") || strings.Contains(out, "Error unmarshalling conf file") {
+			t.Errorf("output unexpectedly reported conf error:\n%s", out)
+		}
+	})
 }
