@@ -41,14 +41,6 @@ const (
 	// ancestorAccess only reads.
 	ancestorAccess = windows.READ_CONTROL | windows.FILE_READ_ATTRIBUTES
 
-	// settableFileAttrs are the attributes that FileBasicInfo can set.
-	// Attributes maintained by the file system, such as
-	// FILE_ATTRIBUTE_REPARSE_POINT and FILE_ATTRIBUTE_DIRECTORY, are excluded.
-	// FileBasicInfo treats 0 as leaving the attributes unchanged, so a caller
-	// that clears every settable attribute passes FILE_ATTRIBUTE_NORMAL
-	// instead.
-	settableFileAttrs = windows.FILE_ATTRIBUTE_READONLY | windows.FILE_ATTRIBUTE_HIDDEN | windows.FILE_ATTRIBUTE_SYSTEM | windows.FILE_ATTRIBUTE_ARCHIVE | windows.FILE_ATTRIBUTE_TEMPORARY | windows.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | windows.FILE_ATTRIBUTE_OFFLINE
-
 	// maxPreferredLength is MAX_PREFERRED_LENGTH from lmcons.h.
 	maxPreferredLength = 0xffffffff
 )
@@ -99,19 +91,8 @@ type fileAttributeTagInfo struct {
 	ReparseTag     uint32
 }
 
-// fileBasicInfo is FILE_BASIC_INFO, padded to 8-byte alignment for windows/386.
-type fileBasicInfo struct {
-	CreationTime   int64
-	LastAccessTime int64
-	LastWriteTime  int64
-	ChangeTime     int64
-	FileAttributes uint32
-	_              uint32
-}
-
-// fileDispositionInfo is FILE_DISPOSITION_INFO.
-type fileDispositionInfo struct {
-	DeleteFile bool
+func notFound(err error) bool {
+	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
 }
 
 // PrepareRoot creates the googet root with a protected DACL, or checks and
@@ -200,7 +181,7 @@ func createRoot(root string) (bool, error) {
 // secureRoot checks and repairs the root and then its subdirectories, holding
 // the root open throughout.
 func secureRoot(root string, subdirs []string, r *RootReport) error {
-	h, err := openNoFollow(root, rootAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
+	h, err := openNoFollow(root, rootAccess, shareNoDelete)
 	if err != nil {
 		return openError("the googet root", root, err)
 	}
@@ -219,11 +200,30 @@ func secureRoot(root string, subdirs []string, r *RootReport) error {
 	if err != nil {
 		return fmt.Errorf("reading the permissions of the googet root %q: %w", root, err)
 	}
+	recorded := make(map[string]bool)
 	if plan := classifyRoot(s, trustedOwner); plan.needed() {
+		// Lock the root itself with a temporary protected DACL (tempLockDACL)
+		// via SetKernelObjectSecurity before reading children, so no untrusted
+		// principal can modify or rename entries while their pre-repair
+		// permissions are recorded. Its canonical ACEs aren't inheritable and
+		// it has no AI flag, so any crash before repairRoot still triggers a
+		// full repair and propagation on retry. Custom read-only ACEs keep
+		// their inheritance flags so they survive an interrupted repair, and
+		// SetKernelObjectSecurity doesn't propagate them to existing children.
+		if err := lockRootNoPropagate(h, plan); err != nil {
+			return fmt.Errorf("resetting the permissions of the googet root %q: %w; run googet as an administrator or SYSTEM, or remove the root and run googet again", root, err)
+		}
+		if plan.ResetOwner {
+			r.OwnerReset = true
+		}
+		// The repair below replaces the ACEs that entries under the root
+		// inherit, so CheckEntries uses what they were before it.
+		if err := recordEntries(root, h, subdirs, recorded, r); err != nil {
+			return err
+		}
 		if err := repairRoot(h, plan); err != nil {
 			return fmt.Errorf("resetting the permissions of the googet root %q: %w; run googet as an administrator or SYSTEM, or remove the root and run googet again", root, err)
 		}
-		r.OwnerReset = plan.ResetOwner
 		r.DACLReplaced = plan.ReplaceDACL
 		s, err := readState(h)
 		if err != nil {
@@ -234,11 +234,48 @@ func secureRoot(root string, subdirs []string, r *RootReport) error {
 		}
 	}
 	for _, name := range subdirs {
-		if err := secureSubdir(filepath.Join(root, name), r); err != nil {
+		if err := secureSubdir(filepath.Join(root, name), recorded, r); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// lockRootNoPropagate applies plan's owner reset and/or a temporary protected
+// DACL (tempLockDACL) to h itself via SetKernelObjectSecurity, without
+// propagating inheritance to existing children.
+func lockRootNoPropagate(h windows.Handle, plan rootPlan) error {
+	var info windows.SECURITY_INFORMATION
+	var sddl strings.Builder
+	if plan.ResetOwner {
+		sddl.WriteString("O:BA")
+		info |= windows.OWNER_SECURITY_INFORMATION
+	}
+	if plan.ReplaceDACL {
+		d, err := tempLockDACL(plan.DACL)
+		if err != nil {
+			return err
+		}
+		sddl.WriteString(d)
+		info |= windows.DACL_SECURITY_INFORMATION
+	}
+	sd, err := windows.SecurityDescriptorFromString(sddl.String())
+	if err != nil {
+		return err
+	}
+	return windows.SetKernelObjectSecurity(h, info, sd)
+}
+
+// lockDirNoPropagate sets the temporary non-inheritable protected owner and
+// DACL (tempLockSDDL) on h itself without propagating inheritance to existing
+// children. Because tempLockSDDL omits OICI, subdirNeedsReset still returns
+// true if the process exits before resetSubdir completes.
+func lockDirNoPropagate(h windows.Handle) error {
+	sd, err := windows.SecurityDescriptorFromString(tempLockSDDL)
+	if err != nil {
+		return err
+	}
+	return windows.SetKernelObjectSecurity(h, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION, sd)
 }
 
 func repairRoot(h windows.Handle, plan rootPlan) error {
@@ -275,9 +312,9 @@ func repairRoot(h windows.Handle, plan rootPlan) error {
 // windows.DELETE so another process holding a non-FILE_SHARE_DELETE handle
 // (such as a working directory or enumeration handle) doesn't cause
 // ERROR_SHARING_VIOLATION.
-func secureSubdir(path string, r *RootReport) error {
-	h, err := openNoFollow(path, rootAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
-	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+func secureSubdir(path string, recorded map[string]bool, r *RootReport) error {
+	h, err := openNoFollow(path, rootAccess, shareNoDelete)
+	if notFound(err) {
 		return nil
 	}
 	if err != nil {
@@ -312,6 +349,17 @@ func secureSubdir(path string, r *RootReport) error {
 	if !subdirNeedsReset(s, trustedOwner) {
 		return nil
 	}
+	// If recordEntries didn't already lock and record this subdirectory during
+	// a root repair, lock it without propagating inheritance before recording
+	// its children.
+	if !recorded[entryKey(path)] {
+		if err := lockDirNoPropagate(h); err != nil {
+			return fmt.Errorf("resetting the permissions of %q: %w; remove it and run googet again", path, err)
+		}
+		if err := recordDir(path, h, recorded, r); err != nil {
+			return err
+		}
+	}
 	if err := resetSubdir(h); err != nil {
 		return fmt.Errorf("resetting the permissions of %q: %w; remove it and run googet again", path, err)
 	}
@@ -329,8 +377,8 @@ func secureSubdir(path string, r *RootReport) error {
 // verifies that it is still a reparse point, and removes the link itself. It
 // reports whether a link was removed.
 func removeSubdirLink(path string) (bool, error) {
-	h, err := openNoFollow(path, linkDeleteAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
-	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+	h, err := openNoFollow(path, linkDeleteAccess, shareNoDelete)
+	if notFound(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -344,22 +392,9 @@ func removeSubdirLink(path string) (bool, error) {
 	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 		return false, fmt.Errorf("%q changed before the link could be removed; run googet again", path)
 	}
-	// FileDispositionInfo returns ERROR_ACCESS_DENIED on a read-only file
-	// reparse point, so clear FILE_ATTRIBUTE_READONLY on the link handle first.
-	if attrs&windows.FILE_ATTRIBUTE_READONLY != 0 {
-		newAttrs := attrs & settableFileAttrs &^ windows.FILE_ATTRIBUTE_READONLY
-		if newAttrs == 0 {
-			newAttrs = windows.FILE_ATTRIBUTE_NORMAL
-		}
-		basic := fileBasicInfo{FileAttributes: newAttrs}
-		if err := windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(&basic)), uint32(unsafe.Sizeof(basic))); err != nil {
-			return false, fmt.Errorf("clearing the read-only attribute on the link %q: %w; remove it and run googet again", path, err)
-		}
-	}
 	// The handle is the reparse point itself, so this removes the link and
 	// never its target.
-	info := fileDispositionInfo{DeleteFile: true}
-	if err := windows.SetFileInformationByHandle(h, windows.FileDispositionInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+	if err := deleteOpen(h); err != nil {
 		return false, fmt.Errorf("removing the link %q: %w; remove it and run googet again", path, err)
 	}
 	return true, nil
@@ -458,8 +493,8 @@ func checkAncestor(dir string) ([]string, error) {
 }
 
 func checkAncestorIfExists(dir string) ([]string, bool, error) {
-	h, err := openNoFollow(dir, ancestorAccess, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE)
-	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+	h, err := openNoFollow(dir, ancestorAccess, shareAll)
+	if notFound(err) {
 		return nil, false, nil
 	}
 	if err != nil {

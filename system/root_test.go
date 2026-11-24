@@ -23,7 +23,6 @@ const (
 	sidEveryone           = "S-1-1-0"
 	sidAuthenticatedUsers = "S-1-5-11"
 	sidInteractive        = "S-1-5-4"
-	sidCreatorOwner       = "S-1-3-0"
 	sidTestUser           = "S-1-5-21-1-2-3-1001"
 	sidTestAdmin          = "S-1-5-21-1-2-3-500"
 
@@ -106,6 +105,25 @@ func TestClassifyRoot(t *testing.T) {
 			desc: "missing canonical ACE",
 			s:    aclState{OwnerSID: sidAdministrators, Protected: true, ACEs: canonicalACEs[:2]},
 			want: rootPlan{ReplaceDACL: true, DACL: canonicalACEs},
+		},
+		{
+			desc: "non-inheritable temporary lock ACEs",
+			s: aclState{OwnerSID: sidAdministrators, Protected: true, ACEs: []aceInfo{
+				allow(0, accessFileAllAccess, sidAdministrators),
+				allow(0, accessFileAllAccess, sidSystem),
+				allow(0, readMask, sidUsers),
+			}},
+			want: rootPlan{ReplaceDACL: true, DACL: canonicalACEs},
+		},
+		{
+			desc: "non-inheritable temporary lock ACEs with custom read-only ACE",
+			s: aclState{OwnerSID: sidAdministrators, Protected: true, ACEs: []aceInfo{
+				allow(0, accessFileAllAccess, sidAdministrators),
+				allow(0, accessFileAllAccess, sidSystem),
+				allow(0, readMask, sidUsers),
+				allow(oici, readMask, sidEveryone),
+			}},
+			want: rootPlan{ReplaceDACL: true, DACL: withACEs(allow(oici, readMask, sidEveryone))},
 		},
 		{
 			desc: "empty DACL",
@@ -309,6 +327,11 @@ func TestSubdirNeedsReset(t *testing.T) {
 		{desc: "inherits the root", s: aclState{OwnerSID: sidAdministrators, ACEs: inherited(canonicalACEs)}},
 		{desc: "owned by a local administrator", s: aclState{OwnerSID: sidTestAdmin, ACEs: inherited(canonicalACEs)}},
 		{desc: "protected with trusted ACEs", s: aclState{OwnerSID: sidAdministrators, Protected: true, ACEs: canonicalACEs}},
+		{desc: "protected with non-inheritable temporary lock ACEs", s: aclState{OwnerSID: sidAdministrators, Protected: true, ACEs: []aceInfo{
+			allow(0, accessFileAllAccess, sidAdministrators),
+			allow(0, accessFileAllAccess, sidSystem),
+			allow(0, readMask, sidUsers),
+		}}, want: true},
 		{desc: "untrusted owner", s: aclState{OwnerSID: sidTestUser, ACEs: inherited(canonicalACEs)}, want: true},
 		{desc: "NULL DACL", s: aclState{OwnerSID: sidAdministrators, NullDACL: true}, want: true},
 		{desc: "explicit Users write", s: aclState{OwnerSID: sidAdministrators, ACEs: append([]aceInfo{allow(oici, maskModify, sidUsers)}, inherited(canonicalACEs)...)}, want: true},
@@ -434,6 +457,14 @@ func TestDACLSDDL(t *testing.T) {
 		if s, err := daclSDDL([]aceInfo{a}); err == nil {
 			t.Errorf("daclSDDL(%+v) = %q, want an error", a, s)
 		}
+	}
+	const wantTempLock = "D:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;BU)"
+	if got, err := tempLockDACL(canonicalACEs); err != nil || got != wantTempLock {
+		t.Errorf("tempLockDACL(canonicalACEs) = %q, %v; want %q, nil", got, err, wantTempLock)
+	}
+	const wantTempLockWithEveryone = wantTempLock + "(A;OICI;0x1200a9;;;S-1-1-0)"
+	if got, err := tempLockDACL(withACEs(allow(oici, readMask, sidEveryone))); err != nil || got != wantTempLockWithEveryone {
+		t.Errorf("tempLockDACL(with Everyone) = %q, %v; want %q, nil", got, err, wantTempLockWithEveryone)
 	}
 }
 

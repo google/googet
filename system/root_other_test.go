@@ -39,7 +39,7 @@ func TestPrepareRootNonWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareRoot(%q) failed: %v", root, err)
 	}
-	if diff := cmp.Diff(RootReport{}, r); diff != "" {
+	if diff := cmp.Diff(RootReport{}, r, cmp.AllowUnexported(RootReport{})); diff != "" {
 		t.Errorf("PrepareRoot(%q) report mismatch (-want +got):\n%s", root, diff)
 	}
 	fi, err := os.Stat(root)
@@ -56,7 +56,31 @@ func TestPrepareRootNonWindows(t *testing.T) {
 	// Calling PrepareRoot again on an existing root succeeds with no error.
 	if r2, err := PrepareRoot(root, []string{"repos", "cache"}); err != nil {
 		t.Fatalf("second PrepareRoot(%q) failed: %v", root, err)
-	} else if diff := cmp.Diff(RootReport{}, r2); diff != "" {
+	} else if diff := cmp.Diff(RootReport{}, r2, cmp.AllowUnexported(RootReport{})); diff != "" {
 		t.Errorf("second PrepareRoot(%q) report mismatch (-want +got):\n%s", root, diff)
+	}
+}
+
+func TestCheckEntriesNonWindows(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	r, err := CheckEntries(root, testEntryRules, RootReport{})
+	if err != nil {
+		t.Fatalf("CheckEntries(%q) failed: %v", root, err)
+	}
+	if diff := cmp.Diff(EntryReport{}, r); diff != "" {
+		t.Errorf("CheckEntries(%q) report mismatch (-want +got):\n%s", root, diff)
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Errorf("CheckEntries(%q) created the missing root (Lstat error: %v)", root, err)
+	}
+
+	for _, bad := range []EntryRule{
+		{Dir: "..", Pattern: "x", Action: EntryRemove},
+		{Pattern: "[", Action: EntryRemove},
+		{Pattern: "x"},
+	} {
+		if _, err := CheckEntries(root, []EntryRule{bad}, RootReport{}); err == nil {
+			t.Errorf("CheckEntries with invalid rule %+v = nil, want an error", bad)
+		}
 	}
 }

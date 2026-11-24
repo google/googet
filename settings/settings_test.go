@@ -119,3 +119,73 @@ func TestStallTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestSetRootAndLoadConf(t *testing.T) {
+	oldStall := client.StallTimeout
+	oldRoot, oldConfirm, oldArchs := settings.RootDir, settings.Confirm, settings.Archs
+	oldCacheLife, oldLockAge, oldProxy := settings.CacheLife, settings.LockFileMaxAge, settings.ProxyServer
+	oldUnsafe, oldStrict, oldProgress := settings.AllowUnsafeURL, settings.StrictConflicts, settings.Progress
+	t.Cleanup(func() {
+		client.StallTimeout = oldStall
+		settings.RootDir, settings.Confirm, settings.Archs = oldRoot, oldConfirm, oldArchs
+		settings.CacheLife, settings.LockFileMaxAge, settings.ProxyServer = oldCacheLife, oldLockAge, oldProxy
+		settings.AllowUnsafeURL, settings.StrictConflicts, settings.Progress = oldUnsafe, oldStrict, oldProgress
+	})
+
+	settings.CacheLife = 3 * time.Minute
+	settings.LockFileMaxAge = 24 * time.Hour
+	settings.ProxyServer = ""
+	settings.AllowUnsafeURL = false
+	settings.StrictConflicts = false
+	settings.Progress = true
+
+	rootDir := t.TempDir()
+	conf := "cachelife: 7m\nlockfilemaxage: 5m\nproxyserver: http://proxy.example:8080\nallowunsafeurl: true\nstrictconflicts: true\nprogress: false\n"
+	if err := os.WriteFile(filepath.Join(rootDir, "googet.conf"), []byte(conf), 0644); err != nil {
+		t.Fatalf("error writing conf file: %v", err)
+	}
+
+	// SetRoot must set paths and Confirm without reading googet.conf.
+	settings.SetRoot(rootDir, false)
+	if settings.RootDir != rootDir || settings.Confirm {
+		t.Fatalf("after SetRoot: RootDir=%q Confirm=%v, want %q false", settings.RootDir, settings.Confirm, rootDir)
+	}
+	for name, got := range map[string]string{
+		"LockFile":  settings.LockFile(),
+		"StateFile": settings.StateFile(),
+		"DBFile":    settings.DBFile(),
+		"ConfFile":  settings.ConfFile(),
+		"LogFile":   settings.LogFile(),
+		"CacheDir":  settings.CacheDir(),
+		"RepoDir":   settings.RepoDir(),
+	} {
+		if filepath.Dir(got) != rootDir {
+			t.Errorf("%s() = %q, want path under %q", name, got, rootDir)
+		}
+	}
+	if settings.CacheLife != 3*time.Minute || settings.LockFileMaxAge != 24*time.Hour || settings.ProxyServer != "" || settings.AllowUnsafeURL || settings.StrictConflicts || !settings.Progress {
+		t.Fatalf("SetRoot read googet.conf unexpectedly: CacheLife=%v LockFileMaxAge=%v ProxyServer=%q AllowUnsafeURL=%v StrictConflicts=%v Progress=%v",
+			settings.CacheLife, settings.LockFileMaxAge, settings.ProxyServer, settings.AllowUnsafeURL, settings.StrictConflicts, settings.Progress)
+	}
+
+	// LoadConf reads googet.conf from the directory set by SetRoot.
+	settings.LoadConf()
+	if settings.CacheLife != 7*time.Minute {
+		t.Errorf("CacheLife = %v, want 7m", settings.CacheLife)
+	}
+	if settings.LockFileMaxAge != 5*time.Minute {
+		t.Errorf("LockFileMaxAge = %v, want 5m", settings.LockFileMaxAge)
+	}
+	if settings.ProxyServer != "http://proxy.example:8080" {
+		t.Errorf("ProxyServer = %q, want http://proxy.example:8080", settings.ProxyServer)
+	}
+	if !settings.AllowUnsafeURL {
+		t.Errorf("AllowUnsafeURL = false, want true")
+	}
+	if !settings.StrictConflicts {
+		t.Errorf("StrictConflicts = false, want true")
+	}
+	if settings.Progress {
+		t.Errorf("Progress = true, want false")
+	}
+}

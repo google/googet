@@ -49,8 +49,6 @@ const (
 	envVar = "GooGetRoot"
 	// logSize is the max allowed size of the log file.
 	logSize = 10 * 1024 * 1024
-	// rootDBName is the database file name in the googet root.
-	rootDBName = "googet.db"
 )
 
 var (
@@ -64,9 +62,15 @@ var (
 	// obtainLock takes the googet lock file. It is a variable so that tests
 	// can replace it.
 	obtainLock = system.ObtainLock
-	// prepareRoot creates or checks the googet root. It is a variable so that
-	// tests can replace it.
-	prepareRoot = system.PrepareRoot
+	// The other steps of run() are variables so that tests can record the
+	// order in which run() calls them.
+	prepareRoot    = system.PrepareRoot
+	checkEntries   = system.CheckEntries
+	loadConf       = settings.LoadConf
+	rotateLogFile  = rotateLog
+	createDB       = googetdb.CreateIfMissing
+	mkdirAll       = os.MkdirAll
+	executeCommand = func(ctx context.Context) int { return int(subcommands.DefaultCommander.Execute(ctx)) }
 )
 
 func rotateLog(logPath string, ls int64) error {
@@ -129,24 +133,21 @@ func run(ctx context.Context) int {
 		logger.Errorf("The environment variable %q is not defined and no '-root' flag passed", envVar)
 		return 1
 	}
+	settings.SetRoot(*rootDir, !*noConfirm)
 
 	// Commands that skip the admin check must not create anything under the
 	// root, so they only skip it if the root already exists. Otherwise they
 	// take the privileged path below, which creates the root.
 	rootExists := isDir(*rootDir)
+	dbFile := settings.DBFile()
 
 	// "googet listrepos" may execute without a lock if the root directory
-	// exists.
-	if rootExists && cmdName == "listrepos" {
-		settings.Initialize(*rootDir, !*noConfirm)
-		return (int(cmdr.Execute(context.Background())))
-	}
-
-	// "googet installed" is allowed to execute without a lock if the googet
-	// database has already been created.
-	if rootExists && cmdName == "installed" && googetdb.Exists(filepath.Join(*rootDir, rootDBName)) {
-		settings.Initialize(*rootDir, !*noConfirm)
-		return int(cmdr.Execute(ctx))
+	// exists, and "googet installed" if the googet database has also already
+	// been created. They read googet.conf first, as before. The privileged
+	// path reads it only after it has checked the files in the root.
+	if rootExists && (cmdName == "listrepos" || (cmdName == "installed" && googetdb.Exists(dbFile))) {
+		loadConf()
+		return executeCommand(ctx)
 	}
 
 	if err := isAdmin(); err != nil {
@@ -156,18 +157,56 @@ func run(ctx context.Context) int {
 		logger.Errorf("Failed admin check: %v", err)
 		return 1
 	}
+	var rootReport system.RootReport
+	var lockReport, entryReport system.EntryReport
+	reportsLogged := false
+	logReports := func() {
+		if reportsLogged {
+			return
+		}
+		reportsLogged = true
+		if rootReport.Changed() {
+			logger.Warningf("Reset the permissions of the googet root %q: %s", *rootDir, rootReport.Summary())
+		}
+		for _, w := range rootReport.Warnings {
+			logger.Warning(w)
+		}
+		checked := lockReport.Merge(entryReport)
+		if checked.Changed() {
+			logger.Warningf("Removed or renamed entries in the googet root %q that failed permission, link or ownership checks: %s", *rootDir, checked.Summary())
+		}
+		for _, f := range checked.Failures {
+			logger.Error(f)
+		}
+	}
+	// Flush partial repair and entry reports on any early-return error path
+	// before logger.Init runs.
+	defer logReports()
+
 	// The root is created only after the admin check, so an unelevated run
 	// never creates it. It is created, or on Windows checked and repaired,
-	// before settings.Initialize so that googet.conf isn't read from an
-	// unchecked or restricted-ACL root, and before the lock so that it gets
-	// its own mode or ACL rather than the ones obtainLock gives the lock
-	// file's directory.
-	rootReport, err := prepareRoot(*rootDir, rootSubdirs())
+	// before loadConf so that googet.conf isn't read from an unchecked or
+	// restricted-ACL root, and before the lock so that it gets its own mode
+	// or ACL rather than the ones obtainLock gives the lock file's directory.
+	var err error
+	rootReport, err = prepareRoot(*rootDir, rootSubdirs())
 	if err != nil {
 		logger.Errorf("Unable to prepare the googet root: %v", err)
 		return 1
 	}
-	settings.Initialize(*rootDir, !*noConfirm)
+
+	// The lock file, the logs and googet.conf are checked before the lock is
+	// taken, because obtainLock reads the lock file, and lockfilemaxage from
+	// googet.conf. If googet.conf isn't trusted, it has been renamed, so the
+	// defaults apply, and the run fails once the failure is logged.
+	lockReport, err = checkEntries(*rootDir, lockEntryRules(), rootReport)
+	if err != nil {
+		logger.Errorf("Unable to check the files in the googet root: %v", err)
+		return 1
+	}
+	if !lockReport.Failed() {
+		loadConf()
+	}
 	cleanup, err := obtainLock(settings.LockFile(), settings.LockFileMaxAge)
 	if err != nil {
 		logger.Errorf("Failed to obtain lock: %v", err)
@@ -176,9 +215,14 @@ func run(ctx context.Context) int {
 	if cleanup != nil {
 		defer cleanup()
 	}
+	entryReport, err = checkEntries(*rootDir, entryRules(), rootReport)
+	if err != nil {
+		logger.Errorf("Unable to check the files in the googet root: %v", err)
+		return 1
+	}
 
 	logFile := settings.LogFile()
-	if err := rotateLog(logFile, logSize); err != nil {
+	if err := rotateLogFile(logFile, logSize); err != nil {
 		logger.Errorf("Failed to rotate log file %q: %v", logFile, err)
 		return 1
 	}
@@ -190,11 +234,11 @@ func run(ctx context.Context) int {
 	defer lf.Close()
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
-	if rootReport.Changed() {
-		logger.Warningf("Reset the permissions of the googet root %q: %s", *rootDir, rootReport.Summary())
-	}
-	for _, w := range rootReport.Warnings {
-		logger.Warning(w)
+	// Log reports explicitly while lf and logger are still open; the earlier
+	// defer would run after LIFO defer logger.Close() and miss googet.log.
+	logReports()
+	if lockReport.Failed() || entryReport.Failed() {
+		return 1
 	}
 
 	progressSet := false
@@ -205,25 +249,60 @@ func run(ctx context.Context) int {
 	})
 	progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
 
-	if err := googetdb.CreateIfMissing(settings.DBFile()); err != nil {
+	if err := createDB(dbFile); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)
 		return 1
 	}
-	if err := os.MkdirAll(settings.CacheDir(), 0774); err != nil {
+	if err := mkdirAll(settings.CacheDir(), 0774); err != nil {
 		logger.Errorf("Unable to create cache directory: %v", err)
 		return 1
 	}
-	if err := os.MkdirAll(settings.RepoDir(), 0774); err != nil {
+	if err := mkdirAll(settings.RepoDir(), 0774); err != nil {
 		logger.Errorf("Unable to create repo directory: %v", err)
 		return 1
 	}
-	return int(cmdr.Execute(ctx))
+	return executeCommand(ctx)
 }
 
 // rootSubdirs returns the names of the directories in the root that
 // system.PrepareRoot checks.
 func rootSubdirs() []string {
 	return []string{"repos", "cache"}
+}
+
+// lockEntryRules are the rules for the files in the googet root that run()
+// checks before it takes the lock.
+func lockEntryRules() []system.EntryRule {
+	log := filepath.Base(settings.LogFile())
+	return []system.EntryRule{
+		{Pattern: filepath.Base(settings.LockFile()), Action: system.EntryRemove},
+		{Pattern: log, Action: system.EntryRemove},
+		// rotateLog renames the log to googet.log.old.
+		{Pattern: log + ".old*", Action: system.EntryRemove},
+		{Pattern: filepath.Base(settings.ConfFile()), Action: system.EntryQuarantine},
+	}
+}
+
+// entryRules are the rules for the other files in the googet root, which
+// run() checks once it holds the lock.
+func entryRules() []system.EntryRule {
+	db := filepath.Base(settings.DBFile())
+	state := filepath.Base(settings.StateFile())
+	repos := filepath.Base(settings.RepoDir())
+	var rules []system.EntryRule
+	// SQLite replays its journal files, and googetdb.CreateIfMissing imports
+	// googet.state (or falls back to googet.state.bak) into a new database,
+	// so an administrator decides what to do with them.
+	for _, name := range []string{db, db + "-journal", db + "-wal", db + "-shm", state, state + ".bak"} {
+		rules = append(rules, system.EntryRule{Pattern: name, Action: system.EntryFail})
+	}
+	return append(rules,
+		system.EntryRule{Dir: repos, Pattern: "*.repo", Action: system.EntryQuarantine},
+		// googet only reads the *.repo files in repos.
+		system.EntryRule{Dir: repos, Pattern: "*", Action: system.EntryRemoveLink},
+		// googet downloads cached files again.
+		system.EntryRule{Dir: filepath.Base(settings.CacheDir()), Pattern: "*", Action: system.EntryRemove},
+	)
 }
 
 // isDir reports whether path exists and is a directory. Any error, including

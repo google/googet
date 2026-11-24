@@ -19,11 +19,24 @@ import (
 	"strings"
 )
 
-// rootSDDL is the security descriptor of the googet root on Windows: owned by
-// Administrators, with a protected DACL that gives Administrators and SYSTEM
-// full control and Users read and execute access. canonicalACEs describes the
-// same DACL; a Windows test checks that they match.
-const rootSDDL = "O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)"
+const (
+	// rootSDDL is the security descriptor of the googet root on Windows: owned
+	// by Administrators, with a protected DACL that gives Administrators and
+	// SYSTEM full control and Users read and execute access. canonicalACEs
+	// describes the same DACL; a Windows test checks that they match.
+	rootSDDL = "O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)"
+
+	// tempLockDACLSDDL is a non-inheritable protected DACL (no OICI, no AI)
+	// applied via SetKernelObjectSecurity before recording children and
+	// running SetSecurityInfo. It blocks untrusted writes on the directory
+	// itself without propagating to children, and because it omits OICI, both
+	// classifyRoot and subdirNeedsReset still trigger full repair and
+	// propagation if the process exits before SetSecurityInfo completes.
+	tempLockDACLSDDL = "D:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;BU)"
+	// tempLockSDDL pairs the Administrators owner with tempLockDACLSDDL for
+	// locking subdirectories without propagating inheritance.
+	tempLockSDDL = "O:BA" + tempLockDACLSDDL
+)
 
 // Well-known SIDs.
 const (
@@ -140,8 +153,13 @@ func rootDACLTrusted(s aclState) bool {
 			return false
 		}
 	}
+	return hasCanonicalACEs(s.ACEs)
+}
+
+// hasCanonicalACEs reports whether aces contains every entry of canonicalACEs.
+func hasCanonicalACEs(aces []aceInfo) bool {
 	for _, c := range canonicalACEs {
-		if !slices.Contains(s.ACEs, c) {
+		if !slices.Contains(aces, c) {
 			return false
 		}
 	}
@@ -161,7 +179,12 @@ func repairedDACL(s aclState) []aceInfo {
 		return dacl
 	}
 	for _, a := range s.ACEs {
-		if a.Type != aceTypeAccessAllowed || a.SID == "" || isCreatorAuthoritySID(a.SID) || a.Mask == 0 || a.Mask&^readMask != 0 {
+		// Administrators, SYSTEM and Users are already granted OICI coverage
+		// by canonicalACEs at equal or higher access, so skip their read-only
+		// ACEs (including non-inheritable ones from tempLockDACLSDDL).
+		if a.Type != aceTypeAccessAllowed || a.SID == "" || isCreatorAuthoritySID(a.SID) ||
+			a.SID == sidAdministrators || a.SID == sidSystem || a.SID == sidUsers ||
+			a.Mask == 0 || a.Mask&^readMask != 0 {
 			continue
 		}
 		a.Flags &= aceFlagsInheritance
@@ -181,10 +204,14 @@ func repairedDACL(s aclState) []aceInfo {
 
 // subdirNeedsReset reports whether a directory under the root must be reset
 // to inherit only from the root: its owner isn't trusted, its DACL is NULL,
-// or any ACE, explicit or inherited, isn't a plain allow ACE where only
-// trustedSIDs hold more than readMask.
+// it is protected without the canonical inheritable ACEs (for example from a
+// temporary non-propagating lock), or any ACE, explicit or inherited, isn't a
+// plain allow ACE where only trustedSIDs hold more than readMask.
 func subdirNeedsReset(s aclState, trustedOwner func(sid string) bool) bool {
 	if !trustedOwner(s.OwnerSID) || s.NullDACL {
+		return true
+	}
+	if s.Protected && !hasCanonicalACEs(s.ACEs) {
 		return true
 	}
 	for _, a := range s.ACEs {
@@ -255,8 +282,29 @@ func sidName(sid string) string {
 
 // daclSDDL returns the SDDL of a protected DACL with the allow ACEs aces.
 func daclSDDL(aces []aceInfo) (string, error) {
+	return formatDACLSDDL("D:PAI", aces)
+}
+
+// tempLockDACL returns the SDDL of tempLockDACLSDDL followed by any extra
+// non-canonical allow ACEs from planDACL. Applied with SetKernelObjectSecurity,
+// it blocks untrusted writes on the directory itself without propagating
+// inheritance, preserves custom read-only ACEs across an interrupted repair,
+// and keeps the canonical principals non-inheritable so classifyRoot still
+// triggers full repair and propagation on retry.
+func tempLockDACL(planDACL []aceInfo) (string, error) {
+	var extra []aceInfo
+	for _, a := range planDACL {
+		if a.SID == sidAdministrators || a.SID == sidSystem || a.SID == sidUsers {
+			continue
+		}
+		extra = append(extra, a)
+	}
+	return formatDACLSDDL(tempLockDACLSDDL, extra)
+}
+
+func formatDACLSDDL(prefix string, aces []aceInfo) (string, error) {
 	var b strings.Builder
-	b.WriteString("D:PAI")
+	b.WriteString(prefix)
 	for _, a := range aces {
 		if a.Type != aceTypeAccessAllowed {
 			return "", fmt.Errorf("ACE type %#x isn't an allow ACE", a.Type)
@@ -322,6 +370,12 @@ type RootReport struct {
 	RepairedSubdirs []string
 	// Warnings lists problems that PrepareRoot found but didn't change.
 	Warnings []string
+
+	// untrustedBefore maps the file-ID key (or path key when an entry couldn't
+	// be inspected) of each entry under the root that wasn't trusted before
+	// PrepareRoot changed the permissions above it to the reasons, so that
+	// CheckEntries still sees access that the change replaced.
+	untrustedBefore map[string][]string
 }
 
 // Changed reports whether PrepareRoot changed an existing root. Creating a
