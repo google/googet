@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +136,11 @@ type Downloader struct {
 	StallTimeout time.Duration
 }
 
+// DefaultTLSConfig, if non-nil, is called by NewDownloader to obtain the
+// TLS client configuration for its http.Transport. If it returns an error,
+// NewDownloader logs the error and falls back to the default TLS config.
+var DefaultTLSConfig func() (*tls.Config, error)
+
 // NewDownloader returns a Downloader optionally using a specified proxyServer.
 // The Downloader gets its own http.Client; http.DefaultClient is not modified.
 func NewDownloader(proxyServer string) (*Downloader, error) {
@@ -147,12 +153,22 @@ func NewDownloader(proxyServer string) (*Downloader, error) {
 		proxy = http.ProxyURL(proxyURL)
 	}
 	timeout := stallTimeout(0)
+	var tlsConfig *tls.Config
+	if DefaultTLSConfig != nil {
+		var err error
+		tlsConfig, err = DefaultTLSConfig()
+		if err != nil {
+			logger.Infof("Client TLS credentials unavailable: %v", err)
+			tlsConfig = nil
+		}
+	}
 	transport := &http.Transport{
 		Proxy: proxy,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		TLSClientConfig:       tlsConfig,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       60 * time.Second,
