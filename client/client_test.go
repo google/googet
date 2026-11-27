@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1065,5 +1066,45 @@ func TestNewRequestOauthUsesHTTPClient(t *testing.T) {
 	}
 	if got := tokenReqs.Load(); got != 1 {
 		t.Errorf("got %d token requests through the proxy, want 1", got)
+	}
+}
+
+func TestNewDownloaderDefaultTLSConfig(t *testing.T) {
+	wantCfg := &tls.Config{ServerName: "example.invalid"}
+	for _, tc := range []struct {
+		name string
+		hook func() (*tls.Config, error)
+		want *tls.Config
+	}{
+		{
+			name: "nil hook",
+			hook: nil,
+			want: nil,
+		},
+		{
+			name: "returns config",
+			hook: func() (*tls.Config, error) { return wantCfg, nil },
+			want: wantCfg,
+		},
+		{
+			name: "returns error falls back to nil",
+			hook: func() (*tls.Config, error) { return wantCfg, errors.New("unavailable") },
+			want: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := DefaultTLSConfig
+			DefaultTLSConfig = tc.hook
+			t.Cleanup(func() { DefaultTLSConfig = old })
+
+			d, err := NewDownloader("")
+			if err != nil {
+				t.Fatalf(`NewDownloader("") failed: %v`, err)
+			}
+			got := d.HTTPClient.Transport.(*http.Transport).TLSClientConfig
+			if got != tc.want {
+				t.Errorf("TLSClientConfig = %p, want %p", got, tc.want)
+			}
+		})
 	}
 }
