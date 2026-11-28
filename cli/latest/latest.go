@@ -23,8 +23,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
@@ -50,7 +50,13 @@ type packageStatus struct {
 func (*latestCmd) Name() string     { return "latest" }
 func (*latestCmd) Synopsis() string { return "print the latest available version of a package" }
 func (*latestCmd) Usage() string {
-	return fmt.Sprintf("%s latest [-sources repo1,repo2...] [-compare] <name>\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s latest [-sources repo1,repo2...] [-compare] [-json] <name>
+	Print the latest version of a package available in the repos.
+	Flags go before the package name.
+	latest also runs without administrator privileges. An unelevated run
+	never updates the repo index cache, so a stale index is fetched again
+	on every unelevated run until an elevated run refreshes the cache.
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
@@ -60,7 +66,19 @@ func (cmd *latestCmd) SetFlags(f *flag.FlagSet) {
 
 }
 
+// AllowUnelevated reports that latest may always run without the admin check
+// and the lock: it only reads repo files, the repo index cache and, with
+// -compare, the database. Unelevated, cli.OpenDB opens the database read-only
+// and the Downloader from cli.NewDownloader doesn't write the cache.
+func (*latestCmd) AllowUnelevated() bool { return true }
+
+var _ cli.AllowUnelevated = (*latestCmd)(nil)
+
 func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Finding the latest version requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if flags.NArg() != 1 {
 		logger.Errorf("Error: exactly one package name argument is required.\nUsage: %s", cmd.Usage())
 		return subcommands.ExitUsageError
@@ -81,7 +99,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 		return subcommands.ExitFailure
 	}
 
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure
@@ -93,7 +111,7 @@ func (cmd *latestCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...int
 	var pkgFound bool
 
 	if cmd.compare {
-		db, err := googetdb.NewDB(settings.DBFile())
+		db, err := cli.OpenDB(ctx)
 		if err != nil {
 			logger.Errorf("Failed to open database: %v", err)
 			return subcommands.ExitFailure

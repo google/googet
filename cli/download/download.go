@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/download"
 	"github.com/google/googet/v2/goolib"
@@ -41,7 +42,10 @@ type downloadCmd struct {
 func (*downloadCmd) Name() string     { return "download" }
 func (*downloadCmd) Synopsis() string { return "download a package" }
 func (*downloadCmd) Usage() string {
-	return fmt.Sprintf("%s download [-sources repo1,repo2...] [-download_dir <dir>] <name>\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s download [-sources repo1,repo2...] [-download_dir <dir>] <name>...
+	Download packages without installing them, to -download_dir or, if it
+	isn't set, the current directory. Flags go before the package names.
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *downloadCmd) SetFlags(f *flag.FlagSet) {
@@ -50,6 +54,10 @@ func (cmd *downloadCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Downloading packages requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if len(flags.Args()) == 0 {
 		fmt.Fprintf(os.Stderr, "%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
@@ -64,7 +72,7 @@ func (cmd *downloadCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...i
 		return subcommands.ExitFailure
 	}
 
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

@@ -25,8 +25,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/install"
 	"github.com/google/googet/v2/repo"
@@ -38,6 +37,11 @@ import (
 
 func init() { subcommands.Register(&checkCmd{}, "package query") }
 
+// checkCmd doesn't implement cli.AllowUnelevated, so check, including
+// check -dry_run, always needs administrator privileges. Its search calls
+// system.AppAssociation, which opens the HKLM Uninstall registry keys with
+// registry.ALL_ACCESS. Without elevation those opens fail and the keys are
+// skipped silently, so an unelevated check would report wrong results.
 type checkCmd struct {
 	sources string
 	dryRun  bool
@@ -50,6 +54,11 @@ func (*checkCmd) Usage() string {
 	return fmt.Sprintf(`%s check [-sources repo1,repo2...] [-dry_run=true]`, filepath.Base(os.Args[0]))
 }
 
+// NoPositionals marks check as a command that takes no positional arguments.
+func (*checkCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*checkCmd)(nil)
+
 func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "Don't make any changes to the DB.")
 	f.BoolVar(&cmd.dbOnly, "db_only", true, "Only add package information to database. Do not reinstall packages.")
@@ -57,9 +66,13 @@ func (cmd *checkCmd) SetFlags(f *flag.FlagSet) {
 }
 
 func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Checking for existing packages requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	exitCode := subcommands.ExitSuccess
 	cache := settings.CacheDir()
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure
@@ -70,7 +83,7 @@ func (cmd *checkCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interfac
 		logger.Errorf("Failed fetching installed packages: %v", err)
 		return subcommands.ExitFailure
 	}
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

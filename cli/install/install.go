@@ -49,7 +49,13 @@ type installCmd struct {
 func (*installCmd) Name() string     { return "install" }
 func (*installCmd) Synopsis() string { return "download and install a package and its dependencies" }
 func (*installCmd) Usage() string {
-	return fmt.Sprintf("%s install [-reinstall] [-sources repo1,repo2...] [-dry_run] [-force] <name>...\n", filepath.Base(os.Args[0]))
+	return fmt.Sprintf(`%s install [-reinstall] [-redownload] [-sources repo1,repo2...] [-dry_run] [-force] <name>...
+	Flags go before the package names.
+	install -dry_run, without -reinstall or -redownload, also runs without
+	administrator privileges. An unelevated run never updates the repo index
+	cache, so a stale index is fetched again on every unelevated run until an
+	elevated run refreshes the cache.
+`, filepath.Base(os.Args[0]))
 }
 
 func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
@@ -61,7 +67,27 @@ func (cmd *installCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.force, "force", false, "force overwrite of conflicting files (only required if StrictConflicts is enabled in config)")
 }
 
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run without -reinstall or -redownload may: it returns
+// before installing anything, and unelevated it reads the database through
+// cli.OpenDB, which opens it read-only, and the repo index cache through
+// cli.NewDownloader, which doesn't write it.
+//
+// The -reinstall and -redownload exclusion is permanent, even once the dry
+// run writes nothing. The reinstall path has written the database during a
+// dry run (installFromRepo calls WriteStateToDB after reinstall), and by
+// policy only the narrowest read-only paths run unelevated.
+func (cmd *installCmd) AllowUnelevated() bool {
+	return cmd.dryRun && !cmd.reinstall && !cmd.redownload
+}
+
+var _ cli.AllowUnelevated = (*installCmd)(nil)
+
 func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...any) subcommands.ExitStatus {
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Installing packages requires administrator privileges; use -dry_run without -reinstall or -redownload to preview the installation.")
+		return subcommands.ExitFailure
+	}
 	if flags.NArg() == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
@@ -71,14 +97,14 @@ func (cmd *installCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...an
 		return subcommands.ExitFailure
 	}
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure
 	}
 	defer db.Close()
 
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/repo"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/subcommands"
@@ -45,7 +46,11 @@ func (cmd *rmRepoCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "simulate removing the repo without making changes")
 }
 
-func (cmd *rmRepoCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *rmRepoCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		fmt.Fprintln(os.Stderr, "Removing a repository requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if got, want := f.NArg(), 1; got != want {
 		fmt.Fprintf(os.Stderr, "Wrong number of arguments: got %v, want %v\n", got, want)
 		f.Usage()

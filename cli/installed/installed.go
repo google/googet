@@ -25,10 +25,9 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
-	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
 	"github.com/google/subcommands"
 )
@@ -56,11 +55,27 @@ func (cmd *installedCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.format, "format", "simple", "Formatting of the output. Supported outputs: simple, json")
 }
 
-func (cmd *installedCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+// AllowUnelevated reports that installed may always skip the admin check and
+// the lock, because it only reads the database.
+func (*installedCmd) AllowUnelevated() bool { return true }
+
+// LockFree marks installed as a command that runs without the admin check,
+// the lock and the log file even when elevated, as it always has.
+func (*installedCmd) LockFree() {}
+
+var _ cli.LockFree = (*installedCmd)(nil)
+
+func (cmd *installedCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	// TestExecuteRefusesFirst requires this guard. It can't refuse
+	// while AllowUnelevated returns true.
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Listing installed packages requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	var state client.GooGetState
 	var exitCode subcommands.ExitStatus
 	var displayText string
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure

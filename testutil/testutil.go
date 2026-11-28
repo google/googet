@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,4 +85,51 @@ func ServeGoo(t *testing.T, dir string) *httptest.Server {
 			f.Close()
 		}
 	}))
+}
+
+// TreeSnapshot records every path under root, including root itself as ".",
+// with its mode, size, modification time and, for a regular file, the SHA-256
+// of its contents. It returns nil if root doesn't exist, so comparing two
+// snapshots also shows whether root was created or removed.
+//
+// Each path's metadata comes from os.Lstat, not from the directory listing.
+// On Windows a listing reports the copy of an entry's metadata that NTFS
+// keeps in the parent directory, which can lag the entry itself: after a
+// file is created in a directory, the parent can keep listing the
+// directory's older modification time until something, such as this walk,
+// opens the directory. Two listing-based snapshots of an unchanged tree
+// could then differ.
+func TreeSnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	if _, err := os.Lstat(root); os.IsNotExist(err) {
+		return nil
+	}
+	s := map[string]string{}
+	err := filepath.WalkDir(root, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		v := fmt.Sprintf("%v %d %d", fi.Mode(), fi.Size(), fi.ModTime().UnixNano())
+		if fi.Mode().IsRegular() {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			v += fmt.Sprintf(" %x", sha256.Sum256(b))
+		}
+		s[filepath.ToSlash(rel)] = v
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %q: %v", root, err)
+	}
+	return s
 }
