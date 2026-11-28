@@ -358,3 +358,94 @@ func TestInstallDryRun(t *testing.T) {
 		})
 	}
 }
+
+// newReinstallDB returns a database holding an installed package A and the
+// bytes of its file after setup.
+func newReinstallDB(t *testing.T) (*googetdb.GooDB, string, []byte) {
+	t.Helper()
+	dbFile := filepath.Join(t.TempDir(), "googet.db")
+	db, err := googetdb.NewDB(dbFile)
+	if err != nil {
+		t.Fatalf("googetdb.NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	state := client.GooGetState{
+		{PackageSpec: &goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1.0.0"}, InstallDate: 1700000000},
+	}
+	if err := db.WriteStateToDB(state); err != nil {
+		t.Fatalf("WriteStateToDB: %v", err)
+	}
+	before, err := os.ReadFile(dbFile)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dbFile, err)
+	}
+	return db, dbFile, before
+}
+
+// withStdin runs f with os.Stdin reading input.
+func withStdin(t *testing.T, input string, f func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	if _, err := io.WriteString(w, input); err != nil {
+		t.Fatalf("writing stdin: %v", err)
+	}
+	w.Close()
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = oldStdin }()
+	f()
+}
+
+// TestInstallReinstallNoOpKeepsDB checks that an install -reinstall that
+// doesn't reinstall, because it is declined or a dry run, leaves the database
+// file unchanged.
+func TestInstallReinstallNoOpKeepsDB(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		confirm bool
+		dryRun  bool
+		stdin   string
+		want    string
+	}{
+		{desc: "declined", confirm: true, stdin: "n\n", want: "Not reinstalling A"},
+		{desc: "dry run", dryRun: true, want: "Dry run: Would reinstall A"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			db, dbFile, before := newReinstallDB(t)
+			i := &installer{
+				db:              db,
+				cache:           t.TempDir(),
+				shouldReinstall: true,
+				confirm:         tc.confirm,
+				dryRun:          tc.dryRun,
+			}
+			var runErr error
+			var output string
+			withStdin(t, tc.stdin, func() {
+				output = captureStdout(func() {
+					runErr = i.installFromRepo(context.Background(), "A", []string{"noarch"})
+				})
+			})
+			if runErr != nil {
+				t.Fatalf("installFromRepo(A) = %v, want nil", runErr)
+			}
+			if !strings.Contains(output, tc.want) {
+				t.Errorf("stdout = %q, want it to contain %q", output, tc.want)
+			}
+
+			// Comparing the file catches any write, including one that
+			// rewrites a row with identical content.
+			after, err := os.ReadFile(dbFile)
+			if err != nil {
+				t.Fatalf("reading %s: %v", dbFile, err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("the database file changed")
+			}
+		})
+	}
+}
