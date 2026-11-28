@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
-	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/oswrap"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/logger"
@@ -42,12 +42,21 @@ func (*cleanCmd) Usage() string {
 	return fmt.Sprintf("%s clean\n", filepath.Base(os.Args[0]))
 }
 
+// NoPositionals marks clean as a command that takes no positional arguments.
+func (*cleanCmd) NoPositionals() {}
+
+var _ cli.NoPositionals = (*cleanCmd)(nil)
+
 func (cmd *cleanCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.all, "all", false, "clear out the entire cache directory")
 	f.StringVar(&cmd.packages, "packages", "", "comma separated list of packages to clear out of the cache")
 }
 
-func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+func (cmd *cleanCmd) Execute(ctx context.Context, _ *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessPrivileged(ctx) {
+		logger.Error("Cleaning the cache requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	if cmd.all {
 		fmt.Println("Removing all files and directories in cachedir.")
 		if err := cleanDirectory(nil); err != nil {
@@ -57,7 +66,7 @@ func (cmd *cleanCmd) Execute(_ context.Context, _ *flag.FlagSet, _ ...interface{
 		return subcommands.ExitSuccess
 	}
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Errorf("Failed to open database: %v", err)
 		return subcommands.ExitFailure
@@ -95,10 +104,26 @@ func cleanInstalled(state client.GooGetState, included map[string]bool) {
 		if !included[pkg.PackageSpec.Name] {
 			continue
 		}
-		if err := oswrap.RemoveAll(pkg.LocalPath); err != nil {
+		if err := removeCacheEntry(pkg.LocalPath); err != nil {
 			logger.Error(err)
 		}
 	}
+}
+
+// removeCacheEntry removes path from the cache directory. A file, such as a
+// repo index cache that an unelevated reader may hold open, is removed with
+// oswrap.RenameAndRemove so that its path is never left delete pending for the
+// next write. An empty path, such as the LocalPath of a package with no cached
+// file, names nothing and is skipped. Anything else, such as an unpack
+// directory or a missing path, goes to oswrap.RemoveAll.
+func removeCacheEntry(path string) error {
+	if path == "" {
+		return nil
+	}
+	if fi, err := oswrap.Lstat(path); err == nil && !fi.IsDir() {
+		return oswrap.RenameAndRemove(path)
+	}
+	return oswrap.RemoveAll(path)
 }
 
 // cleanDirectory deletes all files in the cache directory except those whose path
@@ -112,7 +137,7 @@ func cleanDirectory(excluded map[string]bool) error {
 		if excluded[file] {
 			continue
 		}
-		if err := oswrap.RemoveAll(file); err != nil {
+		if err := removeCacheEntry(file); err != nil {
 			logger.Error(err)
 		}
 	}

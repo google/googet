@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/repo"
@@ -46,6 +47,9 @@ func (*availableCmd) Usage() string {
 	return fmt.Sprintf(`%s available [-sources repo1,repo2...] [-info] [<initial>]:
 	List available packages beginning with an initial string,
 	if no initial string is provided all available packages will be listed.
+	available also runs without administrator privileges. An unelevated
+	run never updates the repo index cache, so a stale index is fetched
+	again on every unelevated run until an elevated run refreshes the cache.
 `, filepath.Base(os.Args[0]))
 }
 
@@ -54,7 +58,18 @@ func (cmd *availableCmd) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&cmd.sources, "sources", "", "comma separated list of sources, setting this overrides local .repo files")
 }
 
+// AllowUnelevated reports that available may always run without the admin
+// check and the lock: it only reads repo files and the repo index cache, and
+// the Downloader from cli.NewDownloader doesn't write the cache unelevated.
+func (*availableCmd) AllowUnelevated() bool { return true }
+
+var _ cli.AllowUnelevated = (*availableCmd)(nil)
+
 func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Listing available packages requires administrator privileges.")
+		return subcommands.ExitFailure
+	}
 	exitCode := subcommands.ExitFailure
 
 	var filter string
@@ -79,7 +94,7 @@ func (cmd *availableCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...inte
 		return subcommands.ExitFailure
 	}
 
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Errorf("Failed to initialize downloader: %v", err)
 		return subcommands.ExitFailure

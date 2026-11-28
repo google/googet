@@ -3,6 +3,7 @@ package remove
 import (
 	"bytes"
 	"context"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/googet/v2/cli"
 	"github.com/google/googet/v2/client"
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/goolib"
 	"github.com/google/googet/v2/settings"
 	"github.com/google/googet/v2/testutil"
 	"github.com/google/logger"
+	"github.com/google/subcommands"
 )
 
 func TestRemoveOne(t *testing.T) {
@@ -223,6 +226,90 @@ func TestRemoveOneDryRun(t *testing.T) {
 			ignoreInstallDate := cmpopts.IgnoreFields(client.PackageState{}, "InstallDate")
 			if diff := cmp.Diff(finalState, initialState, cmpopts.EquateEmpty(), ignoreInstallDate); diff != "" {
 				t.Errorf("DB state changed unexpectedly in dry_run (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestClassify checks how cli.Classify treats remove's -db_only flag and a
+// run without package names. The policy for the common cases is pinned with
+// the other commands in package main, and the flag parsing in package cli.
+func TestClassify(t *testing.T) {
+	cmdr := subcommands.NewCommander(flag.NewFlagSet("googet", flag.ContinueOnError), "googet")
+	cmdr.Register(&removeCmd{}, "")
+	for _, tc := range []struct {
+		args string
+		want cli.Class
+	}{
+		{"-db_only -dry_run pkg", cli.UnelevatedRun},
+		{"-dry_run -db_only pkg", cli.UnelevatedRun},
+		{"-db_only pkg", cli.Privileged},
+		{"-dry_run", cli.UnelevatedRun}, // Execute then refuses for lack of a package.
+		{"", cli.Privileged},
+	} {
+		t.Run(tc.args, func(t *testing.T) {
+			args := append([]string{"remove"}, strings.Fields(tc.args)...)
+			if got, _, _ := cli.Classify(cmdr, args); got != tc.want {
+				t.Errorf("Classify(%q) = %v, want %v", args, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExecuteRequiresPrivilege checks that without the privileged marker in
+// its context, Execute only runs a dry run.
+func TestExecuteRequiresPrivilege(t *testing.T) {
+	logger.Init("GooGet", true, false, io.Discard)
+	for _, tc := range []struct {
+		desc       string
+		args       []string
+		privileged bool
+		wantStatus subcommands.ExitStatus
+		wantKept   bool // Whether package A is still installed afterwards.
+	}{
+		{desc: "remove without privilege", args: []string{"A"}, wantStatus: subcommands.ExitFailure, wantKept: true},
+		{desc: "db_only remove without privilege", args: []string{"-db_only", "A"}, wantStatus: subcommands.ExitFailure, wantKept: true},
+		{desc: "dry run without privilege", args: []string{"-dry_run", "A"}, wantStatus: subcommands.ExitSuccess, wantKept: true},
+		{desc: "remove with privilege", args: []string{"A"}, privileged: true, wantStatus: subcommands.ExitSuccess, wantKept: false},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			settings.Initialize(t.TempDir(), false)
+			db, err := googetdb.NewDB(settings.DBFile())
+			if err != nil {
+				t.Fatalf("googetdb.NewDB: %v", err)
+			}
+			defer db.Close()
+			gooDir := t.TempDir()
+			spec := goolib.PkgSpec{Name: "A", Arch: "noarch", Version: "1"}
+			rs := testutil.GenGoo(t, gooDir, t.TempDir(), spec)
+			state := client.GooGetState{{
+				PackageSpec: rs.PackageSpec,
+				LocalPath:   filepath.Join(gooDir, rs.PackageSpec.String()+".goo"),
+				Checksum:    rs.Checksum,
+			}}
+			if err := db.WriteStateToDB(state); err != nil {
+				t.Fatalf("db.WriteStateToDB: %v", err)
+			}
+
+			var cmd removeCmd
+			fs := flag.NewFlagSet("remove", flag.ContinueOnError)
+			cmd.SetFlags(fs)
+			if err := fs.Parse(tc.args); err != nil {
+				t.Fatalf("parsing %q: %v", tc.args, err)
+			}
+			ctx := context.Background()
+			if tc.privileged {
+				ctx = cli.WithPrivileged(ctx)
+			}
+			if got := cmd.Execute(ctx, fs); got != tc.wantStatus {
+				t.Errorf("Execute(%q, privileged=%v) = %v, want %v", tc.args, tc.privileged, got, tc.wantStatus)
+			}
+			ps, err := db.FetchPkg(goolib.PackageInfo{Name: "A", Arch: "noarch"})
+			if err != nil {
+				t.Fatalf("db.FetchPkg: %v", err)
+			}
+			if kept := ps.PackageSpec != nil; kept != tc.wantKept {
+				t.Errorf("after Execute(%q, privileged=%v) package A installed = %v, want %v", tc.args, tc.privileged, kept, tc.wantKept)
 			}
 		})
 	}

@@ -50,19 +50,29 @@ func (cmd *removeCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&cmd.dryRun, "dry_run", false, "show what would be removed but do not remove")
 }
 
+// AllowUnelevated reports whether this run may skip the admin check and the
+// lock. Only a dry run may, because it only reads the database.
+func (cmd *removeCmd) AllowUnelevated() bool { return cmd.dryRun }
+
+var _ cli.AllowUnelevated = (*removeCmd)(nil)
+
 func (cmd *removeCmd) Execute(ctx context.Context, flags *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if cli.RefuseUnlessAllowed(ctx, cmd) {
+		logger.Error("Removing packages requires administrator privileges; use -dry_run to preview the removal.")
+		return subcommands.ExitFailure
+	}
 	if flags.NArg() == 0 {
 		fmt.Printf("%s\nUsage: %s\n", cmd.Synopsis(), cmd.Usage())
 		return subcommands.ExitFailure
 	}
 
-	db, err := googetdb.NewDB(settings.DBFile())
+	db, err := cli.OpenDB(ctx)
 	if err != nil {
 		logger.Error(err)
 		return subcommands.ExitFailure
 	}
 	defer db.Close()
-	downloader, err := client.NewDownloader(settings.ProxyServer)
+	downloader, err := cli.NewDownloader(ctx, settings.ProxyServer)
 	if err != nil {
 		logger.Error(err)
 		return subcommands.ExitFailure
