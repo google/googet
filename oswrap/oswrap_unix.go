@@ -17,6 +17,7 @@ limitations under the License.
 package oswrap
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -25,6 +26,19 @@ import (
 // RemoveOnReboot not implemented on non Windows.
 func RemoveOnReboot(name string) error {
 	return nil
+}
+
+// removeLater reports that name couldn't be removed now. Removal on reboot
+// isn't available on this system, so it always returns an error.
+func removeLater(name string) error {
+	return fmt.Errorf("removal of %s on reboot is not supported on this system", name)
+}
+
+// IsTransientShareError reports whether err is a Windows sharing error that
+// a reader may see while an elevated writer replaces or removes a file. It
+// always returns false on this system.
+func IsTransientShareError(err error) bool {
+	return false
 }
 
 // Open calls os.Open
@@ -40,6 +54,16 @@ func Create(name string) (*os.File, error) {
 // OpenFile calls os.OpenFile
 func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(name, flag, perm)
+}
+
+// OpenShared calls os.Open. On Windows it also shares delete access, so an
+// open reader never stops an elevated writer from renaming or deleting the
+// file; Unix places no such restriction on renames or deletes.
+//
+// Callers must read what they need and close the file straight away, and
+// must never hold the handle across network or other long operations.
+func OpenShared(name string) (*os.File, error) {
+	return os.Open(name)
 }
 
 // Remove calls os.Remove
