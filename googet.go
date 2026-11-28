@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/google/googet/v2/googetdb"
 	"github.com/google/googet/v2/progress"
@@ -48,6 +49,8 @@ const (
 	envVar = "GooGetRoot"
 	// logSize is the max allowed size of the log file.
 	logSize = 10 * 1024 * 1024
+	// rootDBName is the database file name in the googet root.
+	rootDBName = "googet.db"
 )
 
 var (
@@ -55,6 +58,15 @@ var (
 	version string
 	// Optional function to handle flag parsing. If unset, we use flag.Parse.
 	flagParse func()
+	// isAdmin returns an error if the process lacks administrator rights. It
+	// is a variable so that tests can replace it.
+	isAdmin = system.IsAdmin
+	// obtainLock takes the googet lock file. It is a variable so that tests
+	// can replace it.
+	obtainLock = system.ObtainLock
+	// prepareRoot creates or checks the googet root. It is a variable so that
+	// tests can replace it.
+	prepareRoot = system.PrepareRoot
 )
 
 func rotateLog(logPath string, ls int64) error {
@@ -80,7 +92,7 @@ func main() {
 }
 
 func run(ctx context.Context) int {
-	rootDir := flag.String("root", os.Getenv(envVar), "googet root directory")
+	rootDir := flag.String("root", os.Getenv(envVar), "googet root directory; on Windows, it must be on a volume that supports file permissions, and no part of its path may be a junction or symbolic link")
 	noConfirm := flag.Bool("noconfirm", false, "skip confirmation")
 	verbose := flag.Bool("verbose", false, "print info level logs to stdout")
 	systemLog := flag.Bool("system_log", true, "log to Linux Syslog or Windows Event Log")
@@ -117,31 +129,46 @@ func run(ctx context.Context) int {
 		logger.Errorf("The environment variable %q is not defined and no '-root' flag passed", envVar)
 		return 1
 	}
-	if err := os.MkdirAll(*rootDir, 0774); err != nil {
-		logger.Errorf("Unable to create root directory: %v", err)
-		return 1
-	}
-	settings.Initialize(*rootDir, !*noConfirm)
 
-	// "googet listrepos" may execute without a lock after the root directory and
-	// settings are initialized.
-	if cmdName == "listrepos" {
+	// Commands that skip the admin check must not create anything under the
+	// root, so they only skip it if the root already exists. Otherwise they
+	// take the privileged path below, which creates the root.
+	rootExists := isDir(*rootDir)
+
+	// "googet listrepos" may execute without a lock if the root directory
+	// exists.
+	if rootExists && cmdName == "listrepos" {
+		settings.Initialize(*rootDir, !*noConfirm)
 		return (int(cmdr.Execute(context.Background())))
 	}
 
-	dbFile := settings.DBFile()
-
 	// "googet installed" is allowed to execute without a lock if the googet
 	// database has already been created.
-	if googetdb.Exists(dbFile) && cmdName == "installed" {
+	if rootExists && cmdName == "installed" && googetdb.Exists(filepath.Join(*rootDir, rootDBName)) {
+		settings.Initialize(*rootDir, !*noConfirm)
 		return int(cmdr.Execute(ctx))
 	}
 
-	if err := system.IsAdmin(); err != nil {
+	if err := isAdmin(); err != nil {
+		if !rootExists {
+			err = fmt.Errorf("%v; googet root %q doesn't exist, run googet elevated first", err, *rootDir)
+		}
 		logger.Errorf("Failed admin check: %v", err)
 		return 1
 	}
-	cleanup, err := system.ObtainLock(settings.LockFile(), settings.LockFileMaxAge)
+	// The root is created only after the admin check, so an unelevated run
+	// never creates it. It is created, or on Windows checked and repaired,
+	// before settings.Initialize so that googet.conf isn't read from an
+	// unchecked or restricted-ACL root, and before the lock so that it gets
+	// its own mode or ACL rather than the ones obtainLock gives the lock
+	// file's directory.
+	rootReport, err := prepareRoot(*rootDir, rootSubdirs())
+	if err != nil {
+		logger.Errorf("Unable to prepare the googet root: %v", err)
+		return 1
+	}
+	settings.Initialize(*rootDir, !*noConfirm)
+	cleanup, err := obtainLock(settings.LockFile(), settings.LockFileMaxAge)
 	if err != nil {
 		logger.Errorf("Failed to obtain lock: %v", err)
 		return 1
@@ -163,6 +190,12 @@ func run(ctx context.Context) int {
 	defer lf.Close()
 	logger.Init("GooGet", *verbose, *systemLog, lf)
 	defer logger.Close()
+	if rootReport.Changed() {
+		logger.Warningf("Reset the permissions of the googet root %q: %s", *rootDir, rootReport.Summary())
+	}
+	for _, w := range rootReport.Warnings {
+		logger.Warning(w)
+	}
 
 	progressSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -172,7 +205,7 @@ func run(ctx context.Context) int {
 	})
 	progress.Init(wantProgress(settings.Progress, progressSet, *progressFlag, *verbose))
 
-	if err := googetdb.CreateIfMissing(dbFile); err != nil {
+	if err := googetdb.CreateIfMissing(settings.DBFile()); err != nil {
 		logger.Errorf("Unable to create initial db file; if db is not created, run again as admin: %v", err)
 		return 1
 	}
@@ -185,6 +218,19 @@ func run(ctx context.Context) int {
 		return 1
 	}
 	return int(cmdr.Execute(ctx))
+}
+
+// rootSubdirs returns the names of the directories in the root that
+// system.PrepareRoot checks.
+func rootSubdirs() []string {
+	return []string{"repos", "cache"}
+}
+
+// isDir reports whether path exists and is a directory. Any error, including
+// a permission error, counts as not existing.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // wantProgress reports whether progress output should be rendered, given the
